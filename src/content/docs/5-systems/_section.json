@@ -1,0 +1,5 @@
+{
+  "label": "Systems",
+  "description": "What happens once the code leaves your laptop — event loops, message brokers, databases, caching, APIs, and testing.",
+  "icon": "🛰️"
+}

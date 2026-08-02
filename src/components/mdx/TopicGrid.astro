@@ -1,0 +1,52 @@
+---
+/**
+ * Card grid of the pages in one section, derived from the content collection.
+ * Nothing is hand-listed: a new `.mdx` file appears here on the next build.
+ */
+import { getCollection } from 'astro:content';
+
+interface Props {
+  /** Section directory, e.g. `2-data-structures`. */
+  section: string;
+}
+
+const { section } = Astro.props;
+
+const pages = (await getCollection('docs'))
+  .filter((page) => page.id.startsWith(`${section}/`))
+  // Same key Starlight sorts the sidebar by, so nav order and index order agree.
+  .sort((a, b) => (a.data.sidebar.order ?? 999) - (b.data.sidebar.order ?? 999));
+
+const base = import.meta.env.BASE_URL;
+---
+
+{
+  pages.length === 0 ? (
+    <p class="section-empty">
+      Nothing here yet — this section is scaffolded but not written.
+    </p>
+  ) : (
+    <ul class="card-grid">
+      {pages.map((page) => (
+        <li>
+          <a class="topic-card" href={`${base}${page.id}/`}>
+            <span class="topic-card__title">{page.data.title}</span>
+            {page.data.description && (
+              <span class="topic-card__desc">{page.data.description}</span>
+            )}
+            <span class="topic-card__meta">
+              <span>{page.data.difficulty}</span>
+              {page.data.status !== 'complete' && <span>· {page.data.status}</span>}
+              {page.data.complexity &&
+                Object.entries(page.data.complexity).map(([op, cost]) => (
+                  <span>
+                    · {op} <code>{cost}</code>
+                  </span>
+                ))}
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  )
+}

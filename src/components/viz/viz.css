@@ -1,0 +1,720 @@
+/* Styling for the viz primitive layer. Colour and geometry come from tokens.css;
+   this file is layout and structure only. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------- frame --- */
+
+.viz-frame {
+  margin: 2rem 0;
+  padding: 1rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface);
+}
+
+.viz-frame__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.85rem;
+}
+
+.viz-frame__title {
+  font-size: var(--sl-text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--viz-text-dim);
+}
+
+.viz-frame__intro {
+  font-size: var(--sl-text-sm);
+  color: var(--viz-text-dim);
+  line-height: 1.5;
+}
+
+.viz-frame__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Reserve two lines so changing captions never reflow the surrounding prose. */
+.viz-frame__caption {
+  min-height: 3em;
+  margin: 0.85rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--viz-border);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+  color: var(--viz-text);
+}
+
+.viz-frame__footer {
+  margin-top: 0.75rem;
+}
+
+.viz-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.viz-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ---------------------------------------------------------------- cells --- */
+
+.viz-array {
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.viz-array__label {
+  margin-bottom: 0.5rem;
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.viz-array__cells {
+  display: flex;
+  gap: var(--viz-cell-gap);
+  align-items: flex-end;
+  min-height: var(--viz-cell-size);
+}
+
+.viz-array[data-vertical] .viz-array__cells {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+
+.viz-array__empty {
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+  font-style: italic;
+}
+
+.viz-array__slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.viz-array__pointers {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 1.25rem;
+}
+
+.viz-array__pointers[data-anchor='below'] {
+  flex-direction: column-reverse;
+}
+
+.viz-cell-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.viz-cell {
+  display: grid;
+  place-items: center;
+  min-width: var(--viz-cell-size);
+  height: var(--viz-cell-size);
+  padding: 0 0.4rem;
+  border: var(--viz-border-width) solid var(--viz-role-default-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-role-default-bg);
+  color: var(--viz-role-default-fg);
+  font-family: var(--viz-font-mono);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Contiguous memory: no gaps, shared borders, addresses above. */
+.viz-array[data-memory] .viz-array__cells {
+  gap: 0;
+}
+
+.viz-array[data-memory] .viz-cell {
+  border-radius: 0;
+  border-left-width: 0;
+}
+
+.viz-array[data-memory] .viz-array__slot:first-child .viz-cell {
+  border-left-width: var(--viz-border-width);
+  border-top-left-radius: var(--viz-radius);
+  border-bottom-left-radius: var(--viz-radius);
+}
+
+.viz-array[data-memory] .viz-array__slot:last-child .viz-cell {
+  border-top-right-radius: var(--viz-radius);
+  border-bottom-right-radius: var(--viz-radius);
+}
+
+.viz-cell__index,
+.viz-cell__address,
+.viz-cell__annotation {
+  font-family: var(--viz-font-mono);
+  font-size: 0.65rem;
+  color: var(--viz-text-dim);
+}
+
+.viz-cell__annotation {
+  color: var(--viz-role-active-border);
+}
+
+/* Roles. Each changes background, foreground, AND border weight — colour is
+   never the only channel carrying meaning. */
+.viz-cell[data-role='compare'],
+.viz-legend__swatch[data-role='compare'] {
+  background: var(--viz-role-compare-bg);
+  color: var(--viz-role-compare-fg);
+  border-color: var(--viz-role-compare-border);
+  border-width: 2px;
+}
+
+.viz-cell[data-role='active'],
+.viz-legend__swatch[data-role='active'] {
+  background: var(--viz-role-active-bg);
+  color: var(--viz-role-active-fg);
+  border-color: var(--viz-role-active-border);
+  border-width: var(--viz-border-width-active);
+}
+
+.viz-cell[data-role='swap'],
+.viz-legend__swatch[data-role='swap'] {
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+  border-color: var(--viz-role-swap-border);
+  border-width: var(--viz-border-width-active);
+}
+
+.viz-cell[data-role='sorted'],
+.viz-legend__swatch[data-role='sorted'] {
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+  border-color: var(--viz-role-sorted-border);
+  border-width: 2px;
+}
+
+.viz-cell[data-role='ghost'],
+.viz-legend__swatch[data-role='ghost'] {
+  background: var(--viz-role-ghost-bg);
+  color: var(--viz-role-ghost-fg);
+  border-color: var(--viz-role-ghost-border);
+  border-style: dashed;
+  opacity: 0.65;
+}
+
+.viz-cell[data-role='empty'] {
+  background: var(--viz-role-empty-bg);
+  color: var(--viz-role-empty-fg);
+  border-color: var(--viz-role-empty-border);
+  border-style: dashed;
+}
+
+/* Cross-view hover link: the array cell and its tree node light up together. */
+.viz-cell[data-linked],
+.viz-node[data-linked] .viz-node__circle {
+  outline: 2px solid var(--viz-pointer);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------- pointers --- */
+
+.viz-pointer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  color: var(--viz-pointer);
+}
+
+.viz-pointer[data-anchor='below'] {
+  flex-direction: column-reverse;
+}
+
+.viz-pointer__label {
+  font-family: var(--viz-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.viz-pointer__arrow {
+  font-size: 0.6rem;
+}
+
+/* ----------------------------------------------------------------- graph --- */
+
+.viz-graph {
+  overflow: auto;
+}
+
+.viz-graph__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.viz-edge {
+  stroke: var(--viz-edge);
+  stroke-width: 1.5;
+}
+
+.viz-edge[data-role='active'] {
+  stroke: var(--viz-role-active-border);
+  stroke-width: 3;
+}
+
+.viz-edge[data-role='compare'] {
+  stroke: var(--viz-role-compare-border);
+  stroke-width: 2.5;
+}
+
+.viz-edge[data-role='ghost'] {
+  stroke-dasharray: 4 3;
+  opacity: 0.5;
+}
+
+.viz-node__circle {
+  fill: var(--viz-role-default-bg);
+  stroke: var(--viz-role-default-border);
+  stroke-width: var(--viz-border-width);
+}
+
+.viz-node__label {
+  fill: var(--viz-role-default-fg);
+  font-family: var(--viz-font-mono);
+  font-size: 0.85rem;
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.viz-node__index,
+.viz-node__annotation {
+  fill: var(--viz-text-dim);
+  font-family: var(--viz-font-mono);
+  font-size: 0.6rem;
+  pointer-events: none;
+}
+
+.viz-node__annotation {
+  text-anchor: middle;
+}
+
+.viz-node[data-role='compare'] .viz-node__circle {
+  fill: var(--viz-role-compare-bg);
+  stroke: var(--viz-role-compare-border);
+  stroke-width: 2;
+}
+.viz-node[data-role='compare'] .viz-node__label {
+  fill: var(--viz-role-compare-fg);
+}
+
+.viz-node[data-role='active'] .viz-node__circle {
+  fill: var(--viz-role-active-bg);
+  stroke: var(--viz-role-active-border);
+  stroke-width: 3;
+}
+.viz-node[data-role='active'] .viz-node__label {
+  fill: var(--viz-role-active-fg);
+}
+
+.viz-node[data-role='swap'] .viz-node__circle {
+  fill: var(--viz-role-swap-bg);
+  stroke: var(--viz-role-swap-border);
+  stroke-width: 3;
+}
+.viz-node[data-role='swap'] .viz-node__label {
+  fill: var(--viz-role-swap-fg);
+}
+
+.viz-node[data-role='sorted'] .viz-node__circle {
+  fill: var(--viz-role-sorted-bg);
+  stroke: var(--viz-role-sorted-border);
+  stroke-width: 2;
+}
+.viz-node[data-role='sorted'] .viz-node__label {
+  fill: var(--viz-role-sorted-fg);
+}
+
+.viz-node[data-role='ghost'] .viz-node__circle {
+  fill: none;
+  stroke-dasharray: 4 3;
+  opacity: 0.55;
+}
+
+/* -------------------------------------------------------------- controls --- */
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.viz-btn {
+  display: grid;
+  place-items: center;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+  color: var(--viz-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.viz-btn:hover:not(:disabled) {
+  border-color: var(--viz-pointer);
+}
+
+.viz-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.viz-btn--primary {
+  background: var(--sl-color-accent);
+  border-color: var(--sl-color-accent);
+  color: var(--sl-color-white);
+}
+
+.viz-controls__count {
+  margin-left: 0.35rem;
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-controls__speed {
+  margin-left: auto;
+}
+
+.viz-controls__speed select {
+  height: 2.25rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+  color: var(--viz-text);
+  font-size: var(--sl-text-xs);
+}
+
+.viz-scrubber {
+  position: relative;
+  margin-top: 0.6rem;
+}
+
+.viz-scrubber__range {
+  width: 100%;
+  accent-color: var(--sl-color-accent);
+}
+
+.viz-scrubber__ticks {
+  position: relative;
+  height: 0.5rem;
+}
+
+.viz-scrubber__tick {
+  position: absolute;
+  width: 2px;
+  height: 0.5rem;
+  background: var(--viz-pointer);
+  transform: translateX(-50%);
+}
+
+/* -------------------------------------------------------------- counters --- */
+
+.viz-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+}
+
+.viz-counters__item {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.viz-counters__item dt {
+  color: var(--viz-text-dim);
+}
+
+.viz-counters__item dd {
+  margin: 0;
+}
+
+.viz-counters__value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--viz-text);
+}
+
+.viz-counters__expected {
+  color: var(--viz-text-dim);
+}
+
+/* ------------------------------------------------------------------ code --- */
+
+.viz-code {
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+  overflow: hidden;
+}
+
+.viz-code__header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--viz-border);
+}
+
+.viz-code__label {
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.viz-code__langs {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.viz-code__lang {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--viz-radius);
+  background: none;
+  color: var(--viz-text-dim);
+  font-size: var(--sl-text-xs);
+  cursor: pointer;
+}
+
+.viz-code__lang[data-selected] {
+  border-color: var(--viz-border);
+  background: var(--viz-surface);
+  color: var(--viz-text);
+}
+
+.viz-code__pre {
+  max-height: 20rem;
+  margin: 0;
+  padding: 0.5rem 0;
+  overflow: auto;
+  background: none;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.viz-code__line {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0 0.6rem;
+  border-left: 3px solid transparent;
+  white-space: pre;
+}
+
+.viz-code__line[data-active] {
+  border-left-color: var(--viz-role-active-border);
+  background: var(--viz-role-active-bg);
+}
+
+.viz-code__gutter {
+  min-width: 1.5rem;
+  text-align: right;
+  color: var(--viz-text-dim);
+  user-select: none;
+}
+
+[data-tok='keyword'] {
+  color: var(--viz-role-swap-fg);
+}
+[data-tok='string'] {
+  color: var(--viz-role-sorted-fg);
+}
+[data-tok='number'] {
+  color: var(--viz-role-active-fg);
+}
+[data-tok='comment'] {
+  color: var(--viz-text-dim);
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------- legend --- */
+
+.viz-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.viz-legend li {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0;
+}
+
+.viz-legend__swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: var(--viz-border-width) solid var(--viz-role-default-border);
+  border-radius: 3px;
+  background: var(--viz-role-default-bg);
+}
+
+/* --------------------------------------------------- widget: HeapExplorer --- */
+
+.heap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.heap-actions__field input {
+  width: 5rem;
+  height: 2.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+  color: var(--viz-text);
+  font-family: var(--viz-font-mono);
+}
+
+/* ------------------------------------------------------------------ quiz --- */
+
+.quiz {
+  margin: 2rem 0;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--viz-border);
+  border-left: 4px solid var(--sl-color-accent);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-raised);
+}
+
+.quiz__kind {
+  margin: 0 0 0.35rem;
+  font-size: var(--sl-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sl-color-text-accent);
+}
+
+.quiz__question {
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+}
+
+.quiz__snippet {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.quiz__options {
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.quiz__options li {
+  margin: 0;
+}
+
+.quiz__option {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  cursor: pointer;
+}
+
+.quiz__option:hover {
+  border-color: var(--sl-color-text-accent);
+}
+
+.quiz__option[data-state] {
+  cursor: default;
+}
+
+.quiz__option[data-state='correct'] {
+  border-color: var(--viz-role-sorted-border);
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+}
+
+.quiz__option[data-state='wrong'] {
+  border-color: var(--viz-role-swap-border);
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+}
+
+.quiz__explanation {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--viz-border);
+  font-size: var(--sl-text-sm);
+  line-height: 1.65;
+}
+
+.quiz__explanation > :first-child {
+  margin-top: 0;
+}
+
+.quiz__explanation > :last-child {
+  margin-bottom: 0;
+}

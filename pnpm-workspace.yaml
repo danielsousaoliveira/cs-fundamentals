@@ -1,0 +1,4 @@
+allowBuilds:
+  # esbuild's install script fetches its platform-native binary. Without this it
+  # installs but cannot run, and every astro/vitest command fails.
+  esbuild: true

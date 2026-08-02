@@ -1,0 +1,30 @@
+---
+/**
+ * Auto-generated index page for every section. One route, six pages, zero
+ * hand-maintained lists — and a seventh appears the moment a seventh section
+ * directory does.
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { readSections } from '../../lib/sections.ts';
+import TopicGrid from '../../components/mdx/TopicGrid.astro';
+
+export function getStaticPaths() {
+  return readSections().map((section) => ({
+    params: { section: section.dir },
+    props: { section },
+  }));
+}
+
+const { section } = Astro.props;
+---
+
+<StarlightPage
+  frontmatter={{
+    title: section.label,
+    description: section.description,
+    tableOfContents: false,
+  }}
+>
+  <p>{section.description}</p>
+  <TopicGrid section={section.dir} />
+</StarlightPage>

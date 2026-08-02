@@ -1,0 +1,82 @@
+---
+/**
+ * Wraps Starlight's default page title to append the page's own metadata:
+ * difficulty, complexity summary, a prereq strip, and — when the page is not
+ * yet rewritten to depth — an honest banner saying so.
+ */
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { getCollection } from 'astro:content';
+
+const { entry } = Astro.locals.starlightRoute;
+const data = entry.data as typeof entry.data & {
+  difficulty?: 'foundational' | 'core' | 'advanced';
+  status?: 'stub' | 'draft' | 'complete';
+  prereqs?: string[];
+  complexity?: Record<string, string>;
+};
+
+const prereqIds = data.prereqs ?? [];
+let prereqLinks: { id: string; title: string }[] = [];
+
+if (prereqIds.length > 0) {
+  const all = await getCollection('docs');
+  prereqLinks = prereqIds.map((id) => {
+    const match = all.find((page) => page.id === id);
+    // Fail the build rather than ship a dead link.
+    if (!match) {
+      throw new Error(
+        `Page "${entry.id}" lists prereq "${id}", which does not exist. ` +
+          `Prereqs are page ids, e.g. "2-data-structures/binary-trees".`,
+      );
+    }
+    return { id: match.id, title: match.data.title };
+  });
+}
+
+const STATUS_NOTE: Record<string, string> = {
+  stub: 'This page was converted mechanically from the original notebooks and has not been rewritten to depth yet. The code runs, but the explanation is thin — complexity is asserted rather than derived, and the failure modes are missing.',
+  draft:
+    'This page is mid-rewrite. Some sections are complete; others are still the original notebook material.',
+};
+const statusNote = data.status ? STATUS_NOTE[data.status] : undefined;
+---
+
+<Default><slot /></Default>
+
+<div class="page-meta" data-pagefind-ignore>
+  {
+    data.difficulty && (
+      <span class="page-badge page-badge--difficulty">{data.difficulty}</span>
+    )
+  }
+  {
+    data.complexity &&
+      Object.entries(data.complexity).map(([op, cost]) => (
+        <span class="page-badge">
+          {op} <code>{cost}</code>
+        </span>
+      ))
+  }
+</div>
+
+{
+  prereqLinks.length > 0 && (
+    <p class="prereqs" data-pagefind-ignore>
+      Assumes you have read:{' '}
+      {prereqLinks.map((p, i) => (
+        <>
+          {i > 0 && ', '}
+          <a href={`${import.meta.env.BASE_URL}${p.id}/`}>{p.title}</a>
+        </>
+      ))}
+    </p>
+  )
+}
+
+{
+  statusNote && (
+    <aside class="status-banner" data-pagefind-ignore>
+      {statusNote}
+    </aside>
+  )
+}

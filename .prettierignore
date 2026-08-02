@@ -1,0 +1,11 @@
+dist/
+.astro/
+node_modules/
+pnpm-lock.yaml
+notebooks/
+
+# Content is prose, and Prettier's markdown parser actively corrupts it: it
+# treats the `*` in an MDX expression comment `{/* … */}` as emphasis and
+# rewrites it to `{/_ … _/}`, which then fails to parse. Never format .mdx.
+*.mdx
+*.md

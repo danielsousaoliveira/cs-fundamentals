@@ -1,0 +1,328 @@
+---
+title: Graphs
+description: >-
+  TODO: one sentence a stranger could read cold and know whether this page is
+  for them.
+sidebar:
+  order: 8
+difficulty: core
+status: stub
+prereqs: []
+tags: []
+languages: [python]
+sources:
+  - notebooks/2-data-structures/graphs.ipynb
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+{/* Converted mechanically from the notebook. Everything below the original
+    material still needs the rewrite-to-depth pass. */}
+
+## Introduction to Graphs
+
+Graphs are mathematical structures used to model pairwise relationships between objects. They are represented as a set of vertices (or nodes) connected by edges.
+
+### Key Concepts
+
+#### Types of Graphs:
+1. **Directed Graphs (Digraphs):** Edges have a direction.
+   - Example: A one-way street map.
+2. **Undirected Graphs:** Edges have no direction.
+   - Example: A friendship network.
+3. **Weighted Graphs:** Edges have weights (costs, distances, etc.).
+   - Example: A road map with distances.
+4. **Unweighted Graphs:** All edges are of equal weight.
+   - Example: A simple social network.
+5. **Cyclic Graphs:** Graphs containing at least one cycle.
+6. **Acyclic Graphs:** Graphs without any cycles.
+   - Example: Trees (a special case of acyclic graphs).
+
+#### Representation of Graphs:
+1. **Adjacency Matrix:** A 2D array where `matrix[i][j]` indicates the presence (and possibly weight) of an edge between vertex `i` and `j`.
+   - Space Complexity: O(V^2), where V is the number of vertices.
+2. **Adjacency List:** A list of lists where each list contains the neighbors of a vertex.
+   - Space Complexity: O(V + E), where E is the number of edges.
+
+#### Graph Terminologies:
+1. **Path:** A sequence of vertices connected by edges.
+2. **Cycle:** A path that starts and ends at the same vertex without repeating any edge.
+3. **Degree:**
+   - **In-degree:** Number of edges coming into a vertex.
+   - **Out-degree:** Number of edges going out of a vertex.
+   - **Degree (Undirected):** Total edges connected to a vertex.
+4. **Connected Graph:** There is a path between any two vertices.
+5. **Disconnected Graph:** At least one pair of vertices is not connected.
+6. **Complete Graph:** Every vertex is connected to every other vertex.
+
+#### Example 1: Representing a Graph
+
+##### Adjacency Matrix
+Representing a graph using an adjacency matrix
+Graph: A -> B -> C, A -> C
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+graph_matrix = [
+    [0, 1, 1],  # A
+    [0, 0, 1],  # B
+    [0, 0, 0]   # C
+]
+
+print("Edge from A to B:", graph_matrix[0][1])  
+print("Edge from B to A:", graph_matrix[1][0])
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// TODO: port from the Python above.
+```
+
+</TabItem>
+</Tabs>
+
+```text title="recorded output"
+Edge from A to B: 1
+Edge from B to A: 0
+```
+
+##### Adjacency List
+Representing a graph using an adjacency list
+Graph: A -> B -> C, A -> C
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+graph_list = {
+    'A': ['B', 'C'],
+    'B': ['C'],
+    'C': []
+}
+
+print("Neighbors of A:", graph_list['A'])
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// TODO: port from the Python above.
+```
+
+</TabItem>
+</Tabs>
+
+```text title="recorded output"
+Neighbors of A: ['B', 'C']
+```
+
+#### Example 2: Depth-First Search (DFS)
+DFS explores as far as possible along each branch before backtracking.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def dfs(graph, start, visited=None):
+    if visited is None:
+        visited = set()
+    visited.add(start)
+    print(start, end=" ")  # Print the node during the visit
+
+    for neighbor in graph[start]:
+        if neighbor not in visited:
+            dfs(graph, neighbor, visited)
+
+graph = {
+    'A': ['B', 'C'],
+    'B': ['D', 'E'],
+    'C': ['F'],
+    'D': [],
+    'E': ['F'],
+    'F': []
+}
+
+dfs(graph, 'A')
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// TODO: port from the Python above.
+```
+
+</TabItem>
+</Tabs>
+
+```text title="recorded output"
+A B D E F C
+```
+
+#### Time Complexity:
+- For adjacency list: **O(V + E)**
+- For adjacency matrix: **O(V^2)**
+
+#### Space Complexity:
+- Depends on representation (adjacency list or matrix).
+
+#### Example 3: Breadth-First Search (BFS)
+BFS explores all neighbors at the current depth before moving deeper.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from collections import deque
+
+def bfs(graph, start):
+    visited = set()
+    queue = deque([start])
+    visited.add(start)
+
+    while queue:
+        vertex = queue.popleft()
+        print(vertex, end=" ")
+
+        for neighbor in graph[vertex]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+
+graph = {
+    'A': ['B', 'C'],
+    'B': ['D', 'E'],
+    'C': ['F'],
+    'D': [],
+    'E': ['F'],
+    'F': []
+}
+
+bfs(graph, 'A')
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// TODO: port from the Python above.
+```
+
+</TabItem>
+</Tabs>
+
+```text title="recorded output"
+A B C D E F
+```
+
+#### Time Complexity:
+- For adjacency list: **O(V + E)**
+- For adjacency matrix: **O(V^2)**
+
+#### Space Complexity:
+- Space for queue: **O(V)**.
+
+#### Example 4: Shortest Path - Dijkstra's Algorithm
+Find the shortest path in a weighted graph with non-negative weights.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import heapq
+
+def dijkstra(graph, start):
+    distances = {vertex: float('infinity') for vertex in graph}
+    distances[start] = 0
+    priority_queue = [(0, start)]
+
+    while priority_queue:
+        current_distance, current_vertex = heapq.heappop(priority_queue)
+
+        if current_distance > distances[current_vertex]:
+            continue
+
+        for neighbor, weight in graph[current_vertex].items():
+            distance = current_distance + weight
+
+            if distance < distances[neighbor]:
+                distances[neighbor] = distance
+                heapq.heappush(priority_queue, (distance, neighbor))
+
+    return distances
+
+graph = {
+    'A': {'B': 1, 'C': 4},
+    'B': {'C': 2, 'D': 6},
+    'C': {'D': 3},
+    'D': {}
+}
+
+print(dijkstra(graph, 'A'))
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// TODO: port from the Python above.
+```
+
+</TabItem>
+</Tabs>
+
+```text title="recorded output"
+{'A': 0, 'B': 1, 'C': 3, 'D': 6}
+```
+
+#### Time Complexity:
+- **O((V + E) log V)** with a priority queue.
+
+#### Space Complexity:
+- Space for the distances and priority queue: **O(V + E)**.
+
+### Real-World Applications
+1. **Social Networks:** Representing and analyzing connections.
+2. **Navigation Systems:** Finding shortest paths.
+3. **Web Crawling:** Exploring connected web pages.
+4. **Network Routing:** Determining efficient data routes.
+5. **Scheduling:** Topological sorting in Directed Acyclic Graphs (DAGs).
+
+---
+
+## Intuition
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Mechanics
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Complexity
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## When NOT to use it
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Real-world usage
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Failure modes
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Practice problems
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}
+
+## Interview answers
+
+{/* TODO: see src/content/_template.mdx for what belongs here. */}

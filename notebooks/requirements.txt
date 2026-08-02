@@ -1,0 +1,4 @@
+# The notebooks run on the standard library alone; these are only the tools
+# needed to execute them interactively.
+jupyterlab>=4.2
+ipykernel>=6.29

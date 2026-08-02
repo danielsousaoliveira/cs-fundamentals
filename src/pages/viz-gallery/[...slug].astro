@@ -1,0 +1,30 @@
+---
+/**
+ * Dev-only reference page for the viz primitive layer.
+ *
+ * A catch-all route whose `getStaticPaths` returns nothing in production, so the
+ * page simply does not exist in the built site — no sidebar entry, no sitemap
+ * entry, nothing in the Pagefind index. It is a workbench, not content.
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Gallery } from '../../components/viz/Gallery.tsx';
+
+export function getStaticPaths() {
+  return import.meta.env.PROD ? [] : [{ params: { slug: undefined } }];
+}
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Viz gallery',
+    description: 'Every viz primitive in every role. Development only.',
+    tableOfContents: false,
+  }}
+>
+  <p>
+    Every primitive in the shared library, in every role. If two of these ever stop
+    looking like the same design system, that is a bug — fix it here rather than working
+    around it on a content page.
+  </p>
+  <Gallery client:load />
+</StarlightPage>

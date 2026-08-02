@@ -1,0 +1,5 @@
+{
+  "label": "Complexity",
+  "description": "How to reason about cost — deriving bounds rather than memorising them, and knowing when the constant factor beats the exponent.",
+  "icon": "📈"
+}

@@ -1,0 +1,39 @@
+---
+/**
+ * Card grid of every section, read off the filesystem. Adding a section
+ * directory with a `_section.json` is enough to make it appear here.
+ */
+import { readSections } from '../../lib/sections.ts';
+import { getCollection } from 'astro:content';
+
+const sections = readSections();
+const pages = await getCollection('docs');
+const base = import.meta.env.BASE_URL;
+
+const counts = new Map(
+  sections.map((s) => [
+    s.dir,
+    pages.filter((p) => p.id.startsWith(`${s.dir}/`)).length,
+  ]),
+);
+---
+
+<ul class="card-grid">
+  {
+    sections.map((section) => (
+      <li>
+        <a class="topic-card" href={`${base}${section.dir}/`}>
+          <span class="topic-card__title">
+            {section.icon} {section.label}
+          </span>
+          <span class="topic-card__desc">{section.description}</span>
+          <span class="topic-card__meta">
+            {counts.get(section.dir) === 0
+              ? 'coming soon'
+              : `${counts.get(section.dir)} page${counts.get(section.dir) === 1 ? '' : 's'}`}
+          </span>
+        </a>
+      </li>
+    ))
+  }
+</ul>

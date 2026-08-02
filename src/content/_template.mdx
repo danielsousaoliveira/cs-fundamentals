@@ -1,0 +1,71 @@
+---
+# Copy this file to src/content/docs/<section>/<slug>.mdx and start filling it in.
+# It lives outside docs/ (underscore prefix) so it is never published.
+title: Thing
+description: >-
+  One sentence a stranger could read cold and know whether this page is for them.
+sidebar:
+  order: 1
+difficulty: core
+status: draft
+prereqs: []
+tags: []
+languages: [python, typescript]
+complexity: {}
+sources: []
+---
+
+{/\*
+The spine below is fixed. `pnpm lint:spine` fails CI if a page marked
+`status: complete` is missing any of these headings — most importantly
+"When NOT to use it" and "Failure modes", which are the whole point.
+
+The voice: a claim, then the smallest code that proves it, then the failure it
+causes in production, then the caveat that stops it sounding dogmatic. Write
+for a stranger reading cold. Never assert a complexity you have not derived.
+\*/}
+
+## Intuition
+
+The mental model, before any code or notation. What problem does this shape of
+data solve, and what is the one idea that makes it work? Use an analogy only if it
+survives being pushed on — a bad analogy costs more than none.
+
+## Mechanics
+
+The operations, with runnable code in both languages. Show the structure being
+built from scratch before showing the stdlib shortcut; a reader who has only seen
+`heapq.heappush` cannot reason about what it costs.
+
+## Complexity
+
+**Derive it.** If the answer is O(log n), say what the log counts. If it is
+amortised, show the series and say what the worst single operation costs — the
+distinction matters the first time one of them lands inside a request timeout.
+
+## When NOT to use it
+
+Non-negotiable. The conditions under which this is the wrong choice, and what to
+reach for instead. If you cannot name three, you do not understand the structure
+well enough to write the page yet.
+
+## Real-world usage
+
+Where this actually appears in systems the reader has used — a database index, a
+scheduler, a browser engine. Be specific enough to be checkable.
+
+## Failure modes
+
+Non-negotiable. How it breaks in production and what the symptom looks like from
+the outside: the latency cliff, the silent corruption, the memory leak. Name the
+symptom first, because that is what the reader will see before they know the cause.
+
+## Practice problems
+
+Two or three, with solutions in both languages, chosen to exercise the failure
+modes above rather than to be quiz trivia.
+
+## Interview answers
+
+The two-minute spoken version, plus the caveat that signals you have run this in
+production rather than only read about it.

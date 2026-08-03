@@ -1,0 +1,618 @@
+---
+title: Sorting
+description: >-
+  Why the comparison sorts stop at n log n, why the library beats your
+  quicksort, and why stability is the property that actually decides which one
+  you need.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs: ['1-complexity/big-o', '2-data-structures/arrays-lists']
+tags: [sorting, quicksort, mergesort, stability, comparison-sort]
+languages: [python, typescript]
+complexity:
+  best: O(n log n)
+  average: O(n log n)
+  worst: O(n²) quicksort
+  space: O(n) merge
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+import { SortRace } from '../../../components/viz/widgets/SortRace.tsx';
+
+## Intuition
+
+Sorting is the most-studied problem in computing, and you will almost never
+implement one. That combination makes it easy to dismiss, and it is the wrong
+lesson to draw. Sorting is worth understanding because it is where three ideas
+that recur everywhere are easiest to see clearly:
+
+**A lower bound can be proved, not just observed.** Comparison sorting cannot beat
+$n \log n$, and the proof is short enough to reconstruct from scratch. It is
+probably the first time you meet a limit that no cleverness removes.
+
+**Average and worst case can differ enormously, and the difference is
+adversarial.** Quicksort averages $n \log n$ and degrades to $n^2$ — on
+*already-sorted input*, which is exactly the input you are most likely to hand it
+by accident.
+
+**The asymptotically-equal algorithms are not interchangeable.** Merge sort and
+quicksort are both $O(n \log n)$ on average, and the choice between them is
+decided entirely by things Big-O discards: memory, cache behaviour, and whether
+equal elements keep their order.
+
+That last one is the practical payload. When someone asks "which sort should I
+use", the answer is nearly always "the one in the standard library" — and the
+interesting question underneath is *what your library already chose for you, and
+when that choice is wrong.*
+
+## Mechanics
+
+Start by watching the counter rather than reading the table. Change the algorithms
+*and* the input — sorted input is bubble sort's best case and quicksort's worst,
+which is the single most useful thing on this page:
+
+<SortRace client:visible />
+
+### The simple sorts, and what each one is actually for
+
+All three are $O(n^2)$, and they are not equivalent.
+
+**Bubble sort** repeatedly swaps adjacent out-of-order pairs. Its one redeeming
+feature is the early exit: a pass with no swaps means the array is sorted, giving
+an $O(n)$ best case. It is otherwise strictly worse than insertion sort and exists
+mainly as a teaching example.
+
+**Insertion sort** grows a sorted prefix, inserting each element into place — the
+way most people sort a hand of cards. It is **the fastest of the three in
+practice**, and it has two properties that matter far beyond its complexity class:
+it is $O(n)$ on nearly-sorted data, and it is *fast on small arrays* because its
+constant factor is tiny. Real library sorts switch to it below about 16 elements.
+
+**Selection sort** finds the smallest remaining element and swaps it into place.
+It makes exactly $n(n-1)/2$ comparisons **on every input** — no early exit, no data
+dependence. In exchange it makes at most $n$ swaps, which is its single virtue: if
+writes are far more expensive than reads, as on flash memory, minimising them can
+matter.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def insertion_sort(a):
+    for i in range(1, len(a)):
+        key = a[i]                     # lift the key out
+        j = i - 1
+        while j >= 0 and a[j] > key:   # shift bigger elements right
+            a[j + 1] = a[j]
+            j -= 1
+        a[j + 1] = key                 # drop it into the hole
+    return a
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function insertionSort(a: number[]): number[] {
+  for (let i = 1; i < a.length; i++) {
+    const key = a[i]; // lift the key out
+    let j = i - 1;
+    while (j >= 0 && a[j] > key) {
+      // shift bigger elements right
+      a[j + 1] = a[j];
+      j--;
+    }
+    a[j + 1] = key; // drop it into the hole
+  }
+  return a;
+}
+```
+
+</TabItem>
+</Tabs>
+
+Note the loop condition `j >= 0 && a[j] > key`. The `>` rather than `>=` is what
+stops it swapping equal elements, which is what makes insertion sort **stable**.
+One character.
+
+### Merge sort: split, then merge
+
+```python
+def merge_sort(a):
+    if len(a) <= 1:
+        return a
+    mid = len(a) // 2
+    left = merge_sort(a[:mid])      # splitting costs nothing
+    right = merge_sort(a[mid:])
+    return merge(left, right)       # all the work is here
+
+def merge(left, right):
+    out, i, j = [], 0, 0
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:     # <= is what makes it STABLE
+            out.append(left[i]); i += 1
+        else:
+            out.append(right[j]); j += 1
+    return out + left[i:] + right[j:]
+```
+
+The structure is [divide and conquer](/cs-fundamentals/4-paradigms/divide-and-conquer/):
+splitting is free, merging is one linear pass, and there are $\log n$ levels of
+merging. Its defining characteristic is **predictability** — the cost barely
+depends on the input, which is why it is the right choice when worst-case latency
+matters.
+
+The `<=` on the comparison is the stability guarantee. Change it to `<` and equal
+elements from the right run jump ahead of equal elements from the left.
+
+### Quicksort: partition, then recurse
+
+```python
+def partition(a, lo, hi):
+    pivot = a[hi]                   # last element: worst case on sorted input
+    i = lo
+    for j in range(lo, hi):
+        if a[j] < pivot:
+            a[i], a[j] = a[j], a[i]
+            i += 1
+    a[i], a[hi] = a[hi], a[i]
+    return i
+```
+
+Quicksort inverts merge sort's shape: the hard work is in the *divide* step, and
+there is no combine step at all. Once an element is placed by a partition, it never
+moves again.
+
+That inversion is what buys the memory profile. Quicksort sorts **in place** —
+$O(\log n)$ stack, no second array — while merge sort needs $O(n)$ auxiliary space.
+Combined with better cache locality, that is why quicksort usually wins in practice
+despite the identical average complexity.
+
+The price is the worst case, and it is not hypothetical. Picking the last element
+as pivot means **already-sorted input produces maximally unbalanced partitions** —
+one side empty, one side everything — and $O(n^2)$ follows.
+
+## Complexity
+
+### The lower bound, derived
+
+Comparison sorting cannot do better than $n \log n$, and this is worth deriving
+because it is a *proof about all possible algorithms*, not a measurement of one.
+
+Any comparison sort is a decision tree: each internal node is a comparison, each
+branch is an outcome, each leaf is one possible ordering. To sort correctly the
+tree must have a distinct leaf for every permutation, so it needs at least $n!$
+leaves. A binary tree of height $h$ has at most $2^h$ leaves, so:
+
+$$
+2^h \ge n! \quad\Longrightarrow\quad h \ge \log_2(n!)
+$$
+
+By Stirling's approximation, $\log_2(n!) \approx n \log_2 n - n \log_2 e$, so:
+
+$$
+h = \Omega(n \log n)
+$$
+
+The height of the tree is the number of comparisons in the worst case. **No
+comparison-based algorithm can beat $n \log n$**, however clever.
+
+Note what the proof assumes: that the only operation is *comparing two elements*.
+Sorts that inspect the values themselves — counting sort, radix sort — are not
+bound by it, which is why they can be linear.
+
+### The table, with the columns that actually decide
+
+| Algorithm | Best | Average | Worst | Space | Stable |
+|---|---|---|---|---|:--:|
+| Bubble | $O(n)$ | $O(n^2)$ | $O(n^2)$ | $O(1)$ | ✓ |
+| Insertion | $O(n)$ | $O(n^2)$ | $O(n^2)$ | $O(1)$ | ✓ |
+| Selection | $O(n^2)$ | $O(n^2)$ | $O(n^2)$ | $O(1)$ | ✗ |
+| **Merge** | $O(n \log n)$ | $O(n \log n)$ | $O(n \log n)$ | $O(n)$ | ✓ |
+| **Quick** | $O(n \log n)$ | $O(n \log n)$ | **$O(n^2)$** | $O(\log n)$ | ✗ |
+| Heap | $O(n \log n)$ | $O(n \log n)$ | $O(n \log n)$ | $O(1)$ | ✗ |
+| Counting | $O(n + k)$ | $O(n + k)$ | $O(n + k)$ | $O(k)$ | ✓ |
+| Radix | $O(d(n + k))$ | $O(d(n + k))$ | $O(d(n + k))$ | $O(n + k)$ | ✓ |
+
+The three interesting rows are the ones where the columns disagree. Merge sort buys
+worst-case predictability with $O(n)$ memory. Quicksort buys memory and cache
+locality with a quadratic worst case. Heap sort has *both* good properties —
+$O(n \log n)$ worst case and $O(1)$ space — and loses anyway on constant factors,
+because its access pattern jumps around the array and defeats the cache.
+
+That last one is worth sitting with: **heap sort is asymptotically superior to
+quicksort and slower in practice.** Big-O discarded the thing that decided it.
+
+### Why quicksort's worst case is not rare
+
+The recurrence for a balanced split is $T(n) = 2T(n/2) + O(n)$, which gives
+$O(n \log n)$. For the maximally unbalanced split it is:
+
+$$
+T(n) = T(n-1) + O(n) \quad\Longrightarrow\quad T(n) = O(n^2)
+$$
+
+The unbalanced case happens when the pivot is the smallest or largest element every
+time. With a last-element pivot, that is precisely sorted or reverse-sorted input.
+
+The counts from the trace tests, on eight elements:
+
+| Input | Bubble | Insertion | Selection | Merge | Quick |
+|---|---:|---:|---:|---:|---:|
+| Random | 25 | 18 | 28 | 17 | 16 |
+| **Sorted** | **7** | **7** | 28 | 12 | **28** |
+| Reversed | 28 | 28 | 28 | 12 | 28 |
+| Duplicates | 27 | 19 | 28 | 17 | 18 |
+
+Two things jump out that no complexity table shows. **Sorted input makes bubble and
+insertion sort the fastest things here and quicksort the slowest** — a complete
+inversion of the ranking. And **selection sort's column is constant**, because it
+has no early exit at all.
+
+At $n = 8$ these differences are trivial. At $n = 10{,}000$, quicksort's worst case
+is 50 million comparisons against merge sort's 130 thousand — a factor of nearly
+400.
+
+## When NOT to use it
+
+**Do not write your own.** This is the honest headline. `sorted()` and
+`Array.prototype.sort` are decades-tuned hybrids that switch strategy based on the
+data, and your handwritten quicksort will lose on every axis including
+correctness. Implement one to understand it; ship the library's.
+
+**Do not use a comparison sort when you do not need one.** If the keys are bounded
+integers, counting sort is $O(n + k)$ and beats the lower bound by not being
+subject to it. Sorting a million integers in the range 0–255 is a histogram, not a
+sort.
+
+**Do not sort to find one element.** Sorting to take the maximum is $O(n \log n)$
+for something that is $O(n)$. For the top $k$, a
+[heap](/cs-fundamentals/2-data-structures/heaps/) is $O(n \log k)$, and
+quickselect is $O(n)$ average. Sorting first is the most common needless
+$\log n$ in real code.
+
+**Do not sort repeatedly to maintain order.** If elements arrive over time and you
+need order continuously, you want a structure that maintains it — a heap, a
+balanced tree, a sorted set — not a sort after every insert. That mistake turns
+$O(\log n)$ per insert into $O(n \log n)$.
+
+**Do not use quicksort on untrusted input.** The quadratic case is reachable by an
+adversary who knows your pivot rule. If input comes from a user, use a randomised
+pivot or introsort, or pick merge sort — this is a genuine denial-of-service
+vector, not a theoretical concern.
+
+**Do not use an unstable sort when you sort more than once.** Covered below, and it
+is the failure people meet without recognising it.
+
+**Do not use `.sort()` on numbers in JavaScript.**
+
+```js
+[10, 9, 1].sort(); // [1, 10, 9] — lexicographic by default
+[10, 9, 1].sort((a, b) => a - b); // [1, 9, 10]
+```
+
+The default comparator stringifies. This is correct for small values and silently
+wrong past 9, so it survives testing.
+
+## Real-world usage
+
+**Your standard library does not implement a textbook sort.** Both major ones are
+hybrids, and knowing what they chose tells you what you already have:
+
+**Python's `sorted()` is Timsort** — merge sort plus insertion sort, designed
+around the observation that real data is usually partially ordered. It finds
+already-sorted "runs", extends short ones with insertion sort, and merges them. It
+is **stable**, and it is $O(n)$ on already-sorted input.
+
+**JavaScript's `Array.prototype.sort` is Timsort** in V8 too, and has been
+**required to be stable since ES2019**. Before that, engines used different
+algorithms for short and long arrays, so the same code gave different orderings for
+10 elements and 100 — a genuinely nasty bug that the specification change removed.
+
+**C++'s `std::sort` is introsort** — quicksort, with a depth counter that switches
+to heap sort when recursion goes too deep, plus insertion sort at the bottom. That
+switch is the direct answer to quicksort's worst case: it caps the depth at
+$2\log n$, which bounds the worst case at $O(n \log n)$ while keeping quicksort's
+speed in the common case. It is **not stable**; `std::stable_sort` is the merge
+sort variant.
+
+The pattern is the same in all three: **quicksort or merge sort for the bulk,
+insertion sort for small subarrays, and a safety net for the worst case.**
+
+**External sorting** is merge sort's other home. When the data does not fit in
+memory — sorting a 500 GB file on a 16 GB machine — you sort chunks that do fit,
+write them out, and merge the sorted runs with a $k$-way merge. Merge sort is the
+only one of these that works when you can only read sequentially, which is also why
+it is what databases use for large `ORDER BY` operations that spill to disk.
+
+**Stability is what makes multi-key sorting work.** To sort employees by department
+and then by salary within department, sort by salary first, then by department with
+a **stable** sort. The second sort preserves the first's ordering within each
+group. With an unstable sort you must write a compound comparator instead — which
+is fine, but the technique above is why "is it stable?" is a real question and not
+trivia.
+
+## Failure modes
+
+**Symptom: a list is ordered correctly until values exceed 9.** JavaScript's
+default lexicographic comparator.
+
+**Symptom: an endpoint times out on one specific customer's data.** Quicksort's
+quadratic case, reached because that customer's data happened to arrive sorted.
+Classically triggered by re-sorting an already-sorted list.
+
+**Symptom: rows shuffle within a group when you re-sort by another column.** An
+unstable sort. The user sorts by name, then by department, and the names scramble
+inside each department. Nothing errors; the UI is just subtly wrong in a way that
+is hard to report.
+
+**Symptom: a comparator throws, or the sort produces nonsense.** An inconsistent
+comparator — one that is not a total order. If `cmp(a,b)` and `cmp(b,a)` are both
+positive, or comparison is not transitive, the algorithm's invariants break. V8
+detects some of these; many just produce a wrong order silently.
+
+```js
+// ✗ Not a valid comparator: returns a boolean, so `false` coerces to 0
+// and the sort concludes every pair is equal.
+items.sort((a, b) => a.price > b.price);
+
+// ✓
+items.sort((a, b) => a.price - b.price);
+```
+
+**Symptom: `NaN` in the array, and the result is random.** Every comparison
+involving `NaN` returns false, so the comparator is inconsistent and the ordering
+is undefined. Filter first.
+
+**Symptom: sorting mutates something it should not have.** `sort` and `reverse`
+mutate in place and return the same reference. `toSorted()` and `toReversed()` are
+the non-mutating versions. This is a common React bug: mutating state in place means
+the reference never changes and nothing re-renders.
+
+**Symptom: memory spikes when sorting a large collection.** Merge sort's $O(n)$
+auxiliary array, or a `sorted()` over a generator materialising the whole sequence.
+
+**Symptom: sorting is fine locally and slow in production.** Usually $n$ is bigger,
+but check whether the comparator is doing work — a comparator that computes a key
+does so $O(n \log n)$ times. Compute keys once instead:
+
+```python
+# ✗ lower() runs on every comparison — about n log n times
+items.sort(key=None, cmp=lambda a, b: cmp(a.name.lower(), b.name.lower()))
+
+# ✓ the key is computed exactly n times
+items.sort(key=lambda x: x.name.lower())
+```
+
+## Practice problems
+
+**1. Sort a million 8-bit integers.** Beat $O(n \log n)$.
+
+<details>
+<summary>Solution</summary>
+
+Counting sort, which is $O(n + k)$ — and the lower-bound proof does not apply
+because it never compares two elements.
+
+```python
+def counting_sort(values, k=256):
+    counts = [0] * k
+    for v in values:            # O(n)
+        counts[v] += 1
+    out = []
+    for value, count in enumerate(counts):   # O(k)
+        out.extend([value] * count)
+    return out
+```
+
+With $n = 10^6$ and $k = 256$, that is about a million operations against roughly
+20 million for a comparison sort — and it is a single linear pass over memory,
+which the cache loves.
+
+**The conditions to state, because they are what make it applicable:** the keys
+must be integers (or map to them) in a *known, bounded* range. If $k$ is
+unbounded, or comparable to $n^2$, the $O(k)$ term dominates and it is worse than
+useless — sorting three values in the range 0 to a billion allocates a
+billion-element array.
+
+The version above discards the original objects. To sort records while keeping
+them, accumulate a prefix sum over the counts and place elements from the back,
+which also makes it stable — and that stability is what makes counting sort usable
+as the inner loop of radix sort.
+
+</details>
+
+**2. Find the 10 largest of 10 million elements.** Do not sort.
+
+<details>
+<summary>Solution</summary>
+
+A min-heap of size $k$, which is $O(n \log k)$ against sorting's $O(n \log n)$.
+
+```python
+import heapq
+
+def top_k(values, k=10):
+    heap = values[:k]
+    heapq.heapify(heap)              # O(k)
+    for v in values[k:]:
+        if v > heap[0]:              # O(1) peek at the smallest of the top k
+            heapq.heapreplace(heap, v)   # O(log k)
+    return sorted(heap, reverse=True)
+```
+
+At $n = 10^7$ and $k = 10$: $n \log_2 k \approx 3.3 \times 10^7$ against
+$n \log_2 n \approx 2.3 \times 10^8$ — roughly 7× fewer comparisons. The memory
+difference is starker: $O(k)$ means ten elements resident instead of ten million,
+so this works on a stream that does not fit in memory at all.
+
+The `if v > heap[0]` guard is doing most of the work in practice. After the first
+few thousand elements the threshold is high enough that almost every candidate
+fails a single comparison, so the $\log k$ path is rarely taken.
+
+For the general case, `heapq.nlargest` does exactly this. And when you need the
+$k$th element rather than all $k$, quickselect is $O(n)$ average — partition, then
+recurse into only the side containing the target, which is the same insight as
+[binary search](/cs-fundamentals/3-algorithms/searching/) applied to partitioning.
+
+</details>
+
+**3. Sort by department, then by salary descending within each department.** Use
+stability.
+
+<details>
+<summary>Solution</summary>
+
+Sort by the *least* significant key first, then by the most significant with a
+stable sort.
+
+```python
+employees.sort(key=lambda e: -e.salary)     # secondary key first
+employees.sort(key=lambda e: e.department)  # primary key, stably
+```
+
+The second sort preserves the relative order the first established, so within each
+department the salary ordering survives. This only works because `sort` is stable —
+with an unstable sort, the second pass would scramble the first.
+
+```ts
+// Or one compound comparator, which does not depend on stability at all:
+employees.sort(
+  (a, b) => a.department.localeCompare(b.department) || b.salary - a.salary,
+);
+```
+
+**When to prefer each**, since both are correct: the compound comparator is one
+pass and does not rely on a property of the sort, so it is safer in a language
+whose sort might not be stable. The two-pass version wins when the keys are not all
+known at once — for instance a UI where the user clicks column headers in
+sequence, and each click should refine the previous ordering rather than replace
+it. That interaction is *only* implementable with a stable sort.
+
+</details>
+
+<Quiz
+  client:visible
+  id="sorting-quicksort-worst"
+  kind="concept"
+  question="A quicksort using the last element as pivot is given an already-sorted array of 10,000 elements. What happens?"
+  options={[
+    { label: 'It degrades to O(n²) — about 50 million comparisons', correct: true },
+    { label: 'It runs in O(n), since no swaps are needed' },
+    { label: 'It runs in O(n log n) as usual — the input order does not matter' },
+    { label: 'It throws a stack overflow before completing' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Sorted input is the worst case for a last-element pivot. The pivot is always
+        the largest element in its range, so the partition puts everything on one
+        side and nothing on the other. Instead of halving the problem, each step
+        removes exactly one element: <em>T(n) = T(n−1) + O(n)</em>, which is O(n²).
+      </p>
+      <p>
+        About 50 million comparisons against merge sort's 130 thousand — nearly 400×.
+        And option four is nearly right for the wrong reason: an unoptimised
+        recursive implementation <em>would</em> also blow the stack at that depth,
+        since recursion depth becomes n rather than log n.
+      </p>
+      <p>
+        This is why real implementations use a randomised or median-of-three pivot,
+        or introsort's depth cap. It also matters for security: if the input comes
+        from a user who knows your pivot rule, the worst case is something they can
+        choose.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="sorting-stability"
+  kind="concept"
+  question="A table is sorted by name, then the user sorts by department with an UNSTABLE sort. What do they see?"
+  options={[
+    { label: 'Correct departments, but names scrambled within each one', correct: true },
+    { label: 'Correct departments and names — the first sort is preserved' },
+    { label: 'An error, since the two orderings conflict' },
+    { label: 'Departments in the wrong order' },
+  ]}
+  explanation={
+    <>
+      <p>
+        The departments group correctly; the names inside them come out in whatever
+        order the algorithm happened to produce. An unstable sort gives no guarantee
+        about elements it considers equal, and every row in a department is "equal"
+        as far as a department comparator is concerned.
+      </p>
+      <p>
+        The reason this bug survives is that nothing fails. There is no error, the
+        primary ordering is right, and the result looks plausible — it is just
+        subtly wrong in a way users find hard to articulate.
+      </p>
+      <p>
+        This is the practical reason stability is worth knowing about: successive
+        refinement — sort by one column, then another — is a UI pattern that only
+        works on a stable sort. JavaScript has required stability since ES2019
+        precisely because engines previously used different algorithms for short and
+        long arrays, so the same code behaved differently at 10 and 100 elements.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Which sorting algorithm would you use?"** The answer that signals experience
+starts by refusing the premise:
+
+> The library's. `sorted()` and `Array.prototype.sort` are decades-tuned hybrids —
+> both are Timsort, which finds already-sorted runs, extends them with insertion
+> sort, and merges. Anything I hand-write loses on constant factors and probably on
+> correctness.
+>
+> If I had to choose the underlying algorithm: merge sort when worst-case latency
+> matters or the data does not fit in memory, because its cost barely depends on
+> the input and it works with sequential access. Quicksort when memory matters,
+> because it sorts in place with better cache locality — but with a randomised
+> pivot, since the quadratic case is reachable and on user input it is a
+> denial-of-service vector.
+
+**"Why can't we sort faster than n log n?"**
+
+> Any comparison sort is a decision tree — each comparison is a branch, each leaf a
+> possible ordering. There are n! orderings, so the tree needs n! leaves, and a
+> binary tree with n! leaves has height at least log₂(n!), which is about n log n by
+> Stirling. The height is the worst-case number of comparisons.
+>
+> The bound only applies to *comparison* sorts. Counting and radix sort inspect the
+> values instead of comparing them, so they can be linear — which is the useful
+> half of knowing the proof, because it tells you when the bound does not apply.
+
+**"What is stability and when does it matter?"**
+
+> A stable sort keeps equal elements in their original relative order. It matters
+> whenever you sort more than once: sort by salary, then stably by department, and
+> the salary ordering survives inside each department. That is how a table UI with
+> clickable column headers works.
+>
+> Merge sort and insertion sort are stable; quicksort, heap sort and selection sort
+> are not. Python's `sorted` is stable, and JavaScript's has been required to be
+> since ES2019 — before that the same code could give different results for 10 and
+> 100 elements, because V8 used different algorithms by size.
+
+**The caveats worth voicing:**
+
+- Heap sort is $O(n \log n)$ worst case *and* $O(1)$ space, and still loses to
+  quicksort in practice because its access pattern defeats the cache. That is the
+  clearest case I know of Big-O discarding the thing that decides it.
+- If I only need the top k, sorting is the wrong tool — a size-k heap is
+  $O(n \log k)$ and, more importantly, $O(k)$ memory, so it works on a stream.
+- Real implementations switch to insertion sort below about 16 elements, because
+  its constant factor beats the recursion overhead. Asymptotics are the wrong
+  model at that size.

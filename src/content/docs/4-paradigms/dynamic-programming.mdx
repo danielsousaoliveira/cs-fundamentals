@@ -1,0 +1,663 @@
+---
+title: Dynamic Programming
+description: >-
+  Recursion plus a cache — and the real skill, which is choosing a state that
+  makes the recurrence obvious rather than memorising table-filling loops.
+sidebar:
+  order: 3
+difficulty: advanced
+status: complete
+prereqs: ['3-algorithms/recursion', '4-paradigms/divide-and-conquer']
+tags: [dynamic-programming, memoisation, tabulation, state, knapsack, lcs]
+languages: [python, typescript]
+complexity:
+  typical: O(states × transitions)
+  knapsack: O(n·W)
+  lcs: O(n·m)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Dynamic programming has a reputation for being hard that it mostly does not
+deserve. The name is unhelpful — Bellman admitted he chose "dynamic programming"
+because it sounded impressive to a defence secretary who disliked research — and
+the usual introduction, a two-dimensional table being filled in by nested loops,
+shows you the *output* of the thinking rather than the thinking.
+
+Here is the whole idea:
+
+> **Dynamic programming is recursion where the same subproblem comes up more than
+> once, so you write down the answer instead of recomputing it.**
+
+That is it. The canonical demonstration takes one line:
+
+```python
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)     # O(2ⁿ) — recomputes everything
+```
+
+```python
+from functools import cache
+
+@cache                                  # O(n) — same code
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+```
+
+**Identical logic; one decorator; exponential becomes linear.** Nothing else in
+this book gives that return for that diff. At $n = 100$ the first version outlasts
+the universe and the second is instant.
+
+So if the technique is a cache, why is it hard? Because the difficulty is not in
+the caching — it is in **finding a state**. A state is a description of a
+subproblem that is (a) small enough that there are few of them, and (b) complete
+enough that the answer depends only on the state and not on how you got there.
+
+Get the state right and the recurrence usually writes itself. Get it wrong and no
+amount of table-filling saves you. That is the skill, and it is what this page is
+actually about.
+
+## Mechanics
+
+### The four questions
+
+For any DP problem, in order:
+
+1. **What is the state?** What minimal information distinguishes one subproblem
+   from another?
+2. **What is the recurrence?** How does a state's answer depend on smaller states?
+3. **What are the base cases?** The states with no dependencies.
+4. **What order?** Every state must be computed after everything it depends on.
+
+Question 1 is the hard one. The rest follow.
+
+### Two implementations of the same idea
+
+<Tabs syncKey="lang">
+<TabItem label="Top-down (memoisation)">
+
+```python
+from functools import cache
+
+@cache
+def climb(n):
+    """Ways to climb n stairs taking 1 or 2 steps."""
+    if n <= 2:
+        return n
+    return climb(n - 1) + climb(n - 2)
+```
+
+Write the recursion naturally, add a cache. **Only computes states it actually
+needs**, which matters when the state space is large but sparsely reachable. Costs
+stack depth and function-call overhead.
+
+</TabItem>
+<TabItem label="Bottom-up (tabulation)">
+
+```python
+def climb(n):
+    if n <= 2:
+        return n
+
+    dp = [0] * (n + 1)
+    dp[1], dp[2] = 1, 2
+    for i in range(3, n + 1):
+        dp[i] = dp[i - 1] + dp[i - 2]
+    return dp[n]
+```
+
+Fill a table in dependency order. No recursion limit, no call overhead, and it
+opens the door to space optimisation — but it computes every state whether or not
+it is reachable.
+
+</TabItem>
+<TabItem label="Space-optimised">
+
+```python
+def climb(n):
+    if n <= 2:
+        return n
+
+    # The recurrence only ever looks back two positions, so the table is
+    # two variables. O(n) → O(1) space.
+    prev, curr = 1, 2
+    for _ in range(3, n + 1):
+        prev, curr = curr, prev + curr
+    return curr
+```
+
+Whenever the recurrence has bounded lookback, the table collapses. This is
+mechanical once you can see the dependency pattern.
+
+</TabItem>
+</Tabs>
+
+Same recurrence, three implementations. **Start top-down** — it is closest to how
+you think about the problem — and convert only if you need the depth safety or the
+space.
+
+### Choosing the state: the actual skill
+
+Consider "maximum subarray sum". The tempting state is:
+
+> `dp[i]` = the best subarray sum within `a[0..i]`
+
+This does not work. Knowing the best answer so far tells you nothing about whether
+you can *extend* into position `i+1` — the best subarray may have ended long ago.
+The state is not self-sufficient.
+
+The state that works adds one word:
+
+> `dp[i]` = the best subarray sum **ending exactly at** `i`
+
+Now the recurrence is forced: a subarray ending at `i` either extends the one
+ending at `i-1`, or starts fresh at `i`.
+
+$$
+dp[i] = \max(a[i],\; dp[i-1] + a[i])
+$$
+
+```python
+def max_subarray(a):
+    best = curr = a[0]
+    for v in a[1:]:
+        curr = max(v, curr + v)     # extend, or start fresh
+        best = max(best, curr)      # track the global answer separately
+    return best
+```
+
+That is Kadane's algorithm, and the whole difficulty was the phrase "ending exactly
+at". **When a DP feels impossible, the state is usually under-specified** — add
+the constraint that makes it self-sufficient.
+
+### The classic recurrences
+
+**0/1 knapsack** — state is `(item index, remaining capacity)`:
+
+$$
+dp[i][w] = \max\big(\underbrace{dp[i-1][w]}_{\text{skip item } i},\; \underbrace{dp[i-1][w - w_i] + v_i}_{\text{take item } i}\big)
+$$
+
+```python
+def knapsack(items, capacity):
+    dp = [0] * (capacity + 1)
+
+    for _, value, weight in items:
+        # DOWNWARDS. Ascending would let one item be taken twice within the
+        # same pass, which silently solves UNBOUNDED knapsack instead.
+        for w in range(capacity, weight - 1, -1):
+            dp[w] = max(dp[w], dp[w - weight] + value)
+
+    return dp[capacity]
+```
+
+**Longest common subsequence** — state is `(i, j)`, prefixes of both strings:
+
+$$
+dp[i][j] = \begin{cases}
+dp[i-1][j-1] + 1 & \text{if } s_i = t_j \\
+\max(dp[i-1][j],\; dp[i][j-1]) & \text{otherwise}
+\end{cases}
+$$
+
+```python
+def lcs(s, t):
+    dp = [[0] * (len(t) + 1) for _ in range(len(s) + 1)]
+
+    for i in range(1, len(s) + 1):
+        for j in range(1, len(t) + 1):
+            if s[i - 1] == t[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1   # characters match: extend
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])   # drop one, take best
+
+    return dp[len(s)][len(t)]
+```
+
+**Coin change** — state is `amount`, and note the loop order differs from knapsack
+precisely because coins *are* reusable:
+
+```python
+def coin_change(coins, amount):
+    dp = [float('inf')] * (amount + 1)
+    dp[0] = 0
+
+    for coin in coins:
+        for a in range(coin, amount + 1):   # ASCENDING: reuse is allowed
+            dp[a] = min(dp[a], dp[a - coin] + 1)
+
+    return dp[amount] if dp[amount] != float('inf') else -1
+```
+
+## Complexity
+
+**The bound is mechanical once you have the state:**
+
+$$
+T = O(\text{number of states} \times \text{transitions per state})
+$$
+
+| Problem | States | Transitions | Time | Space |
+|---|---|---|---|---|
+| Fibonacci | $n$ | 2 | $O(n)$ | $O(1)$ |
+| Coin change | $n$ | $|C|$ | $O(n \cdot |C|)$ | $O(n)$ |
+| 0/1 knapsack | $n \cdot W$ | 2 | $O(n W)$ | $O(W)$ |
+| LCS | $n \cdot m$ | 3 | $O(nm)$ | $O(\min(n,m))$ |
+| Edit distance | $n \cdot m$ | 3 | $O(nm)$ | $O(\min(n,m))$ |
+| Travelling salesman | $2^n \cdot n$ | $n$ | $O(2^n n^2)$ | $O(2^n n)$ |
+
+**The last row is the honest one.** DP does not make hard problems easy — TSP is
+still exponential. It takes it from $O(n!)$ to $O(2^n n^2)$, which at $n = 20$ is
+the difference between $10^{18}$ and $10^8$: intractable becomes a second. That is
+enormous and still exponential.
+
+**Pseudo-polynomial is a trap worth understanding.** Knapsack's $O(nW)$ looks
+polynomial and is not, because $W$ is a *value*, and encoding it takes $\log W$
+bits. Doubling the number of digits in $W$ squares the runtime. That is why 0/1
+knapsack is NP-hard despite the table:
+
+| Capacity $W$ | Bits to write $W$ | Table size |
+|---:|---:|---:|
+| 1,000 | 10 | 1,000 |
+| 1,000,000 | 20 | 1,000,000 |
+| $10^{12}$ | 40 | $10^{12}$ — infeasible |
+
+The input grew by 30 characters and the algorithm became unusable.
+
+**Space optimisation follows the dependency pattern.** If `dp[i]` depends only on
+`dp[i-1]`, keep one row instead of $n$:
+
+$$
+S: O(n \cdot m) \;\longrightarrow\; O(m)
+$$
+
+For LCS that is 40 GB down to 40 KB on two 100,000-character strings — the
+difference between impossible and trivial. **But you lose the ability to
+reconstruct the answer**, because reconstruction walks backwards through the full
+table. If you need the actual subsequence rather than its length, either keep the
+table or use Hirschberg's algorithm, which recovers it in $O(m)$ space with a
+divide-and-conquer trick at the cost of doubling the time.
+
+## When NOT to use it
+
+**When subproblems do not overlap.** Then it is
+[divide and conquer](/cs-fundamentals/4-paradigms/divide-and-conquer/), and a cache
+costs memory for nothing. Merge sort's two halves share no subproblems; caching
+them is pure overhead.
+
+**When a greedy choice is provably safe.** If you can prove the greedy choice
+property, greedy is $O(n \log n)$ and $O(1)$ space against DP's table. Activity
+selection is greedy; do not build a table for it.
+
+**When the state space is too large.** $2^n$ states is fine at $n = 20$ and
+impossible at $n = 60$. If your state includes a subset, check the size before
+writing the code.
+
+**When the state space is huge and sparse.** Bottom-up computes every state,
+including unreachable ones. Top-down with a dictionary only computes what is
+reached — sometimes the difference between feasible and not.
+
+**When an $O(n)$ insight exists.** Kadane's algorithm *is* DP, but it is $O(1)$
+space because the state collapses. Many "DP problems" have a mathematical shortcut;
+reaching for a 2-D table by reflex means missing it.
+
+**When the recurrence has cycles.** DP requires a directed *acyclic* dependency
+graph. If state A depends on B and B on A, there is no valid evaluation order —
+that is what iterative algorithms like Bellman–Ford are for.
+
+**When memory is the binding constraint and you need reconstruction.** The
+space-optimised version cannot reconstruct. Know which you need before you
+optimise.
+
+## Real-world usage
+
+**`git diff` is longest common subsequence.** Every diff, every code review, every
+merge conflict resolution runs an LCS variant — usually Myers' algorithm, which is
+LCS specialised for the case where the two inputs are mostly similar.
+
+**Spell checkers and fuzzy search** use edit distance, and databases expose it
+directly: Postgres's `levenshtein()` is this exact table.
+
+**Sequence alignment in bioinformatics.** Needleman–Wunsch and Smith–Waterman are
+edit distance with a scoring matrix, and they are among the most-executed DP
+algorithms in the world.
+
+**Query planners.** Choosing a join order over $n$ tables is exponential in
+general, and Selinger's algorithm — still the basis of most planners — is DP over
+subsets of relations, exactly the $O(2^n n^2)$ shape above. It is why planners
+switch to heuristics past about a dozen joins.
+
+**Text justification** in TeX. Knuth's line-breaking algorithm is DP over break
+positions, minimising total badness — which is why TeX produces better paragraphs
+than a greedy line-filler.
+
+**Viterbi decoding** in speech recognition, error-correcting codes and
+part-of-speech tagging: DP over hidden state sequences.
+
+**Reinforcement learning.** Value iteration and policy iteration are dynamic
+programming over states — the same Bellman who named it.
+
+## Failure modes
+
+**Symptom: correct answers, exponential runtime.** Memoisation missing, or the
+cache key is wrong. A cache keyed on a mutable object, or on only part of the
+state, silently never hits.
+
+**Symptom: wrong answers with an off-by-one flavour.** Index confusion between the
+1-indexed DP table and 0-indexed strings. `s[i-1]` in the LCS loop is deliberate,
+and it is where most implementations break.
+
+**Symptom: knapsack gives too-large answers.** The inner loop is ascending, so
+items are reused. Ascending solves *unbounded* knapsack; descending solves 0/1.
+**One character, two different problems**, and both compile.
+
+**Symptom: `RecursionError` in a top-down solution.** Memoisation does not reduce
+depth, only breadth. A chain of 10,000 dependent states is 10,000 frames however
+well it is cached. Convert to bottom-up.
+
+**Symptom: memoisation makes things slower.** Cache overhead exceeding the savings,
+usually because subproblems do not actually overlap — check whether the same key is
+ever requested twice before assuming DP applies.
+
+**Symptom: `functools.cache` throws `unhashable type`.** A list argument. Convert
+to a tuple, and be aware the conversion cost is paid on every call.
+
+**Symptom: the cache never releases memory.** `@cache` is unbounded and keyed
+forever. On a long-running server that is a leak with a friendly name; use
+`@lru_cache(maxsize=...)` or clear it between requests.
+
+**Symptom: the answer is right but you cannot produce the solution itself.** Space
+optimisation removed the table needed for backtracking. Keep the full table, or
+store parent pointers.
+
+## Practice problems
+
+**1. Edit distance.** Minimum single-character insertions, deletions and
+substitutions to turn `s` into `t`.
+
+<details>
+<summary>Solution</summary>
+
+State: `dp[i][j]` = distance between the first `i` characters of `s` and the first
+`j` of `t`.
+
+```python
+def edit_distance(s, t):
+    n, m = len(s), len(t)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Base cases: turning a prefix into the empty string costs one delete
+    # per character, and vice versa. These are not optional — they anchor
+    # the whole table.
+    for i in range(n + 1):
+        dp[i][0] = i
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if s[i - 1] == t[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]        # free — no operation needed
+            else:
+                dp[i][j] = 1 + min(
+                    dp[i - 1][j],      # delete s[i-1]
+                    dp[i][j - 1],      # insert t[j-1]
+                    dp[i - 1][j - 1],  # substitute
+                )
+    return dp[n][m]
+```
+
+$O(nm)$ time and space. The three transitions map exactly onto the three allowed
+operations, which is what makes this recurrence easy to re-derive rather than
+memorise: *ask what the last operation could have been.*
+
+Space-optimised to $O(m)$, since each row depends only on the previous:
+
+```python
+def edit_distance(s, t):
+    prev = list(range(len(t) + 1))
+    for i in range(1, len(s) + 1):
+        curr = [i] + [0] * len(t)
+        for j in range(1, len(t) + 1):
+            curr[j] = (
+                prev[j - 1]
+                if s[i - 1] == t[j - 1]
+                else 1 + min(prev[j], curr[j - 1], prev[j - 1])
+            )
+        prev = curr
+    return prev[len(t)]
+```
+
+Note `curr[j-1]` is the current row and `prev[j]` the previous — mixing those up is
+the standard bug in the optimised version, and it produces answers that are close
+but wrong, which is the worst kind.
+
+</details>
+
+**2. House robber.** Maximum sum of non-adjacent elements.
+
+<details>
+<summary>Solution</summary>
+
+The state needs the "ending exactly at" discipline. `dp[i]` = best total considering
+the first `i` houses:
+
+$$
+dp[i] = \max(dp[i-1],\; dp[i-2] + a_i)
+$$
+
+Either skip house `i` and keep the best up to `i-1`, or take it — which forbids
+`i-1`, so add to the best up to `i-2`.
+
+```python
+def rob(a):
+    # Only two positions back are ever needed, so the table is two variables.
+    skip, take = 0, 0
+    for value in a:
+        skip, take = max(skip, take), skip + value
+    return max(skip, take)
+```
+
+$O(n)$ time, $O(1)$ space.
+
+The variable naming carries the invariant: after processing each house, `take` is
+the best total that *includes* the current house and `skip` the best that excludes
+it. The simultaneous assignment matters — computing them in sequence would let the
+new `skip` feed into `take` and permit adjacent houses.
+
+**The follow-up worth knowing** is the circular variant, where the first and last
+houses are adjacent. It looks like it needs a new recurrence and does not: run the
+linear version twice, once excluding the first house and once excluding the last,
+and take the better. Since they cannot both be robbed, one of those two cases must
+contain the optimum.
+
+</details>
+
+**3. Longest increasing subsequence**, first in $O(n^2)$, then $O(n \log n)$.
+
+<details>
+<summary>Solution</summary>
+
+**The DP version.** State: `dp[i]` = length of the LIS *ending exactly at* `i` —
+the same self-sufficiency trick as Kadane.
+
+```python
+def lis_quadratic(a):
+    if not a:
+        return 0
+    dp = [1] * len(a)
+    for i in range(1, len(a)):
+        for j in range(i):
+            if a[j] < a[i]:
+                dp[j] = dp[j]                 # (no-op, for clarity)
+                dp[i] = max(dp[i], dp[j] + 1)
+    return max(dp)
+```
+
+$O(n^2)$: for each element, scan everything before it.
+
+**The $O(n \log n)$ version** abandons DP for a different insight — maintain the
+smallest possible tail for a subsequence of each length:
+
+```python
+from bisect import bisect_left
+
+def lis(a):
+    tails = []                      # tails[k] = smallest tail of an LIS of length k+1
+    for value in a:
+        i = bisect_left(tails, value)
+        if i == len(tails):
+            tails.append(value)     # extends the longest subsequence so far
+        else:
+            tails[i] = value        # a smaller tail for this length — strictly better
+    return len(tails)
+```
+
+**`tails` is not a subsequence** — it is a set of best-known tails, and its contents
+may not appear together in the input. Only its *length* is meaningful. That is the
+detail people get wrong when they try to recover the actual subsequence from it.
+
+Why a smaller tail is always at least as good: any element that could extend a
+length-$k$ subsequence ending at the old tail can also extend one ending at a
+smaller tail. So overwriting never loses an option.
+
+`tails` is sorted by construction, which is what makes the binary search valid and
+gives $O(n \log n)$.
+
+At $n = 100{,}000$: $10^{10}$ operations against $1.7 \times 10^6$ — the difference
+between hours and instant. **The lesson is that a DP formulation is a starting
+point, not a destination**; some problems have a better structure hiding behind the
+obvious table.
+
+</details>
+
+<Quiz
+  client:visible
+  id="dp-knapsack-direction"
+  kind="output"
+  question="In the 1-D knapsack loop, what changes if the inner loop runs ascending instead of descending?"
+  snippet={`for _, value, weight in items:
+    for w in range(capacity, weight - 1, -1):
+        dp[w] = max(dp[w], dp[w - weight] + value)`}
+  lang="python"
+  options={[
+    { label: 'It solves unbounded knapsack — each item can be used many times', correct: true },
+    { label: 'Nothing changes; the loop order is arbitrary' },
+    { label: 'It produces the same answer but runs slower' },
+    { label: 'It throws an IndexError' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Ascending order lets an item be reused within its own pass. When the loop
+        reaches <code>w</code>, the entry at <code>w - weight</code> may already have
+        been updated <em>with this same item</em> during this pass — so the item gets
+        counted twice, three times, as many as fit.
+      </p>
+      <p>
+        Descending guarantees <code>dp[w - weight]</code> still holds the value from
+        the <em>previous</em> item's pass, which is exactly the "use each item at most
+        once" constraint of 0/1 knapsack.
+      </p>
+      <p>
+        So the two loop directions solve two genuinely different problems, and both
+        compile and return plausible numbers. This is the highest-consequence
+        one-character difference in common DP code — and it is also the reason the
+        coin-change example on this page loops ascending, since coins <em>are</em>{' '}
+        reusable.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="dp-pseudo-polynomial"
+  kind="concept"
+  question="0/1 knapsack runs in O(n·W). Why is the problem still NP-hard?"
+  options={[
+    { label: 'W is a value, and writing it takes only log W bits of input', correct: true },
+    { label: 'Because the space complexity is also O(W)' },
+    { label: 'It is not — O(n·W) is polynomial, so knapsack is in P' },
+    { label: 'Because n and W can both grow, making it O(n²)' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Complexity is measured against the <em>size of the input</em>, and a capacity
+        of W is written in about log₂W bits. So O(n·W) is exponential in the input
+        length: adding 30 characters to the number takes W from 1,000 to 10¹² and the
+        table from feasible to impossible.
+      </p>
+      <p>
+        This is called <strong>pseudo-polynomial</strong> — polynomial in the numeric
+        value, exponential in the encoding. It is why the DP is genuinely useful for
+        small capacities and why it does not settle P versus NP.
+      </p>
+      <p>
+        The practical reading: before writing this DP, check the magnitude of W. The
+        algorithm's feasibility depends on a number's value rather than on how many
+        numbers there are, which is an unusual and easy-to-miss failure mode.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"What is dynamic programming?"** Lead with the one-sentence version, not the
+table:
+
+> Recursion where the same subproblem comes up more than once, so you cache the
+> answer instead of recomputing it. The cleanest demonstration is Fibonacci: the
+> naive recursion is O(2ⁿ) because it recomputes the same values exponentially
+> often, and adding a cache decorator — with no other change — makes it O(n).
+>
+> Two conditions have to hold: **overlapping subproblems**, or the cache never hits,
+> and **optimal substructure**, meaning an optimal solution is built from optimal
+> solutions to subproblems.
+
+**"How do you approach a DP problem?"** The four questions, and be honest about
+which is hard:
+
+> What is the state, what is the recurrence, what are the base cases, and in what
+> order do I evaluate. The state is the only hard one — the rest usually follow from
+> it.
+>
+> The trick I use when a DP feels impossible is that the state is under-specified.
+> For maximum subarray, "best answer so far" does not work, because it does not tell
+> you whether you can extend. "Best subarray *ending exactly at* i" does, and the
+> recurrence becomes obvious. That phrase — ending exactly at — fixes a surprising
+> number of these.
+
+**"Top-down or bottom-up?"**
+
+> I start top-down, because it is closest to how I reason about the problem: write
+> the recursion, add a cache. It also only computes states it actually reaches,
+> which matters when the space is large and sparse.
+>
+> I convert to bottom-up when recursion depth is a risk — memoisation reduces
+> breadth, not depth, so a chain of 10,000 dependent states is still 10,000 frames —
+> or when I want the space optimisation, which needs the explicit table to collapse.
+
+**The caveats worth voicing:**
+
+- $O(nW)$ knapsack is *pseudo*-polynomial: $W$ is a value, so the runtime is
+  exponential in the input's bit length. Check the magnitude of $W$ before writing
+  it.
+- The 1-D knapsack loop direction is load-bearing — descending is 0/1, ascending is
+  unbounded, and both look correct.
+- Space optimisation costs you reconstruction. If you need the actual subsequence
+  rather than its length, keep the table or use Hirschberg's algorithm.
+- A DP formulation is a starting point, not a destination. Longest increasing
+  subsequence has an obvious $O(n^2)$ DP and an $O(n \log n)$ solution with a
+  different insight entirely.

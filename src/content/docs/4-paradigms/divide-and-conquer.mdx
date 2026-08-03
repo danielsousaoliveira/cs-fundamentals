@@ -1,0 +1,608 @@
+---
+title: Divide and Conquer
+description: >-
+  Split, solve, combine — and the Master Theorem that tells you which of those
+  three steps actually decides the cost.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs: ['3-algorithms/recursion', '3-algorithms/sorting']
+tags: [divide-and-conquer, master-theorem, recurrence, parallelism]
+languages: [python, typescript]
+complexity:
+  typical: O(n log n)
+  merge-sort: O(n log n)
+  binary-search: O(log n)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Divide and conquer is three steps:
+
+1. **Divide** the problem into smaller instances of the same problem.
+2. **Conquer** each by recursing, until they are small enough to solve directly.
+3. **Combine** the sub-answers into the answer.
+
+Stated that way it sounds like a description of recursion, and the distinction is
+worth being precise about: **all divide and conquer is recursion; most recursion is
+not divide and conquer.** Walking a linked list recursively divides the problem into
+one subproblem of size $n-1$. That is not conquering anything — it is a loop with a
+stack. Divide and conquer means splitting into *multiple* substantially smaller
+pieces, and the payoff comes from the fact that the pieces shrink geometrically.
+
+The reason it works is worth making concrete. Halving repeatedly reaches 1 in
+$\log_2 n$ steps, so a problem of size one billion has only 30 levels of
+subdivision. If the work per level is linear, the total is $n \log n$ — and that
+$\log n$ factor is very nearly free compared to the $n$ you were already paying.
+
+The non-obvious part, and the actual content of this page, is that **the combine
+step usually decides the complexity, not the recursion.** Two algorithms can split
+identically and land in different complexity classes purely because of what they do
+on the way back up:
+
+| | Split | Combine | Result |
+|---|---|---|---|
+| Tree traversal | 2 halves | $O(1)$ | $O(n)$ |
+| Merge sort | 2 halves | $O(n)$ | $O(n \log n)$ |
+
+Same recursion, same branching, one class apart. When you analyse a
+divide-and-conquer algorithm, the combine step is where to look first.
+
+## Mechanics
+
+### The shape
+
+```python
+def solve(problem):
+    if is_small(problem):          # base case: solve directly
+        return solve_directly(problem)
+
+    parts = divide(problem)                        # 1. divide
+    answers = [solve(part) for part in parts]      # 2. conquer
+    return combine(answers)                        # 3. combine
+```
+
+Every algorithm below is this template with different `divide` and `combine`.
+
+### Merge sort: trivial divide, expensive combine
+
+```python
+def merge_sort(a):
+    if len(a) <= 1:
+        return a
+
+    mid = len(a) // 2
+    left = merge_sort(a[:mid])       # divide is just arithmetic
+    right = merge_sort(a[mid:])
+    return merge(left, right)        # ALL the work is here — O(n)
+```
+
+$T(n) = 2T(n/2) + O(n) \Rightarrow O(n \log n)$.
+
+### Quicksort: expensive divide, no combine
+
+```python
+def quicksort(a, lo, hi):
+    if lo >= hi:
+        return
+    p = partition(a, lo, hi)         # ALL the work is here — O(n)
+    quicksort(a, lo, p - 1)
+    quicksort(a, p + 1, hi)          # no combine step at all
+```
+
+Same recurrence, same $O(n \log n)$ average — but the work moved from combine to
+divide. That relocation is why quicksort sorts in place while merge sort needs an
+auxiliary array, and it is also why quicksort has a bad worst case: an unbalanced
+*divide* has no combine step to smooth it out.
+
+### Binary search: divide, discard, no combine
+
+```python
+def binary_search(a, target, lo, hi):
+    if lo > hi:
+        return -1
+    mid = lo + (hi - lo) // 2
+    if a[mid] == target:
+        return mid
+    if a[mid] < target:
+        return binary_search(a, target, mid + 1, hi)   # ONE half, not two
+    return binary_search(a, target, lo, mid - 1)
+```
+
+The special case where you recurse into **one** subproblem instead of all of them:
+$T(n) = T(n/2) + O(1) \Rightarrow O(\log n)$. Discarding half the problem
+unexamined is what makes it logarithmic rather than linear.
+
+### Karatsuba: when a cleverer divide changes the class
+
+Multiplying two $n$-digit numbers the schoolbook way is $O(n^2)$. Split each into
+halves, $x = a \cdot 10^{n/2} + b$ and $y = c \cdot 10^{n/2} + d$:
+
+$$
+xy = ac \cdot 10^{n} + (ad + bc) \cdot 10^{n/2} + bd
+$$
+
+That is four multiplications of half-size numbers — $T(n) = 4T(n/2) + O(n)$, which
+solves to $O(n^2)$. No gain.
+
+Karatsuba's observation is that the middle term can be recovered from the other
+two:
+
+$$
+ad + bc = (a+b)(c+d) - ac - bd
+$$
+
+Now **three** multiplications suffice:
+
+```python
+def karatsuba(x, y):
+    if x < 10 or y < 10:
+        return x * y
+
+    n = max(x.bit_length(), y.bit_length()) // 2
+    mask = (1 << n) - 1
+    a, b = x >> n, x & mask
+    c, d = y >> n, y & mask
+
+    ac = karatsuba(a, c)
+    bd = karatsuba(b, d)
+    # The trick: one multiplication recovers the cross terms.
+    cross = karatsuba(a + b, c + d) - ac - bd
+
+    return (ac << (2 * n)) + (cross << n) + bd
+```
+
+$T(n) = 3T(n/2) + O(n) \Rightarrow O(n^{\log_2 3}) = O(n^{1.585})$.
+
+This is the example worth remembering, because it shows the leverage is in **how
+many subproblems you recurse into**, not in how you split. Trading a multiplication
+for a few additions changed the exponent.
+
+## Complexity
+
+### The Master Theorem
+
+For recurrences of the form $T(n) = a\,T(n/b) + f(n)$, where $a$ is the number of
+subproblems, $n/b$ their size, and $f(n)$ the divide-plus-combine cost, compare
+$f(n)$ against $n^{\log_b a}$:
+
+$$
+\begin{cases}
+f(n) = O(n^{\log_b a - \epsilon}) & \Rightarrow\; T(n) = \Theta(n^{\log_b a}) \quad \text{(leaves dominate)} \\[4pt]
+f(n) = \Theta(n^{\log_b a}) & \Rightarrow\; T(n) = \Theta(n^{\log_b a} \log n) \quad \text{(balanced)} \\[4pt]
+f(n) = \Omega(n^{\log_b a + \epsilon}) & \Rightarrow\; T(n) = \Theta(f(n)) \quad \text{(root dominates)}
+\end{cases}
+$$
+
+The reading that makes it memorable: **$n^{\log_b a}$ is the total work at the leaf
+level, and $f(n)$ is the work at the root.** Whichever is bigger wins; if they are
+the same, you pay it $\log n$ times.
+
+| Recurrence | $a$ | $b$ | $n^{\log_b a}$ | $f(n)$ | Result | Example |
+|---|---:|---:|---|---|---|---|
+| $2T(n/2) + O(1)$ | 2 | 2 | $n$ | $1$ | $O(n)$ | Tree traversal |
+| $2T(n/2) + O(n)$ | 2 | 2 | $n$ | $n$ | $O(n \log n)$ | Merge sort |
+| $2T(n/2) + O(n^2)$ | 2 | 2 | $n$ | $n^2$ | $O(n^2)$ | Root dominates |
+| $T(n/2) + O(1)$ | 1 | 2 | $1$ | $1$ | $O(\log n)$ | Binary search |
+| $3T(n/2) + O(n)$ | 3 | 2 | $n^{1.585}$ | $n$ | $O(n^{1.585})$ | Karatsuba |
+| $7T(n/2) + O(n^2)$ | 7 | 2 | $n^{2.807}$ | $n^2$ | $O(n^{2.807})$ | Strassen |
+
+### Why the levels argument works
+
+If you would rather not memorise the theorem, the recursion tree gives the same
+answer and is harder to misapply. At level $i$ there are $a^i$ subproblems each of
+size $n/b^i$, so the work at that level is $a^i f(n/b^i)$. For merge sort:
+
+| Level | Subproblems | Size each | Work per level |
+|---:|---:|---:|---|
+| 0 | 1 | $n$ | $n$ |
+| 1 | 2 | $n/2$ | $2 \cdot n/2 = n$ |
+| 2 | 4 | $n/4$ | $4 \cdot n/4 = n$ |
+| … | … | … | $n$ |
+| $\log_2 n$ | $n$ | 1 | $n$ |
+
+**Every level costs $n$, and there are $\log_2 n$ levels.** That is the entire
+derivation of $n \log n$, and it makes clear why the result is so robust: the work
+is spread evenly, so nothing at either end dominates.
+
+Contrast with tree traversal, where the per-level work *halves* — $n, n/2, n/4,
+\ldots$ — summing to $2n$, hence $O(n)$. The geometric series collapses to a
+constant factor, which is the same reason
+[dynamic array doubling](/cs-fundamentals/2-data-structures/arrays-lists/) is
+amortised $O(1)$.
+
+### The space cost people forget
+
+$$
+S(n) = O(\text{depth}) + O(\text{auxiliary per level})
+$$
+
+Merge sort's depth is $\log n$ but its auxiliary arrays total $O(n)$, so it is
+$O(n)$ space. Quicksort's in-place partition makes it $O(\log n)$ — stack only —
+and that difference is why quicksort is usually preferred in practice despite the
+identical average time.
+
+**Recursion depth is a real limit**, not a theoretical one. Depth is $\log n$ only
+when the split is balanced; quicksort on sorted input has depth $n$, which
+overflows the stack at around 1,000 frames in Python. Real implementations recurse
+into the *smaller* partition and loop on the larger, which caps depth at $\log n$
+regardless of balance.
+
+## When NOT to use it
+
+**When the subproblems overlap.** This is the boundary with
+[dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/) and it is
+the important one. Divide and conquer assumes subproblems are *independent* — it
+solves each from scratch. Naive Fibonacci is "divide and conquer" on that
+definition and takes $O(2^n)$, because `fib(n-1)` and `fib(n-2)` share almost all
+their work.
+
+> Independent subproblems → divide and conquer. Overlapping subproblems → dynamic
+> programming.
+
+**When the combine step is more expensive than solving directly.** If combining
+costs $O(n^2)$, the recursion buys nothing — the root term dominates and you have
+paid recursion overhead for the same complexity.
+
+**When $n$ is small.** The recursion overhead — call frames, argument copying,
+allocation — has a real constant factor. Every production sort switches to
+insertion sort below about 16 elements for exactly this reason, and a
+divide-and-conquer implementation without a cutoff is leaving a large constant on
+the table.
+
+**When the split cannot be made balanced.** The $\log n$ depth depends on halving.
+A split that peels off one element at a time gives $T(n) = T(n-1) + O(n) = O(n^2)$,
+which is quicksort's worst case and is worse than not recursing at all.
+
+**When an in-place iterative version exists and memory matters.** Merge sort's
+$O(n)$ auxiliary space is real. On memory-constrained systems, heap sort gives the
+same worst-case time in $O(1)$ space.
+
+## Real-world usage
+
+**Sorting** is the canonical case, covered on the
+[sorting page](/cs-fundamentals/3-algorithms/sorting/). Note that production sorts
+are *hybrid* divide and conquer: recurse until small, then switch strategy.
+
+**MapReduce is divide and conquer across machines.** Split the data, map in
+parallel, reduce to combine. The framework is essentially a distributed combine
+step, and its constraints are the paradigm's constraints — which is why MapReduce
+jobs must be expressible as independent per-chunk work plus an associative
+combine.
+
+**The Fast Fourier Transform** takes the discrete Fourier transform from $O(n^2)$
+to $O(n \log n)$ by splitting into even and odd-indexed samples. That single
+algorithmic change is what makes digital signal processing, audio compression, and
+much of modern telecommunications practical.
+
+**Strassen's matrix multiplication** — $O(n^{2.807})$ instead of $O(n^3)$ — is the
+same trick as Karatsuba, one dimension up: seven multiplications of half-size
+matrices instead of eight. Worth knowing as the answer to "can you beat the obvious
+bound", though the constant factor and numerical stability mean it only pays off on
+genuinely large matrices.
+
+**Closest pair of points** in $O(n \log n)$ rather than $O(n^2)$ is the classic
+geometry example, and its combine step is unusually instructive — after solving both
+halves, you only need to check points within the current best distance of the
+dividing line, and a geometric argument bounds that to 7 comparisons per point.
+
+**Parallelism is the underrated payoff.** Independent subproblems means they can run
+on different cores with no coordination. Merge sort parallelises naturally; a
+sequential loop does not. This matters more now than when these algorithms were
+designed.
+
+## Failure modes
+
+**Symptom: exponential runtime from a "divide and conquer" solution.** Overlapping
+subproblems. You wrote dynamic programming without the memoisation. The tell is the
+same function being called with identical arguments repeatedly.
+
+**Symptom: stack overflow on large or adversarial input.** Unbalanced splits making
+depth $O(n)$ rather than $O(\log n)$. Recurse into the smaller side and iterate on
+the larger.
+
+**Symptom: it is slower than the naive version.** Either $n$ is below the crossover
+point, or the split and combine are allocating. `a[:mid]` in Python copies — that
+is $O(n)$ per call on top of the algorithm's own cost, and it is easy to miss
+because it looks like index arithmetic.
+
+```python
+left = merge_sort(a[:mid])       # allocates a new list every call
+merge_sort(a, lo, mid)           # pass indices instead
+```
+
+**Symptom: memory usage is much higher than expected.** Auxiliary allocations at
+every level. $\log n$ levels each allocating $O(n)$ is fine if they are freed on
+unwind, and is $O(n \log n)$ if they are retained.
+
+**Symptom: correct for powers of two, wrong otherwise.** The classic
+divide-and-conquer off-by-one — an odd-length range where `mid` calculation leaves
+one element in neither half, or in both. Test lengths 0, 1, 2, 3 and 5 explicitly.
+
+**Symptom: parallel version is slower than sequential.** Task-spawning overhead
+below the crossover. Parallelise the top few levels only, and run sequentially
+beneath.
+
+## Practice problems
+
+**1. Count inversions** — pairs $(i, j)$ with $i < j$ and $a[i] > a[j]$ — in
+$O(n \log n)$.
+
+<details>
+<summary>Solution</summary>
+
+Piggyback on merge sort. The insight is that during a merge, when you take an
+element from the right half, **every remaining element in the left half forms an
+inversion with it** — and they are all counted in one arithmetic operation rather
+than one at a time.
+
+```python
+def count_inversions(a):
+    def sort_count(a):
+        if len(a) <= 1:
+            return a, 0
+
+        mid = len(a) // 2
+        left, x = sort_count(a[:mid])
+        right, y = sort_count(a[mid:])
+
+        merged, z = [], 0
+        i = j = 0
+        while i < len(left) and j < len(right):
+            if left[i] <= right[j]:
+                merged.append(left[i]); i += 1
+            else:
+                merged.append(right[j]); j += 1
+                z += len(left) - i      # ALL remaining left elements are > right[j]
+        merged += left[i:] + right[j:]
+
+        return merged, x + y + z
+
+    return sort_count(a)[1]
+```
+
+That single line `z += len(left) - i` is the whole algorithm. Because both halves
+are already sorted, `left[i] > right[j]` implies every element after `i` is too —
+so a comparison that would have been one inversion in the brute force accounts for
+up to $n/2$ of them here.
+
+The recurrence is unchanged from merge sort — $T(n) = 2T(n/2) + O(n)$ — so it is
+$O(n \log n)$ against $O(n^2)$ for checking every pair.
+
+This generalises usefully: **any quantity that can be accumulated during a merge
+comes along for free.** Counting pairs within a distance, or smaller-elements-to-the-right,
+are the same algorithm with a different accumulator.
+
+</details>
+
+**2. Maximum subarray sum**, divide and conquer. Then say why nobody uses it.
+
+<details>
+<summary>Solution</summary>
+
+The subtlety is that the best subarray might *cross* the midpoint, so it is not
+enough to take the better of the two halves.
+
+```python
+def max_subarray(a, lo, hi):
+    if lo == hi:
+        return a[lo]
+
+    mid = (lo + hi) // 2
+    best_left = max_subarray(a, lo, mid)
+    best_right = max_subarray(a, mid + 1, hi)
+
+    # The crossing case: extend outwards from the midpoint in both directions.
+    # This is linear, and it is why the combine step costs O(n).
+    total, left_best = 0, float('-inf')
+    for i in range(mid, lo - 1, -1):
+        total += a[i]
+        left_best = max(left_best, total)
+
+    total, right_best = 0, float('-inf')
+    for i in range(mid + 1, hi + 1):
+        total += a[i]
+        right_best = max(right_best, total)
+
+    return max(best_left, best_right, left_best + right_best)
+```
+
+$T(n) = 2T(n/2) + O(n) = O(n \log n)$.
+
+**Why nobody uses it:** Kadane's algorithm is $O(n)$ and six lines.
+
+```python
+def kadane(a):
+    best = current = a[0]
+    for v in a[1:]:
+        # Either extend the previous subarray or start fresh here.
+        current = max(v, current + v)
+        best = max(best, current)
+    return best
+```
+
+The comparison is the useful part. Divide and conquer solves each half without
+using anything learned from the other, so it re-derives information at every level.
+Kadane carries one value forward — the best subarray *ending here* — which is a
+[dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/) state, and
+it makes the whole $\log n$ factor disappear.
+
+**The lesson: when subproblems can share information along a single axis, a linear
+scan usually beats the recursion.** Divide and conquer earns its keep when they
+genuinely cannot.
+
+</details>
+
+**3. Find the majority element** — one appearing more than $n/2$ times — using
+divide and conquer, in $O(n \log n)$.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def majority(a, lo, hi):
+    if lo == hi:
+        return a[lo]
+
+    mid = (lo + hi) // 2
+    left = majority(a, lo, mid)
+    right = majority(a, mid + 1, hi)
+
+    if left == right:
+        return left
+
+    # They disagree, so count both in this range and take the winner. Counting
+    # is O(n), which is what makes the combine step linear.
+    left_count = sum(1 for i in range(lo, hi + 1) if a[i] == left)
+    right_count = sum(1 for i in range(lo, hi + 1) if a[i] == right)
+    return left if left_count > right_count else right
+```
+
+The correctness argument is the interesting bit: **if an element is the majority of
+the whole range, it must be the majority of at least one half.** If it were the
+majority of neither, it would hold at most half of each and therefore at most half
+overall — a contradiction. So checking both halves' candidates is sufficient.
+
+$T(n) = 2T(n/2) + O(n) = O(n \log n)$.
+
+**And again there is a better answer.** Boyer–Moore voting is $O(n)$ time and
+$O(1)$ space:
+
+```python
+def majority_vote(a):
+    count, candidate = 0, None
+    for v in a:
+        if count == 0:
+            candidate = v
+        count += 1 if v == candidate else -1
+    return candidate       # valid ONLY if a majority is guaranteed to exist
+```
+
+Think of it as each occurrence of the majority element cancelling one occurrence of
+something else. Since the majority has more than $n/2$ occurrences, it cannot be
+fully cancelled, so it survives as the candidate.
+
+The caveat matters: it assumes a majority exists. Without that guarantee it returns
+an arbitrary element, so a verification pass is required — which is still $O(n)$
+overall.
+
+</details>
+
+<Quiz
+  client:visible
+  id="dc-combine-decides"
+  kind="concept"
+  question="Two algorithms both split into 2 halves and recurse. One combines in O(1), the other in O(n). What are their complexities?"
+  options={[
+    { label: 'O(n) and O(n log n)', correct: true },
+    { label: 'O(log n) and O(n)' },
+    { label: 'O(n log n) and O(n²)' },
+    { label: 'Both O(n log n) — the combine is a constant factor' },
+  ]}
+  explanation={
+    <>
+      <p>
+        O(n) and O(n log n). With an O(1) combine the per-level work halves — n, n/2,
+        n/4 … — a geometric series summing to 2n. With an O(n) combine every level
+        costs n, and there are log n levels.
+      </p>
+      <p>
+        That is why tree traversal is linear and merge sort is linearithmic despite
+        identical recursion structure. The recursion is not what decides the class —
+        the combine step is, which is where to look first when analysing one of these.
+      </p>
+      <p>
+        Option four is the tempting error: the combine is not a constant factor
+        because it runs at <em>every node of the recursion tree</em>, and the number
+        of nodes grows with n.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="dc-vs-dp"
+  kind="concept"
+  question="What distinguishes a problem suited to divide and conquer from one suited to dynamic programming?"
+  options={[
+    { label: 'Whether the subproblems overlap', correct: true },
+    { label: 'Whether the problem is a maximisation or minimisation' },
+    { label: 'Whether the recursion has one branch or several' },
+    { label: 'Whether the input is sorted' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Overlap. Divide and conquer assumes subproblems are <em>independent</em> and
+        solves each from scratch — merge sort's two halves share nothing, so there is
+        nothing to reuse. Dynamic programming exists precisely because subproblems
+        recur, and caching each one collapses an exponential tree to a polynomial.
+      </p>
+      <p>
+        The clearest demonstration is naive Fibonacci: structurally it is divide and
+        conquer, and it takes O(2ⁿ) because <code>fib(n−1)</code> and{' '}
+        <code>fib(n−2)</code> re-derive almost all of the same work. Add memoisation
+        — no structural change at all — and it is O(n).
+      </p>
+      <p>
+        So the diagnostic question is: does the same subproblem appear more than
+        once? If yes, cache it and you have dynamic programming. If no, caching costs
+        memory and buys nothing.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Explain divide and conquer."**
+
+> Split the problem into smaller instances of itself, solve those recursively, and
+> combine the results. Merge sort is the canonical one — split in half, sort each
+> half, merge.
+>
+> The part worth adding is that the *combine* step usually decides the complexity,
+> not the recursion. Tree traversal and merge sort have identical recursion — two
+> halves each — but tree traversal combines in constant time and is O(n), while
+> merge sort combines in linear time and is O(n log n). When I analyse one of these
+> I look at the combine step first.
+
+**"How do you get the complexity?"**
+
+> The recursion tree, usually, because it is harder to misapply than the Master
+> Theorem. At each level there are aⁱ subproblems of size n/bⁱ, so I work out the
+> cost per level and count the levels. For merge sort every level costs n and there
+> are log n levels, which is the whole derivation.
+>
+> The Master Theorem is the shortcut: compare the work at the leaves, n^(log_b a),
+> against the work at the root, f(n). Whichever dominates wins; if they match you pay
+> it log n times.
+
+**"When is it the wrong tool?"** The distinction that matters:
+
+> When the subproblems overlap. Divide and conquer solves each from scratch, so if
+> they share work it re-derives it exponentially — naive Fibonacci is exactly this,
+> and it is O(2ⁿ) until you add memoisation, at which point it is dynamic
+> programming and O(n).
+>
+> Also when the split cannot be balanced, since the log n depth depends on halving —
+> a split that peels off one element gives O(n²) and a stack overflow.
+
+**The caveats worth voicing:**
+
+- Depth is $\log n$ only when the split is balanced. Production implementations
+  recurse into the smaller partition and loop on the larger, so the stack is bounded
+  regardless of input.
+- Watch for allocation in the split. `a[:mid]` in Python copies, which adds $O(n)$
+  per call and is invisible because it reads like index arithmetic.
+- Below about 16 elements the recursion overhead dominates and every real
+  implementation switches to insertion sort.
+- The underrated payoff is parallelism: independent subproblems need no
+  coordination, so this is the family of algorithms that scales across cores.

@@ -1,0 +1,619 @@
+---
+title: Recursion
+description: >-
+  Trusting the recursive call, counting the stack, and why Python and JavaScript
+  will not save you with tail-call optimisation.
+sidebar:
+  order: 5
+difficulty: foundational
+status: complete
+prereqs: ['2-data-structures/stacks-queues', '1-complexity/big-o']
+tags: [recursion, stack, memoisation, tail-call, recurrence]
+languages: [python, typescript]
+complexity:
+  depth: O(d) stack
+  fib-naive: O(2ⁿ)
+  fib-memo: O(n)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+The difficulty with recursion is not that it is complicated. It is that people try
+to trace it, and tracing a recursive call by hand is genuinely hard — five levels
+deep with two branches per level is 32 stack frames nobody can hold in their head.
+
+The way out is to stop tracing and start trusting:
+
+> **Assume the recursive call already works.** Your only job is to combine its
+> answer with the current step, and to handle the case where there is nothing left
+> to do.
+
+That is not a trick, it is induction. If the base case is correct, and each step is
+correct *given* that the smaller case is correct, then the whole thing is correct.
+The machine does the tracing; you do the induction.
+
+Which reduces every recursive function to three questions:
+
+1. **What is the smallest input, and what is the answer for it?** (the base case)
+2. **How do I make the problem strictly smaller?** (progress)
+3. **Given the answer for the smaller problem, how do I get mine?** (the combine)
+
+Miss the first and it never stops. Miss the second and it never stops either, more
+subtly. The third is the actual thinking.
+
+Recursion is also the natural shape for anything defined recursively — trees,
+nested structures, grammars — and it is the wrong shape for a great deal of code
+that merely *can* be written recursively. Both halves of that matter, and the
+second is what the "when not to use it" section is about.
+
+## Mechanics
+
+### The three parts, made visible
+
+```python
+def factorial(n):
+    if n <= 1:            # 1. base case: smallest input, known answer
+        return 1
+    return n * factorial(n - 1)   # 2. progress (n-1)   3. combine (n *)
+```
+
+The call stack is what makes this work, and it is the thing most explanations skip.
+Each call gets its own frame holding its own `n` and its own return address:
+
+```text
+factorial(4)  → 4 * factorial(3)          stack depth 1
+  factorial(3) → 3 * factorial(2)         stack depth 2
+    factorial(2) → 2 * factorial(1)       stack depth 3
+      factorial(1) → 1                    stack depth 4, base case
+    ← 2                                   frames unwind, multiplying
+  ← 6
+← 24
+```
+
+The multiplications happen on the way *back up*. That is why this is not a loop
+with extra steps: the pending work is stored in the stack, and $O(n)$ frames is
+$O(n)$ memory a loop would not need.
+
+### Recursion on trees, where it earns its keep
+
+```python
+def height(node):
+    if node is None:
+        return 0
+    return 1 + max(height(node.left), height(node.right))
+```
+
+Four lines, and the iterative version needs an explicit stack and is noticeably
+harder to read. This is the case where recursion is unambiguously right: **the data
+structure is defined recursively**, so the code that walks it should be too.
+
+### Multiple recursive calls, and the cost
+
+```python
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)     # two calls: the tree branches
+```
+
+This is correct and catastrophically slow, and the reason is worth seeing rather
+than being told. `fib(5)` computes `fib(3)` twice, `fib(2)` three times, `fib(1)`
+five times:
+
+```text
+                    fib(5)
+            ┌─────────┴─────────┐
+         fib(4)               fib(3)      ← computed again
+      ┌────┴────┐          ┌────┴────┐
+   fib(3)     fib(2)    fib(2)     fib(1)
+   ┌──┴──┐    ┌─┴─┐     ┌─┴─┐
+fib(2) fib(1) …          …
+```
+
+The fix is [memoisation](/cs-fundamentals/4-paradigms/dynamic-programming/) — cache
+each answer the first time:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from functools import cache
+
+@cache                       # one decorator: O(2ⁿ) → O(n)
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const memo = new Map<number, number>();
+
+function fib(n: number): number {
+  if (n <= 1) return n;
+  const hit = memo.get(n);
+  if (hit !== undefined) return hit;
+
+  const value = fib(n - 1) + fib(n - 2);
+  memo.set(n, value);
+  return value;
+}
+```
+
+</TabItem>
+</Tabs>
+
+Each of $n$ distinct subproblems is now computed once, so the exponential tree
+collapses to a linear chain.
+
+### Converting to iteration
+
+Any recursion can be made iterative, and there are two very different cases.
+
+**Tail recursion** — the recursive call is the *last* thing that happens, with no
+pending work — converts to a plain loop:
+
+```python
+def factorial_iter(n):
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result          # O(1) stack instead of O(n)
+```
+
+**Non-tail recursion** needs an explicit stack, because there is pending work to
+remember:
+
+```python
+def inorder_iter(root):
+    out, stack, node = [], [], root
+    while stack or node:
+        while node:              # go as far left as possible
+            stack.append(node)   # remember where to come back to
+            node = node.left
+        node = stack.pop()
+        out.append(node.value)   # visit
+        node = node.right
+    return out
+```
+
+Note what happened: the stack did not disappear, it moved from the runtime into a
+variable you manage. That is the honest description of "converting recursion to
+iteration" — you are choosing the heap over the call stack, which buys you a much
+larger depth limit and costs you readability.
+
+## Complexity
+
+**Time is (number of calls) × (work per call).** For a single recursive call per
+level, that is depth × work. For branching recursion it is the size of the whole
+call tree:
+
+$$
+\text{calls} = b^d \quad\text{where } b = \text{branching factor}, \; d = \text{depth}
+$$
+
+Naive Fibonacci has $b \approx 2$ and $d = n$, hence $O(2^n)$. More precisely the
+call count is $2F(n+1) - 1$, which grows as $\varphi^n$ where $\varphi \approx
+1.618$ — so $O(1.618^n)$, still hopeless:
+
+| $n$ | Naive calls | Memoised calls |
+|---:|---:|---:|
+| 10 | 177 | 11 |
+| 30 | 2,692,537 | 31 |
+| 50 | ~40 billion | 51 |
+| 100 | ~$10^{21}$ | 101 |
+
+At $n = 50$ the naive version takes minutes; at $n = 100$ it outlasts the universe.
+The memoised version is instant at both. **One decorator changes the complexity
+class**, which is the single most dramatic such change in common use.
+
+**Space is depth, not calls** — and this is the distinction people get wrong.
+Frames are pushed and popped, so only one root-to-leaf path exists at a time:
+
+$$
+S(n) = O(d) \quad\text{not}\quad O(b^d)
+$$
+
+Naive Fibonacci makes $2^n$ calls but uses only $O(n)$ stack, because the tree is
+explored depth-first.
+
+**Solving recurrences** is how you get the bound for divide-and-conquer shapes. The
+Master Theorem covers $T(n) = a\,T(n/b) + f(n)$:
+
+| Recurrence | Solution | Example |
+|---|---|---|
+| $T(n) = T(n/2) + O(1)$ | $O(\log n)$ | Binary search |
+| $T(n) = T(n-1) + O(1)$ | $O(n)$ | Linear recursion |
+| $T(n) = 2T(n/2) + O(n)$ | $O(n \log n)$ | Merge sort |
+| $T(n) = 2T(n/2) + O(1)$ | $O(n)$ | Tree traversal |
+| $T(n) = T(n-1) + O(n)$ | $O(n^2)$ | Quicksort worst case |
+| $T(n) = 2T(n-1) + O(1)$ | $O(2^n)$ | Subsets, naive Fibonacci |
+
+The two rows worth comparing are the third and fourth. Same branching, same
+halving, different combine cost — and that difference is the whole gap between
+$O(n)$ and $O(n \log n)$. **The combine step is usually what decides the bound**,
+not the recursion.
+
+**The stack limit is a real, low number.** CPython defaults to 1,000 frames;
+Node's is around 10,000–15,000 depending on frame size. So:
+
+- Recursing over a balanced tree of a million nodes: depth $\approx 20$. Fine.
+- Recursing over a **degenerate** tree of a million nodes: depth $10^6$. Crash.
+- Recursing over a linked list of 100,000 nodes: crash.
+
+That last one is the practical trap, and it is why "the tree is balanced" is a
+precondition worth stating rather than assuming.
+
+## When NOT to use it
+
+**When the recursion is linear over a large input.** A loop does the same work in
+$O(1)$ space and cannot overflow. Recursing down a linked list or a range of
+integers is elegant and fragile.
+
+**When the depth can be attacker-controlled.** Parsing deeply nested JSON or XML
+recursively is a denial-of-service vector: a 50,000-level nested array crashes the
+process, and in Node that takes down every concurrent request. Either bound the
+depth explicitly or parse iteratively.
+
+**When you expect tail-call optimisation.** This one deserves emphasis, because it
+is widely assumed and mostly false:
+
+> **Python does not have TCO and Guido has explicitly refused it.** JavaScript
+> *specifies* it in ES6 and **only Safari implements it** — V8 and SpiderMonkey do
+> not, and have said they will not.
+
+So writing tail-recursive code in either language buys you nothing at runtime. It
+still overflows. If your language does not optimise tail calls, tail recursion is a
+stylistic choice with a crash attached.
+
+**When memoisation would make it exponential-to-linear and you have not applied
+it.** Naive Fibonacci is not "a bit slow", it is unusable past $n = 40$.
+
+**When the iterative version is genuinely clearer.** Recursion is not a virtue.
+`factorial` as a loop is clearer than as a recursion, and a `for` loop over an
+array is clearer than either.
+
+**When you need to process a huge tree and cannot guarantee balance.** Use an
+explicit stack. The runtime's stack is small and its overflow is unrecoverable;
+your own stack lives on the heap and can hold millions of entries.
+
+## Real-world usage
+
+**Tree and graph traversal** is the honest home of recursion. Depth-first search,
+tree height, serialising a nested structure, walking a directory tree, and
+rendering a component tree are all naturally recursive because the data is.
+
+**Parsers and interpreters.** Recursive descent parsing maps grammar rules directly
+onto functions — `parseExpression` calls `parseTerm` calls `parseFactor` — and the
+correspondence between the grammar and the code is close enough that you can read
+one off the other. JSON parsers, template engines and query planners all work this
+way.
+
+**Divide and conquer.** Merge sort, quicksort, binary search, and the fast Fourier
+transform. Covered on the
+[divide and conquer page](/cs-fundamentals/4-paradigms/divide-and-conquer/).
+
+**Backtracking.** N-queens, sudoku, permutations and generating subsets are
+recursion where the *unwinding* is the point — undoing a choice on the way back up
+is what makes exhaustive search tractable. See
+[backtracking](/cs-fundamentals/4-paradigms/backtracking/).
+
+**Filesystem and DOM walks**, where nesting depth is naturally small and the
+structure is a tree.
+
+**Raising the limit is usually the wrong fix**, but worth knowing:
+
+```python
+import sys
+sys.setrecursionlimit(10_000)   # buys headroom, does not remove the ceiling
+```
+
+The real ceiling is the C stack, so setting this too high converts a clean
+`RecursionError` into a hard segfault. Python 3.12+ handles this better, but the
+principle holds: if you need this, the algorithm probably wants an explicit stack.
+
+## Failure modes
+
+**Symptom: `RecursionError` / `Maximum call stack size exceeded`.** Either a
+missing base case, a step that fails to make progress, or a genuinely deep input.
+Check the base case first, then check that every path strictly shrinks the problem.
+
+**Symptom: it works on test data and crashes in production.** Depth scales with
+input, and production input is bigger. The classic version is a tree that is
+balanced in tests and degenerate in reality — a "tree" that is really a linked list
+because the data arrived sorted.
+
+**Symptom: correct but exponentially slow.** Overlapping subproblems with no
+memoisation. The tell is a function called with the same arguments repeatedly; a
+counter or `functools.cache` confirms it in seconds.
+
+**Symptom: a mutable default argument accumulates across calls.**
+
+```python
+def collect(node, acc=[]):    # ✗ the list is created ONCE, at definition time
+    ...
+
+def collect(node, acc=None):  # ✓
+    if acc is None:
+        acc = []
+```
+
+This bites hardest in recursion because the accumulator pattern invites it, and the
+symptom — results from a previous call appearing in this one — looks like a
+concurrency bug.
+
+**Symptom: the base case never fires for some inputs.** `if n == 0` when `n` can go
+negative, or `if not node` when the sentinel is something other than `None`. Prefer
+`<=` over `==` for numeric base cases, so an overshoot terminates rather than
+recursing forever.
+
+**Symptom: shared mutable state gives wrong answers on backtracking.** Modifying a
+list and not undoing it on the way back up. Either undo explicitly, or pass a copy
+and accept the allocation.
+
+**Symptom: stack overflow inside a `try` that does not catch it.** In Python a
+`RecursionError` is catchable; in Node a `RangeError` from stack exhaustion is
+catchable but leaves you in an unreliable state. Neither is a sound recovery
+strategy — bound the depth up front instead.
+
+## Practice problems
+
+**1. Reverse a linked list recursively**, then say why you would not ship it.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def reverse(node):
+    # Base case: empty list, or the last node — which becomes the new head.
+    if node is None or node.next is None:
+        return node
+
+    # Trust the recursive call: assume it fully reverses everything after
+    # `node` and hands back the new head.
+    new_head = reverse(node.next)
+
+    node.next.next = node   # the node after me should point back at me
+    node.next = None        # and I am now the tail
+    return new_head         # pass the new head up unchanged
+```
+
+The line to sit with is `node.next.next = node`. At this point `node.next` is still
+the *original* next node, which the recursive call has made the tail of the
+reversed portion — so pointing its `next` back at `node` appends `node` to the end.
+Forgetting `node.next = None` leaves a two-node cycle at the tail.
+
+**Why not ship it:** $O(n)$ stack. A 100,000-element list overflows in both Python
+and Node, and this recursion is not even tail-recursive, so no runtime could save
+it.
+
+```python
+def reverse_iter(node):
+    prev = None
+    while node:
+        node.next, prev, node = prev, node, node.next
+    return prev
+```
+
+$O(1)$ space, no depth limit, and arguably clearer. **This is the case where
+recursion is a worse solution that happens to be more elegant** — worth being able
+to say out loud, because "elegant" is not a reason.
+
+</details>
+
+**2. Why is this quadratic, and what is the fix?**
+
+```python
+def flatten(nested):
+    out = []
+    for item in nested:
+        if isinstance(item, list):
+            out = out + flatten(item)   # ← here
+        else:
+            out.append(item)
+    return out
+```
+
+<details>
+<summary>Solution</summary>
+
+`out = out + flatten(item)` **allocates a new list and copies everything** on every
+nested item. With $k$ nested lists the copying is $1 + 2 + \cdots + k$, which is
+$O(k^2)$ — the same accidental quadratic as string concatenation in a loop.
+
+The recursion is not the problem; the combine step is.
+
+```python
+def flatten(nested):
+    out = []
+    for item in nested:
+        if isinstance(item, list):
+            out.extend(flatten(item))   # extend mutates in place — O(len(item))
+        else:
+            out.append(item)
+    return out
+```
+
+`extend` appends in place, so total work is $O(n)$ in the number of leaves.
+
+The generator version avoids building intermediate lists at all, and is the
+idiomatic answer:
+
+```python
+def flatten(nested):
+    for item in nested:
+        if isinstance(item, list):
+            yield from flatten(item)    # delegates, no intermediate lists
+        else:
+            yield item
+```
+
+One caveat worth knowing: `yield from` still costs one generator frame per nesting
+level, so deeply nested input hits the recursion limit just the same. It fixes the
+time complexity, not the depth limit.
+
+</details>
+
+**3. Count nodes in a tree without recursion**, and handle a million-node
+degenerate tree.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def count(root):
+    if root is None:
+        return 0
+
+    total = 0
+    stack = [root]              # an explicit stack, on the HEAP
+    while stack:
+        node = stack.pop()
+        total += 1
+        if node.left:
+            stack.append(node.left)
+        if node.right:
+            stack.append(node.right)
+    return total
+```
+
+The stack did not go away — it moved from the runtime into a variable. That is
+what the conversion actually buys: the call stack is a fixed, small allocation
+(1,000 frames in CPython, and its overflow is unrecoverable), while a list lives on
+the heap and holds millions of entries happily.
+
+**On a degenerate tree** — every node having only a left child, which is what you
+get from inserting sorted data into an unbalanced BST — recursion is depth $10^6$
+and crashes. This version peaks at a stack of 1 for that shape, since only one
+child is ever pushed.
+
+Two details worth noting. This is **pre-order**, because a stack is LIFO; using a
+`deque` and `popleft` makes it breadth-first instead, which changes the memory
+profile to $O(\text{width})$ rather than $O(\text{depth})$ — better for deep narrow
+trees, worse for shallow wide ones. And for *counting* specifically the order is
+irrelevant, so choose whichever bounds the shape you actually have.
+
+</details>
+
+<Quiz
+  client:visible
+  id="recursion-space"
+  kind="concept"
+  question="Naive fib(n) makes about 2ⁿ calls. How much stack does it use?"
+  options={[
+    { label: 'O(n) — only one root-to-leaf path exists at a time', correct: true },
+    { label: 'O(2ⁿ) — one frame per call' },
+    { label: 'O(n log n)' },
+    { label: 'O(1) — frames are reused' },
+  ]}
+  explanation={
+    <>
+      <p>
+        O(n). Calls are made and returned depth-first, so frames are pushed and
+        popped continuously — at any instant the stack holds only one path from the
+        root to the current leaf, and the deepest such path is n.
+      </p>
+      <p>
+        The 2ⁿ counts calls <em>over the whole run</em>, which is time, not space.
+        Conflating the two is the common error, and it matters because it predicts
+        the failure mode: naive Fibonacci does not blow the stack, it just never
+        finishes.
+      </p>
+      <p>
+        Memoising fixes the time and leaves the space unchanged at O(n) — plus O(n)
+        for the cache. To get the space down too you need the bottom-up iterative
+        version, which keeps only the last two values and is O(1).
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="recursion-tco"
+  kind="concept"
+  question="You rewrite a deep recursion into tail-recursive form in Python. What happens to the stack usage?"
+  options={[
+    { label: 'Nothing — Python has no tail-call optimisation', correct: true },
+    { label: 'It drops to O(1), since tail calls reuse the frame' },
+    { label: 'It drops to O(log n)' },
+    { label: 'It depends on whether the function is decorated' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Nothing. CPython does not eliminate tail calls and has no plans to — Guido
+        has argued against it explicitly, mainly because it destroys the stack traces
+        that make Python debuggable.
+      </p>
+      <p>
+        The same trap exists in JavaScript, and is worse because the specification
+        misleads: ES6 <em>requires</em> proper tail calls, and only Safari implements
+        them. V8 and SpiderMonkey have both declined, so the guarantee is on paper
+        only.
+      </p>
+      <p>
+        So in either language, tail-recursive style is a readability choice with a
+        stack overflow attached. If depth is the problem, the fix is a loop or an
+        explicit heap-allocated stack — not a rewrite the runtime will ignore.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"How do you approach a recursive problem?"** Lead with the mental model, because
+it is what makes the rest fast:
+
+> Three questions. What is the base case — the smallest input with a known answer.
+> How does each step make the problem strictly smaller. And given the answer to the
+> smaller problem, how do I build mine.
+>
+> The key discipline is to *trust the recursive call* rather than trace it. Assume
+> it already works on the smaller input; my job is only the combine step. That is
+> induction, and it is why recursion is easier to write than to trace — five levels
+> deep with two branches is 32 frames nobody can hold in their head.
+
+**"What are the costs?"**
+
+> Stack space, proportional to depth, not to the number of calls — naive Fibonacci
+> makes 2ⁿ calls but only uses O(n) stack, because it explores depth-first.
+>
+> And the depth limits are low: about 1,000 frames in CPython and 10,000-odd in
+> Node. So recursion over a balanced tree of a million nodes is fine at depth 20,
+> and recursion over a *degenerate* tree of a million nodes crashes. That is why
+> "the tree is balanced" is a precondition I would state rather than assume.
+>
+> I would also not rely on tail-call optimisation. Python does not have it, and
+> JavaScript specifies it but only Safari implements it.
+
+**"When would you use iteration instead?"**
+
+> When the recursion is linear over a large input — walking a linked list or a
+> numeric range — because a loop does it in O(1) space and cannot overflow. And when
+> the depth is attacker-controlled: recursively parsing nested JSON is a
+> denial-of-service vector, and in Node one crashed request takes every concurrent
+> request with it.
+>
+> When I need depth *and* a tree shape, I convert to an explicit stack. The stack
+> does not disappear, it moves from the runtime to the heap — which is the point,
+> because the heap version holds millions of entries and its failure is a normal
+> exception rather than an unrecoverable overflow.
+
+**The caveats worth voicing:**
+
+- Overlapping subproblems make naive recursion exponential; one memoisation
+  decorator turns $O(2^n)$ into $O(n)$. That is the largest complexity improvement
+  available for the smallest diff I know of.
+- Space is depth, time is call count. Keeping those separate predicts whether a
+  bad recursion will crash or merely hang.
+- Recursion is not a virtue. If the loop is clearer, write the loop.

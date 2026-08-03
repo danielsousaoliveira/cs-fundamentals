@@ -1,0 +1,632 @@
+---
+title: Greedy Algorithms
+description: >-
+  Taking the locally best option and never reconsidering — which is either
+  optimal or badly wrong, and the only way to know is to prove it.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs: ['3-algorithms/sorting', '2-data-structures/heaps']
+tags: [greedy, exchange-argument, matroid, scheduling, huffman]
+languages: [python, typescript]
+complexity:
+  typical: O(n log n)
+  after-sort: O(n)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A greedy algorithm makes the choice that looks best right now and never
+reconsiders it. No backtracking, no lookahead, no table of subproblems — just a
+sequence of irrevocable local decisions.
+
+That is a very strong restriction, and it buys a very good price: greedy algorithms
+are typically $O(n \log n)$ dominated by a sort, where the exhaustive alternative is
+exponential and the dynamic-programming alternative is polynomial with a large
+table.
+
+The catch is equally strong. **Greedy is either optimal or arbitrarily bad, and
+nothing in the code tells you which.** Consider making change for 30 using coins
+$\{25, 10, 1\}$:
+
+```text
+Greedy:  25 + 1×5      = 6 coins
+Optimal: 10 + 10 + 10  = 3 coins
+```
+
+The greedy choice of 25 was locally the best — it removed the most value in one
+step — and it was globally wrong, because it left a remainder that the other
+denominations serve badly. Change the coin set to $\{25, 10, 5, 1\}$ and greedy
+becomes optimal again. **The algorithm is identical; only the data changed.**
+
+This is what makes greedy different from every other paradigm on this site. With
+divide and conquer or dynamic programming, a correct-looking implementation is
+usually correct. With greedy, a correct-looking implementation is a *conjecture*,
+and the real work is the proof.
+
+So the practical discipline is: write the greedy solution, then immediately try to
+break it with a small counter-example. If you cannot, prove it with an exchange
+argument. If you cannot do that either, use dynamic programming.
+
+## Mechanics
+
+### The template
+
+```python
+def greedy(items):
+    order = sorted(items, key=choice_metric)   # 1. decide what "best" means
+    result = []
+    for item in order:
+        if is_feasible(result, item):          # 2. take it if it still works
+            result.append(item)                # 3. never reconsider
+    return result
+```
+
+The entire design is step 1: **choosing the right metric to sort by.** Everything
+else is mechanical, and almost every greedy failure is a wrong metric rather than a
+wrong implementation.
+
+### Activity selection: the metric matters more than it looks
+
+Given intervals, select the maximum number that do not overlap.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def max_activities(intervals):
+    # Sort by END time. Not start, not duration — end.
+    intervals = sorted(intervals, key=lambda x: x[1])
+
+    chosen, last_end = [], float('-inf')
+    for start, end in intervals:
+        if start >= last_end:
+            chosen.append((start, end))
+            last_end = end
+    return chosen
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function maxActivities(intervals: [number, number][]): [number, number][] {
+  // Sort by END time. Not start, not duration — end.
+  const sorted = [...intervals].sort((a, b) => a[1] - b[1]);
+
+  const chosen: [number, number][] = [];
+  let lastEnd = -Infinity;
+  for (const [start, end] of sorted) {
+    if (start >= lastEnd) {
+      chosen.push([start, end]);
+      lastEnd = end;
+    }
+  }
+  return chosen;
+}
+```
+
+</TabItem>
+</Tabs>
+
+Three plausible metrics, two of them wrong:
+
+| Metric | Counter-example | Why it fails |
+|---|---|---|
+| Earliest **start** | `(0,10), (1,2), (3,4)` | Picks the long one, gets 1 instead of 2 |
+| Shortest **duration** | `(0,5), (4,6), (5,10)` | Picks the middle, blocks both others |
+| **Earliest end** ✓ | — | Provably optimal |
+
+**Why earliest-end is correct**, by exchange argument — this is the shape of proof
+worth being able to reproduce:
+
+Let $g_1$ be the activity greedy picks first (earliest end), and let $O$ be some
+optimal solution with first activity $o_1$. Since $g_1$ ends no later than $o_1$,
+swapping $o_1$ for $g_1$ in $O$ leaves it still valid — everything after $o_1$
+started after $o_1$ ended, hence after $g_1$ ended. The swapped solution has the
+same size, so it is also optimal. Repeat for each subsequent choice.
+
+**The greedy choice is always contained in *some* optimal solution**, which is
+exactly what has to be true for "never reconsider" to be safe.
+
+The intuition behind why *end* time is the right metric: finishing earliest leaves
+the most room for everything else. It is the choice that constrains the future
+least.
+
+### Huffman coding: greedy with a heap
+
+```python
+import heapq
+
+def huffman(freqs):
+    heap = [(f, char) for char, f in freqs.items()]
+    heapq.heapify(heap)
+
+    while len(heap) > 1:
+        # Greedy: always merge the two LEAST frequent nodes.
+        f1, a = heapq.heappop(heap)
+        f2, b = heapq.heappop(heap)
+        heapq.heappush(heap, (f1 + f2, (a, b)))
+
+    return heap[0][1]
+```
+
+The greedy choice is "merge the two rarest". It is optimal because the two least
+frequent symbols must end up deepest in the tree — if they were not, swapping them
+with whatever is deeper would reduce the total encoded length, contradicting
+optimality.
+
+This is a different flavour from activity selection: the greedy choice is made
+against a *changing* structure rather than a fixed sorted order, which is what the
+[heap](/cs-fundamentals/2-data-structures/heaps/) is for.
+
+### The counter-example habit
+
+Before trusting any greedy solution, try to break it. The two questions that find
+most counter-examples:
+
+**What if one item is huge?** Greedy metrics that ignore magnitude break when one
+element dominates.
+
+**What if taking the best now blocks two good options later?** This is the shape of
+almost every greedy failure — a locally excellent choice with an expensive
+opportunity cost.
+
+For the coin problem, the second question produces $\{25, 10, 1\}$ and 30
+immediately.
+
+## Complexity
+
+**The cost is almost always the sort.**
+
+$$
+T(n) = \underbrace{O(n \log n)}_{\text{sort}} + \underbrace{O(n)}_{\text{single pass}} = O(n \log n)
+$$
+
+If the input is already sorted, or the metric admits a counting sort, greedy is
+$O(n)$. With a heap-driven variant like Huffman it is $O(n \log n)$ from the heap
+operations instead.
+
+The comparison against the alternatives is what makes greedy attractive:
+
+| Approach | Activity selection | Coin change |
+|---|---|---|
+| Exhaustive | $O(2^n)$ | $O(2^n)$ |
+| Dynamic programming | $O(n^2)$ | $O(n \cdot \text{amount})$ |
+| **Greedy** | $O(n \log n)$ | $O(n)$ — *when valid* |
+
+That last cell carries the whole page. Greedy is dramatically cheaper *and*
+conditionally wrong.
+
+**Space is $O(1)$ beyond the output**, which is the other underrated advantage.
+Dynamic programming carries a table of size $O(n)$ or $O(n \cdot W)$; greedy carries
+a running decision. On a stream you cannot store, greedy may be the only option
+available at any price.
+
+### When is greedy provably safe?
+
+Two properties must hold, and naming them is what turns intuition into an argument:
+
+**Greedy choice property** — a globally optimal solution can be reached by making
+the locally optimal choice. Proved by exchange argument: show any optimal solution
+can be transformed to include your greedy choice without getting worse.
+
+**Optimal substructure** — after making that choice, the remaining problem is a
+smaller instance of the same problem, and combining its optimal solution with your
+choice gives an optimal whole.
+
+The second is shared with
+[dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/). **The
+first is what distinguishes them.** Dynamic programming tries all choices at each
+step because it cannot assume one is safe; greedy commits because it can prove one
+is.
+
+There is a deeper characterisation worth knowing exists: problems where greedy is
+optimal for *every* weighting are exactly those whose feasible sets form a
+**matroid**. Kruskal's algorithm is the canonical instance. In an interview it is
+usually enough to know the term and that the exchange argument is the practical
+tool.
+
+## When NOT to use it
+
+**When you cannot prove the greedy choice property.** The honest default. If you
+cannot construct the exchange argument and cannot find a counter-example either,
+assume it is wrong and use dynamic programming — being slower and correct beats
+being fast and wrong.
+
+**Coin change with arbitrary denominations.** The canonical failure. Greedy works
+for real currency systems because they are deliberately designed to be *canonical*
+coin systems, which is a property of the coins, not of the algorithm.
+
+**0/1 knapsack.** Greedy by value-to-weight ratio is optimal for the *fractional*
+version and wrong for the 0/1 version:
+
+```text
+Capacity 10.
+  A: value 60, weight 10  → ratio 6
+  B: value 50, weight 5   → ratio 10
+  C: value 50, weight 5   → ratio 10
+
+Greedy by ratio: B + C = 100  ✓ optimal here
+```
+
+But shift the weights:
+
+```text
+Capacity 10.
+  A: value 60, weight 6   → ratio 10
+  B: value 50, weight 5   → ratio 10
+  C: value 50, weight 5   → ratio 10
+
+Greedy takes A (weight 6), then cannot fit B or C → 60.
+Optimal: B + C = 100.
+```
+
+The indivisibility is what breaks it — you cannot take the last 4 units of A's
+value. **Fractional knapsack is greedy; 0/1 knapsack is dynamic programming.** That
+pair is the cleanest illustration of the boundary between the two paradigms.
+
+**When you need *all* optimal solutions.** Greedy produces one, and the exchange
+argument only guarantees that one is optimal.
+
+**When the objective is not monotonic in the greedy metric.** If taking a better
+item can make the remaining problem strictly worse in a way the metric does not
+capture, the local choice is not safe.
+
+**Longest path in a graph.** Greedy — and Dijkstra — solve shortest path and fail
+completely on longest path, which is NP-hard. The greedy choice property depends on
+the fact that extending a path can only increase its length, and that argument does
+not invert.
+
+## Real-world usage
+
+**Dijkstra's algorithm is greedy**, and it is the most-used greedy algorithm in
+existence. At each step it finalises the unvisited node with the smallest tentative
+distance and never revisits it.
+
+**Its correctness proof is a greedy choice argument, and its failure mode is
+instructive**: with negative edge weights, the assumption "a finalised node's
+distance can never improve" is false, because a later negative edge could reduce it.
+That is precisely why Dijkstra requires non-negative weights and why Bellman–Ford —
+which reconsiders — exists.
+
+**Kruskal's and Prim's minimum spanning tree algorithms** are greedy, and MSTs are
+the textbook matroid: taking the cheapest edge that does not form a cycle is optimal
+for *any* edge weights, which is a much stronger guarantee than most greedy problems
+enjoy.
+
+**Huffman coding** is in every ZIP file, JPEG, and MP3.
+
+**Scheduling and load balancing.** Shortest-job-first minimises average waiting time
+and is provably optimal for that objective — while starving long jobs, which is why
+real schedulers use it with ageing. The lesson generalises: greedy is optimal *for
+the objective you specified*, and specifying the wrong objective is the more common
+production failure.
+
+**Cache eviction.** LRU is greedy on recency. It is not optimal — Bélády's algorithm
+is, by evicting the entry used furthest in the future — but Bélády's requires
+knowing the future. LRU is the greedy approximation that is actually implementable,
+which is the honest situation for most greedy algorithms in production.
+
+**Approximation with a proven bound.** When exact solutions are intractable, greedy
+often gives a *guaranteed* approximation. Greedy set cover is within a factor of
+$\ln n$ of optimal, and that bound is provably the best any polynomial algorithm
+achieves unless P = NP. **A greedy algorithm with a proven approximation ratio is a
+legitimate final answer**, not a compromise.
+
+## Failure modes
+
+**Symptom: correct on all test data, wrong on a specific input.** The greedy choice
+property does not hold and the tests never contained the counter-example. This is
+the characteristic greedy failure, and it is why the counter-example habit matters
+more than the implementation.
+
+**Symptom: it works with one dataset and fails after a data change.** Coin change
+again — the algorithm's correctness was a property of the *data*, and nothing
+recorded that dependency. If greedy is only valid under an assumption about the
+input, assert the assumption in code or document it where someone will see it.
+
+**Symptom: the wrong sort key.** Sorting by start time or duration in interval
+problems. The implementation is flawless and the answer is wrong, which makes it
+hard to debug — the bug is one word in the comparator.
+
+**Symptom: ties are broken arbitrarily and results are non-deterministic.** When
+several items share the greedy metric, the result depends on sort stability. If
+downstream code assumes a specific choice, add an explicit tiebreaker rather than
+relying on the sort.
+
+**Symptom: interval selection is off by one on degenerate input.** A zero-length
+interval `(5, 5)` combined with a tie on end times breaks earliest-end selection —
+given `[(5,5), (1,5)]` the greedy picks one interval where two are compatible,
+because it commits to whichever the sort happened to place first. The algorithm is
+provably optimal for intervals of positive length; empty intervals are outside that
+guarantee. Filter `start == end` at the boundary, or define the comparison to place
+shorter intervals first on a tie.
+
+**Symptom: Dijkstra returns wrong distances.** A negative edge weight somewhere.
+The algorithm does not detect this; it silently returns a wrong answer, since the
+finalised-node assumption fails.
+
+**Symptom: floating-point comparisons in the greedy metric produce unstable
+orderings.** Ratios like value/weight computed in floats can compare inconsistently.
+Compare cross-multiplied integers instead: `a.value * b.weight` against
+`b.value * a.weight`.
+
+**Symptom: an optimal-looking schedule starves some jobs.** Greedy optimising the
+average while ignoring the tail. Optimal for the stated objective, unacceptable for
+the real one.
+
+## Practice problems
+
+**1. Minimum meeting rooms.** Given intervals, find the fewest rooms needed so no
+two overlapping meetings share one.
+
+<details>
+<summary>Solution</summary>
+
+Two good solutions with different insights.
+
+**Heap-based**, which is the direct greedy reading — always reuse the room that
+frees up soonest:
+
+```python
+import heapq
+
+def min_rooms(intervals):
+    if not intervals:
+        return 0
+
+    intervals = sorted(intervals, key=lambda x: x[0])   # by START here
+    ends = []                                           # min-heap of end times
+
+    for start, end in intervals:
+        if ends and ends[0] <= start:
+            heapq.heappop(ends)      # a room freed up before this meeting
+        heapq.heappush(ends, end)
+
+    return len(ends)                 # heap size = rooms in use at the peak
+```
+
+$O(n \log n)$. Note the sort key is **start** time here, unlike activity selection —
+because the question is "how many overlap at once", not "how many can I fit".
+
+**Sweep line**, which is faster and arguably clearer:
+
+```python
+def min_rooms(intervals):
+    starts = sorted(s for s, _ in intervals)
+    ends = sorted(e for _, e in intervals)
+
+    rooms = peak = 0
+    j = 0
+    for start in starts:
+        while j < len(ends) and ends[j] <= start:
+            rooms -= 1               # meetings that finished before this one
+            j += 1
+        rooms += 1
+        peak = max(peak, rooms)
+    return peak
+```
+
+**The insight worth extracting:** the starts and ends can be decoupled entirely. It
+does not matter *which* meeting ends, only that one did — so sorting the two lists
+independently loses nothing. That decoupling is what makes the sweep line a general
+technique for interval problems.
+
+Both are $O(n \log n)$; the sweep avoids heap overhead and is $O(1)$ auxiliary
+beyond the two sorted lists.
+
+</details>
+
+**2. Gas station.** Given `gas[i]` and `cost[i]` to reach the next station, find the
+starting index that allows a full circuit, or −1.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def can_complete(gas, cost):
+    if sum(gas) < sum(cost):
+        return -1                # necessary and sufficient — see below
+
+    start, tank = 0, 0
+    for i in range(len(gas)):
+        tank += gas[i] - cost[i]
+        if tank < 0:
+            start = i + 1        # everything up to i is eliminated at once
+            tank = 0
+    return start
+```
+
+$O(n)$ and one pass, against $O(n^2)$ for trying every start.
+
+**Why the greedy jump is valid** is the whole problem. If the tank goes negative at
+station $i$ starting from $s$, then no station between $s$ and $i$ works either —
+each of them starts with a tank of zero, which is no better than the non-negative
+amount the run from $s$ had on arrival. So all of $s \ldots i$ are eliminated in one
+step, not just $s$.
+
+**Why the total check is sufficient:** if total gas ≥ total cost, a valid start must
+exist. The candidate the loop lands on is the last place the tank went negative,
+plus one — and from there, by construction, the tank never goes negative again.
+
+The two halves are doing different jobs: the sum check proves an answer *exists*,
+and the scan finds *which* one. Skipping the sum check makes the function return a
+plausible index for an impossible input.
+
+</details>
+
+**3. Show greedy fails for 0/1 knapsack**, then say what the fix is.
+
+<details>
+<summary>Solution</summary>
+
+```python
+items = [
+    ('A', 60, 6),    # (name, value, weight) → ratio 10
+    ('B', 50, 5),    # ratio 10
+    ('C', 50, 5),    # ratio 10
+]
+capacity = 10
+
+# Greedy by ratio: all tie at 10, so it takes A first (weight 6),
+# then cannot fit B (5) or C (5). Total value: 60.
+# Optimal: B + C = 100.
+```
+
+Greedy fails because the items are **indivisible**. In the fractional version it
+would take A, then 4/5 of B, reaching 100 — and there greedy by ratio is provably
+optimal, because you can always fill the capacity exactly.
+
+The fix is dynamic programming over the capacity:
+
+```python
+def knapsack(items, capacity):
+    # dp[w] = best value achievable with capacity exactly w
+    dp = [0] * (capacity + 1)
+
+    for _, value, weight in items:
+        # Iterate DOWNWARDS so each item is used at most once. Ascending order
+        # would let an item be picked up again within the same pass, which
+        # silently solves the UNBOUNDED knapsack instead.
+        for w in range(capacity, weight - 1, -1):
+            dp[w] = max(dp[w], dp[w - weight] + value)
+
+    return dp[capacity]
+```
+
+$O(n \cdot W)$ — pseudo-polynomial, since it is linear in the *value* of the
+capacity rather than in its bit length, which is why 0/1 knapsack is NP-hard despite
+this table existing.
+
+**The pair is the cleanest illustration of the greedy/DP boundary on this site.**
+Identical problem statements apart from divisibility; greedy is optimal for one and
+badly wrong for the other. The property that changed is the greedy choice property,
+and nothing in either implementation reveals which case you are in.
+
+</details>
+
+<Quiz
+  client:visible
+  id="greedy-coins"
+  kind="concept"
+  question="Greedy coin change gives the wrong answer for amount 30 with coins {25, 10, 1}. What does this tell you?"
+  options={[
+    { label: "Correctness depends on the coin set, not the algorithm", correct: true },
+    { label: 'The greedy implementation has a bug' },
+    { label: 'Greedy never works for coin change' },
+    { label: 'The coins need to be sorted differently' },
+  ]}
+  explanation={
+    <>
+      <p>
+        The algorithm is fine and the data is the problem. Greedy takes 25, leaving 5,
+        which only 1s can serve — six coins. Optimal is 10+10+10, three coins. Add a 5
+        to the coin set and greedy becomes optimal again with no code change at all.
+      </p>
+      <p>
+        This is the defining hazard of the paradigm: correctness is a property of the
+        <em> input</em>, and nothing in the implementation records that dependency.
+        Real currencies are deliberately designed as canonical coin systems, which is
+        why greedy change-making feels reliable in everyday life.
+      </p>
+      <p>
+        The practical consequence: if greedy is only valid under an assumption about
+        the data, assert that assumption in code or document it where the next person
+        will see it — otherwise a data change silently breaks a function nobody
+        touched.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="greedy-interval-metric"
+  kind="concept"
+  question="For maximum non-overlapping intervals, why sort by end time rather than start time or duration?"
+  options={[
+    { label: 'Finishing earliest leaves the most room for everything else', correct: true },
+    { label: 'It is faster to sort by end time' },
+    { label: 'Start time works equally well; end time is convention' },
+    { label: 'Shortest duration is optimal, but end time is simpler' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Earliest end is the choice that constrains the future least, and it is
+        provably optimal by exchange argument: the first activity greedy picks ends no
+        later than the first in any optimal solution, so swapping it in keeps that
+        solution valid and the same size.
+      </p>
+      <p>
+        The other two metrics have small counter-examples. Earliest{' '}
+        <em>start</em> fails on (0,10), (1,2), (3,4) — it takes the long one and gets
+        1 instead of 2. Shortest <em>duration</em> fails on (0,5), (4,6), (5,10) — the
+        short middle interval blocks both others.
+      </p>
+      <p>
+        This is the general shape of greedy design: the implementation is three lines,
+        and all the difficulty is in choosing the metric. A wrong metric produces
+        flawless code that returns wrong answers.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"What is a greedy algorithm and when is it valid?"**
+
+> It makes the locally best choice at each step and never reconsiders. That is cheap
+> — usually O(n log n), dominated by a sort — and it is either optimal or arbitrarily
+> bad, with nothing in the code to tell you which.
+>
+> Two properties have to hold. The **greedy choice property**: a globally optimal
+> solution can be reached by making the locally optimal choice, which I would prove
+> with an exchange argument — show that any optimal solution can be transformed to
+> include my greedy choice without getting worse. And **optimal substructure**: after
+> that choice, what remains is a smaller instance of the same problem.
+>
+> The second is shared with dynamic programming. The first is what distinguishes
+> them: DP tries every choice because it cannot assume one is safe.
+
+**"How do you know greedy is correct here?"** The honest process is the answer:
+
+> I try to break it first. Two questions find most counter-examples: what if one
+> item is enormous, and does taking the best now block two good options later. For
+> coin change that second question produces {25, 10, 1} with amount 30 immediately.
+>
+> If I cannot break it, I try the exchange argument. If I can do neither, I assume
+> greedy is wrong and use dynamic programming — slower and correct beats faster and
+> wrong.
+
+**"Give an example where greedy fails."**
+
+> 0/1 knapsack. Greedy by value-to-weight ratio is provably optimal for the
+> *fractional* version, and wrong for 0/1, because indivisibility means you cannot
+> fill the remaining capacity. That pair is the clearest illustration of the
+> boundary — same problem statement apart from divisibility, and one is greedy while
+> the other is O(n·W) dynamic programming.
+>
+> Dijkstra is the same story in a different place: it is greedy, and it silently
+> returns wrong distances on negative edges, because the assumption that a finalised
+> node can never improve stops holding.
+
+**The caveats worth voicing:**
+
+- Greedy's correctness can depend on the *data* rather than the code. That
+  dependency is invisible at the call site, so it needs to be documented or asserted.
+- The design is entirely in the sort key. A wrong metric gives flawless code and
+  wrong answers, which is a genuinely hard bug to spot.
+- Greedy with a *proven approximation ratio* is a legitimate final answer, not a
+  compromise — greedy set cover is within ln n of optimal, and no polynomial
+  algorithm does better unless P = NP.
+- It is $O(1)$ space beyond the output, so on a stream you cannot store, greedy is
+  sometimes the only option at any price.

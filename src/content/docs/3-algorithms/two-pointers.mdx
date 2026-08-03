@@ -1,0 +1,627 @@
+---
+title: Two Pointers
+description: >-
+  Turning a nested loop into a single pass by proving that one direction of
+  movement is always safe — plus fast/slow pointers, which detect cycles in
+  constant space.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs: ['3-algorithms/searching', '2-data-structures/linked-lists']
+tags: [two-pointers, fast-slow, floyd, in-place, palindrome]
+languages: [python, typescript]
+complexity:
+  time: O(n)
+  space: O(1)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Two pointers is the answer to a specific shape of problem: **a nested loop over
+pairs, where the inner loop is doing work you can prove is unnecessary.**
+
+The canonical case. Given a sorted array, find two numbers summing to a target. The
+obvious solution checks every pair, $O(n^2)$. Now put one pointer at each end:
+
+```text
+[1, 3, 5, 7, 11]   target 14
+ ↑            ↑
+ lo=1        hi=11   sum = 12 < 14
+```
+
+The sum is too small. Here is the whole argument: **1 is the smallest value
+available, and 11 is the largest. If 1 + 11 is already too small, then 1 paired
+with anything else is also too small** — every other candidate is smaller than 11.
+So `1` cannot participate in any solution at all, and we can discard it forever.
+
+```text
+[1, 3, 5, 7, 11]   sum = 3 + 11 = 14 ✓
+    ↑        ↑
+```
+
+Each step eliminates an entire row or column of the pair matrix rather than a
+single pair. $n^2$ candidates fall to $n$ steps.
+
+The generalisable insight is that **sorted order is information, and a nested loop
+throws it away.** Whenever you see two loops over the same array and the array has
+some order or monotonic property, ask what the inner loop is re-deriving that the
+order already told you.
+
+There is a second, structurally different pattern that also goes by "two pointers":
+**fast and slow**, where both move in the same direction at different speeds. That
+one is about detecting cycles and finding midpoints in constant space, and its
+argument is number-theoretic rather than order-based. Both are on this page because
+they share a name; keep them mentally separate.
+
+## Mechanics
+
+### Opposite ends, converging
+
+```python
+def two_sum_sorted(a, target):
+    lo, hi = 0, len(a) - 1
+    while lo < hi:
+        total = a[lo] + a[hi]
+        if total == target:
+            return (lo, hi)
+        if total < target:
+            lo += 1          # need bigger: the smallest value cannot help
+        else:
+            hi -= 1          # need smaller: the largest value cannot help
+    return None
+```
+
+The loop runs at most $n$ times because every iteration moves exactly one pointer
+inward, and they start $n$ apart. That is the entire complexity argument.
+
+**The precondition is sortedness**, and it is doing all the work. On unsorted input
+the elimination argument collapses — knowing the sum is too small tells you nothing
+about which element to discard.
+
+The same shape solves several problems that look unrelated:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def is_palindrome(s):
+    lo, hi = 0, len(s) - 1
+    while lo < hi:
+        if s[lo] != s[hi]:
+            return False
+        lo, hi = lo + 1, hi - 1
+    return True
+
+def reverse_in_place(a):
+    lo, hi = 0, len(a) - 1
+    while lo < hi:
+        a[lo], a[hi] = a[hi], a[lo]    # O(1) extra space
+        lo, hi = lo + 1, hi - 1
+    return a
+
+def max_water(heights):
+    """Largest rectangle between two lines — the container problem."""
+    lo, hi, best = 0, len(heights) - 1, 0
+    while lo < hi:
+        best = max(best, (hi - lo) * min(heights[lo], heights[hi]))
+        # Move the SHORTER side: the taller one cannot be improved by
+        # narrowing, since height is capped by the shorter line either way.
+        if heights[lo] < heights[hi]:
+            lo += 1
+        else:
+            hi -= 1
+    return best
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function isPalindrome(s: string): boolean {
+  let lo = 0;
+  let hi = s.length - 1;
+  while (lo < hi) {
+    if (s[lo] !== s[hi]) return false;
+    lo++;
+    hi--;
+  }
+  return true;
+}
+
+function maxWater(heights: number[]): number {
+  let lo = 0;
+  let hi = heights.length - 1;
+  let best = 0;
+  while (lo < hi) {
+    best = Math.max(best, (hi - lo) * Math.min(heights[lo], heights[hi]));
+    // Move the SHORTER side: the taller one cannot be improved by narrowing,
+    // since the height is capped by the shorter line either way.
+    if (heights[lo] < heights[hi]) lo++;
+    else hi--;
+  }
+  return best;
+}
+```
+
+</TabItem>
+</Tabs>
+
+The container problem is the one worth dwelling on, because its elimination
+argument is less obvious. Area is `width × min(left, right)`. Moving the *taller*
+side inward reduces the width and cannot increase the height, since the shorter
+line still caps it — so every configuration reachable that way is strictly worse.
+Moving the shorter side is the only move that could help. **Discarding a move you
+have proved is never better is the same trick as before, applied to a maximum
+rather than a target.**
+
+### Same direction: read and write
+
+The second family uses two pointers moving the same way at different rates — one
+reading, one writing — which is how you filter or compact an array in place.
+
+```python
+def remove_duplicates(a):
+    """In-place dedupe of a SORTED array. Returns the new length."""
+    if not a:
+        return 0
+    write = 1
+    for read in range(1, len(a)):
+        if a[read] != a[write - 1]:
+            a[write] = a[read]        # write only advances on a keeper
+            write += 1
+    return write
+```
+
+`read` visits everything; `write` lags behind, advancing only for elements that
+survive. Everything before `write` is the finished result. This is $O(n)$ time and
+$O(1)$ space, where the natural `[x for x in a if …]` is $O(n)$ space.
+
+### Fast and slow
+
+Different idea, same name. Two pointers move in the same direction at different
+speeds, and the *gap* between them is the useful thing.
+
+```python
+def middle(head):
+    """Find the middle node in one pass, without knowing the length."""
+    slow = fast = head
+    while fast and fast.next:
+        slow = slow.next          # 1 step
+        fast = fast.next.next     # 2 steps
+    return slow                   # fast at the end → slow at the middle
+
+def has_cycle(head):
+    """Floyd's cycle detection, in O(1) space."""
+    slow = fast = head
+    while fast and fast.next:
+        slow, fast = slow.next, fast.next.next
+        if slow is fast:          # identity, not equality
+            return True
+    return False
+```
+
+**Why the cycle detection works** is worth deriving rather than accepting, because
+it is the least obvious argument on the page.
+
+Suppose there is a cycle of length $c$, entered after $\mu$ steps. Once both
+pointers are inside the cycle, each step increases `fast`'s lead by exactly 1. The
+gap therefore takes every value mod $c$, so it must eventually be $0$ — which is
+exactly the pointers meeting. If instead the list ends, `fast` reaches `None`
+first, since it moves twice as fast.
+
+**Why a two-step gain is enough**, and a three-step one is not always: with speeds
+1 and 2 the gap grows by 1 per step and so hits every residue mod $c$. With speeds
+1 and 3 the gap grows by 2, and if $c$ is even the gap only takes even values —
+so it can skip zero forever. The choice of 2 is not arbitrary; it guarantees
+$\gcd(\text{gain}, c) = 1$ for every $c$.
+
+## Complexity
+
+**Why the converging version is linear.** The pointers start at distance $n - 1$,
+each iteration decreases the distance by exactly 1, and the loop stops at 0. So
+there are at most $n - 1$ iterations, each $O(1)$:
+
+$$
+T(n) = O(n), \qquad S(n) = O(1)
+$$
+
+Against the nested loop's $\binom{n}{2} = \frac{n(n-1)}{2}$ pairs:
+
+| $n$ | Nested pairs | Two-pointer steps | Ratio |
+|---:|---:|---:|---:|
+| 100 | 4,950 | 100 | 50× |
+| 1,000 | 499,500 | 1,000 | 500× |
+| 10,000 | 49,995,000 | 10,000 | 5,000× |
+
+The ratio is $n/2$, so the advantage *grows with the input* — which is the
+signature of dropping a complexity class rather than winning a constant factor.
+
+**But count the sort.** If the input is not already sorted, the honest comparison
+is $O(n \log n)$ against $O(n^2)$, not $O(n)$ against $O(n^2)$. Still a large win,
+and it changes what "optimal" means:
+
+$$
+T_{\text{total}} = \underbrace{O(n \log n)}_{\text{sort}} + \underbrace{O(n)}_{\text{scan}} = O(n \log n)
+$$
+
+For the unsorted two-sum specifically, a hash table is $O(n)$ time and $O(n)$
+space, which beats sort-then-two-pointer on time. So the two-pointer version wins
+when the data is *already* sorted, or when $O(1)$ space is required, or when you
+need all pairs rather than one — not universally.
+
+**Fast/slow is $O(n)$ time and $O(1)$ space.** The space is the entire point.
+Detecting a cycle with a `set` of visited nodes is also $O(n)$ time but $O(n)$
+space, and on a long list that is the difference between working and exhausting
+memory.
+
+## When NOT to use it
+
+**When the array is not sorted and you cannot sort it.** The elimination argument
+depends entirely on order. Without it, moving a pointer discards candidates you
+have not ruled out — and, as with binary search, this produces a confidently wrong
+answer rather than an error.
+
+**When you need original indices and sorting destroys them.** Classic two-sum asks
+for indices into the *original* array. Sorting scrambles them, so you must sort
+pairs of `(value, index)` and pay the space — at which point a hash table is
+simpler and faster.
+
+**When a hash table is available and space is free.** Unsorted two-sum in one pass:
+
+```python
+def two_sum(a, target):
+    seen = {}
+    for i, v in enumerate(a):
+        if target - v in seen:
+            return (seen[target - v], i)
+        seen[v] = i
+    return None
+```
+
+$O(n)$ time, $O(n)$ space, no sorting, and it preserves indices. **This is the
+better answer for the unsorted case**, and reaching for two pointers out of habit
+is the mistake.
+
+**When the relationship is not monotonic.** The pattern needs "moving this pointer
+always moves the objective in a known direction". If the array can contain negative
+numbers *and* you are comparing against a product rather than a sum, for instance,
+moving a pointer no longer changes the result predictably.
+
+**When you need every pair, not one.** If the output is $O(n^2)$ pairs, no
+technique makes the algorithm sub-quadratic — you are bounded by the size of what
+you must produce.
+
+## Real-world usage
+
+**Merging sorted sequences** is two pointers, and it is everywhere: the merge step
+of [merge sort](/cs-fundamentals/3-algorithms/sorting/), merging sorted index
+scans in a database, combining sorted time series, and reconciling two sorted
+change logs.
+
+```python
+def merge(a, b):
+    out, i, j = [], 0, 0
+    while i < len(a) and j < len(b):
+        if a[i] <= b[j]:
+            out.append(a[i]); i += 1
+        else:
+            out.append(b[j]); j += 1
+    return out + a[i:] + b[j:]
+```
+
+**Set operations on sorted data** are the same shape. Intersecting two sorted
+posting lists is how a search engine evaluates `term1 AND term2` — advance the
+pointer with the smaller value, and when both match, emit. Databases do this for
+merge joins, which is why a merge join needs both inputs sorted and why the
+planner will add a sort to enable one.
+
+**In-place partitioning** — the core of
+[quicksort](/cs-fundamentals/3-algorithms/sorting/) — is a read/write pointer pair.
+So is the Dutch national flag algorithm for three-way partitioning, which is what
+makes quicksort handle duplicate-heavy input without degrading.
+
+**Floyd's algorithm has uses beyond linked lists.** Any iterated function
+eventually cycles, so the same technique detects cycles in a pseudo-random number
+generator's period, in a hash chain, and in "does following these pointers
+terminate" checks. It is also used in cryptanalysis — Pollard's rho factorisation
+is Floyd's cycle detection applied to a function over integers modulo $n$.
+
+**Reading a file with a sliding read/write offset** is the same compaction idea:
+log compaction and garbage collection both copy live entries backwards over dead
+ones with two offsets.
+
+## Failure modes
+
+**Symptom: the answer is wrong on some inputs, with no error.** Applied to
+unsorted data. There is no precondition check, and there cannot cheaply be one.
+
+**Symptom: an infinite loop.** A branch that fails to move either pointer. Every
+path through the loop body must advance something — the same discipline that makes
+binary search terminate.
+
+**Symptom: off-by-one at the boundary.** `while lo < hi` versus `while lo <= hi`.
+For two-sum, `lo < hi` is correct because an element must not pair with itself. For
+a partition scan, `lo <= hi` may be required so the middle element is examined.
+Getting this wrong shows up only on odd-length inputs or exact-centre cases.
+
+**Symptom: duplicate results in a 3-sum style problem.** Not skipping equal values
+after a match:
+
+```python
+while lo < hi and a[lo] == a[lo + 1]:
+    lo += 1          # skip duplicates, or you emit the same triple repeatedly
+```
+
+**Symptom: a null-pointer error in fast/slow.** `fast.next.next` without checking
+`fast.next`. The condition must be `while fast and fast.next` — both, in that
+order, relying on short-circuit evaluation.
+
+**Symptom: cycle detection returns false positives.** Comparing node *values*
+instead of node *identity*. Two distinct nodes can hold equal values; use `is` in
+Python and `===` in JavaScript.
+
+**Symptom: "middle" is off by one.** Whether `slow` lands on the first or second
+middle element of an even-length list depends on whether `fast` starts at `head` or
+`head.next`. Both are defensible; pick deliberately and write a test for the
+even-length case.
+
+## Practice problems
+
+**1. Three-sum.** Find all unique triples summing to zero, in $O(n^2)$.
+
+<details>
+<summary>Solution</summary>
+
+Sort, then fix one element and two-pointer the rest. Fixing one element reduces
+three-sum to two-sum, which the technique solves in linear time — so $O(n)$ outer
+times $O(n)$ inner is $O(n^2)$, against $O(n^3)$ for the brute force.
+
+```python
+def three_sum(a):
+    a.sort()
+    out = []
+    for i in range(len(a) - 2):
+        if i > 0 and a[i] == a[i - 1]:
+            continue                       # skip duplicate anchors
+        if a[i] > 0:
+            break                          # sorted: no way to reach 0 from here
+
+        lo, hi = i + 1, len(a) - 1
+        while lo < hi:
+            total = a[i] + a[lo] + a[hi]
+            if total < 0:
+                lo += 1
+            elif total > 0:
+                hi -= 1
+            else:
+                out.append((a[i], a[lo], a[hi]))
+                # Skip duplicates on BOTH sides, or the same triple repeats.
+                while lo < hi and a[lo] == a[lo + 1]:
+                    lo += 1
+                while lo < hi and a[hi] == a[hi - 1]:
+                    hi -= 1
+                lo, hi = lo + 1, hi - 1
+    return out
+```
+
+The duplicate handling is where implementations go wrong, and there are three
+separate places it is needed: the anchor, and both pointers after a match. Missing
+any one produces repeated triples — and a `set` of tuples afterwards would paper
+over it at $O(n^2)$ extra space, which defeats the point.
+
+`if a[i] > 0: break` is a small but real optimisation: once the smallest of the
+three is positive, no triple can sum to zero, and on mostly-positive input it exits
+early.
+
+</details>
+
+**2. Find the start of a cycle**, not just whether one exists, in $O(1)$ space.
+
+<details>
+<summary>Solution</summary>
+
+Floyd's second phase, which is the part that looks like magic until you do the
+algebra.
+
+```python
+def cycle_start(head):
+    slow = fast = head
+    while fast and fast.next:
+        slow, fast = slow.next, fast.next.next
+        if slow is fast:
+            break
+    else:
+        return None
+    if not (fast and fast.next):
+        return None
+
+    # Phase 2: reset one pointer to the head; advance both one step at a time.
+    slow = head
+    while slow is not fast:
+        slow, fast = slow.next, fast.next
+    return slow
+```
+
+**Why it works.** Let $\mu$ be the distance from the head to the cycle start, $c$
+the cycle length, and $k$ the distance from the cycle start to the meeting point.
+
+When they meet, `slow` has travelled $\mu + k$ and `fast` has travelled exactly
+twice that. `fast` has also gone round the cycle some whole number of times, so:
+
+$$
+2(\mu + k) = \mu + k + mc \quad\Longrightarrow\quad \mu + k = mc \quad\Longrightarrow\quad \mu = mc - k
+$$
+
+So the distance from the head to the cycle start equals the distance from the
+meeting point onward to the cycle start, plus whole loops. Walk both one step at a
+time and they meet exactly at the entrance.
+
+The alternative — a `set` of visited nodes — is far easier to write and $O(n)$
+space. Floyd's is worth it specifically when the sequence is huge or generated
+lazily, which is the case in Pollard's rho, where the "list" is an unbounded
+sequence of integers.
+
+</details>
+
+**3. Sort an array of 0s, 1s and 2s in one pass**, in place.
+
+<details>
+<summary>Solution</summary>
+
+The Dutch national flag algorithm — three pointers maintaining four regions.
+
+```python
+def sort_colors(a):
+    low, mid, high = 0, 0, len(a) - 1
+    # Invariant:
+    #   [0, low)     all 0s
+    #   [low, mid)   all 1s
+    #   [mid, high]  unexamined
+    #   (high, n)    all 2s
+    while mid <= high:
+        if a[mid] == 0:
+            a[low], a[mid] = a[mid], a[low]
+            low, mid = low + 1, mid + 1
+        elif a[mid] == 1:
+            mid += 1
+        else:
+            a[mid], a[high] = a[high], a[mid]
+            high -= 1        # NOT mid += 1 — see below
+    return a
+```
+
+**The one subtlety:** after swapping with `high`, `mid` does not advance. The value
+just swapped in came from the unexamined region and has not been looked at — it
+could be a 0, which still needs moving to the front. After swapping with `low`,
+`mid` *can* advance, because that region holds only already-classified 1s.
+
+Getting that wrong is a bug that passes on many inputs and fails on `[2, 0, 1]`,
+which is a good reason to test the tiny cases explicitly.
+
+Termination: each iteration either advances `mid` or decrements `high`, so the
+unexamined region always shrinks — one pass, $O(n)$ time, $O(1)$ space.
+
+The general version of this is three-way partitioning, and it is what makes
+quicksort handle arrays with many duplicate keys without degrading toward its
+quadratic case.
+
+</details>
+
+<Quiz
+  client:visible
+  id="two-pointers-precondition"
+  kind="concept"
+  question="The converging two-pointer two-sum is run on an UNSORTED array. What happens?"
+  options={[
+    { label: 'It returns a wrong answer, silently, on some inputs', correct: true },
+    { label: 'It throws, because the invariant is violated' },
+    { label: 'It still works, but degrades to O(n²)' },
+    { label: 'It works — sortedness is only needed for the 3-sum variant' },
+  ]}
+  explanation={
+    <>
+      <p>
+        It silently misses valid pairs. The entire justification for moving a pointer
+        is "if the smallest value paired with the largest is still too small, that
+        smallest value cannot pair with anything" — which is only true when the array
+        is sorted. Without order, advancing <code>lo</code> discards an element that
+        was never ruled out.
+      </p>
+      <p>
+        Nothing checks the precondition, and nothing cheaply could: verifying
+        sortedness is O(n), which is the same order as the algorithm itself.
+      </p>
+      <p>
+        For unsorted input the right tool is a hash table — one pass, O(n) time,
+        preserves the original indices, and no sort. Reaching for two pointers by
+        reflex is the actual mistake here.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="two-pointers-floyd-speed"
+  kind="concept"
+  question="Floyd's cycle detection moves slow by 1 and fast by 2. Why not fast by 3?"
+  options={[
+    { label: 'A gap growing by 2 can skip zero forever when the cycle is even', correct: true },
+    { label: 'Three steps risks overshooting the end of the list' },
+    { label: 'It would work, but uses more memory' },
+    { label: 'Three steps breaks the phase-two entrance calculation only' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Once both pointers are in a cycle of length <em>c</em>, what matters is the
+        gap between them modulo <em>c</em>. With speeds 1 and 2 the gap grows by 1
+        each step, so it takes every residue mod <em>c</em> and must eventually hit
+        0 — the pointers meeting.
+      </p>
+      <p>
+        With speeds 1 and 3 the gap grows by 2. If <em>c</em> is even and the gap is
+        odd when they enter the cycle, it stays odd forever and never reaches 0. The
+        pointers circle each other indefinitely and the algorithm never terminates.
+      </p>
+      <p>
+        The general condition is gcd(gain, c) = 1, and a gain of 1 is the only value
+        that satisfies it for <em>every</em> possible cycle length. That is why the
+        2 is not an arbitrary choice.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"When do you reach for two pointers?"** Lead with the recognition signal, since
+that is the transferable part:
+
+> When I see a nested loop over pairs and the array has some order I can exploit.
+> The question I ask is what the inner loop is re-deriving that sortedness already
+> told me.
+>
+> For sorted two-sum, the argument is that if the smallest plus the largest is
+> already too small, the smallest cannot pair with anything — so I discard it and
+> move on. Each step eliminates a whole row of the pair matrix instead of one pair,
+> which is why n² becomes n.
+>
+> The precondition is doing all the work, though. On unsorted input I would use a
+> hash table instead: one pass, O(n), and it preserves the original indices, which
+> sorting destroys.
+
+**"Explain Floyd's cycle detection."**
+
+> Two pointers, one moving twice as fast. If there is a cycle, the fast one laps the
+> slow one and they meet; if the list ends, the fast one reaches null first.
+>
+> The reason it must meet is that once both are inside the cycle, the gap between
+> them grows by exactly one per step, so it takes every value modulo the cycle
+> length — including zero. That is also why the speed is 2 and not 3: a gap growing
+> by 2 can miss zero forever when the cycle length is even.
+>
+> The payoff is O(1) space. A visited set is easier and also O(n) time, but on a
+> long or lazily-generated sequence the memory is what decides it.
+
+**"Two pointers or a hash map?"** Worth being able to answer crisply, because both
+solve the headline problem:
+
+> Hash map when the data is unsorted, indices matter, or I only need one pass — it
+> is O(n) time and does not disturb the input. Two pointers when the data is
+> already sorted, when I need O(1) space, or when I need all matching pairs rather
+> than one, since the hash version gets awkward with duplicates.
+
+**The caveats worth voicing:**
+
+- If I have to sort first, the algorithm is $O(n \log n)$, not $O(n)$ — and the
+  hash version is genuinely asymptotically better for unsorted two-sum.
+- Every branch must move a pointer, or it hangs. Same discipline as binary search.
+- For 3-sum, duplicate skipping is needed in three separate places — the anchor and
+  both pointers — and missing any one produces repeated triples.

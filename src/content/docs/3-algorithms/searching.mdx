@@ -1,0 +1,624 @@
+---
+title: Searching
+description: >-
+  Binary search, the off-by-one that survives every test, and why the useful
+  version is not "find x" but "find the boundary".
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs: ['1-complexity/big-o', '2-data-structures/arrays-lists']
+tags: [binary-search, search, invariants, boundary]
+languages: [python, typescript]
+complexity:
+  linear: O(n)
+  binary: O(log n)
+  hash: O(1)*
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Binary search is the algorithm everyone can describe and almost nobody writes
+correctly on the first try. Jon Bentley reported that after years of teaching it,
+roughly 90% of professional programmers failed to produce a correct version given
+several hours — and the binary search in the JDK carried an overflow bug for nine
+years before anyone noticed.
+
+That gap between "obvious" and "correct" is the reason this page exists, and the
+resolution is a shift in how you think about it.
+
+**The naive framing is "find x", and it is the source of the difficulty.** It
+invites you to think about the moment you find the target, which is the one case
+that is easy, and to hand-wave the loop conditions, which is where all the bugs
+are.
+
+**The useful framing is "find the boundary".** Given a sorted array and a predicate
+that is false for a while and then true forever — `False False False True True
+True` — find where it flips. Every binary search is this. Finding `x` is the
+special case where the predicate is `value >= x`.
+
+Once you frame it that way, two things fall out: the loop is about *maintaining an
+invariant* rather than about finding something, and the answer always exists, so
+there is no "not found" branch to get wrong.
+
+The general lesson beyond searching: **halving the search space is the cheapest
+big win in computing.** A billion elements is 30 comparisons. That is why sorted
+order is worth paying for, why database indexes are trees, and why "can I make this
+monotonic?" is a question worth asking of problems that do not look like searches.
+
+## Mechanics
+
+### Linear search, and when it wins
+
+```python
+def linear_search(a, target):
+    for i, value in enumerate(a):
+        if value == target:
+            return i
+    return -1
+```
+
+$O(n)$, works on unsorted data, and for small $n$ it is genuinely faster than
+anything cleverer — no sorting cost, no branch misprediction, and it walks memory
+sequentially, which the cache prefetcher loves. Below roughly 50 elements it
+usually beats binary search on real hardware even when the data is already sorted.
+
+### Binary search, written to be correct
+
+The version that avoids the classic bugs:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def binary_search(a, target):
+    lo, hi = 0, len(a) - 1          # inclusive on BOTH ends
+    while lo <= hi:                 # so the loop must handle lo == hi
+        mid = lo + (hi - lo) // 2   # no overflow, unlike (lo + hi) // 2
+        if a[mid] == target:
+            return mid
+        if a[mid] < target:
+            lo = mid + 1            # +1 and -1 guarantee progress
+        else:
+            hi = mid - 1
+    return -1
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function binarySearch(a: number[], target: number): number {
+  let lo = 0;
+  let hi = a.length - 1; // inclusive on BOTH ends
+  while (lo <= hi) {
+    // so the loop must handle lo === hi
+    const mid = lo + ((hi - lo) >> 1); // no overflow, unlike (lo + hi) >> 1
+    if (a[mid] === target) return mid;
+    if (a[mid] < target) lo = mid + 1; // +1 and -1 guarantee progress
+    else hi = mid - 1;
+  }
+  return -1;
+}
+```
+
+</TabItem>
+</Tabs>
+
+Three details, each of which is a bug if you get it wrong:
+
+**`lo + (hi - lo) // 2` rather than `(lo + hi) // 2`.** In a fixed-width integer
+language, `lo + hi` overflows once the array exceeds half the integer range and the
+midpoint goes *negative*. This is the bug that sat in the JDK for nine years. It
+cannot happen in Python, whose integers are arbitrary-precision, but writing it the
+safe way costs nothing and transfers.
+
+**`lo <= hi`, not `lo < hi`.** With inclusive bounds, `lo == hi` is a range
+containing exactly one element that has not been checked. Using `<` skips it, and
+the bug only shows when the target is the last element examined — which most test
+data does not exercise.
+
+**`mid + 1` and `mid - 1`, not `mid`.** If you set `lo = mid` when `mid` is already
+`lo`, the range never shrinks and the loop hangs. Every binary search bug that
+manifests as a hang rather than a wrong answer is this one.
+
+### The version worth actually memorising
+
+The boundary form is harder to get wrong, because it has one invariant and no
+special cases:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def lower_bound(a, target):
+    """Index of the first element >= target. Returns len(a) if none is."""
+    lo, hi = 0, len(a)              # hi is EXCLUSIVE here
+    while lo < hi:                  # so `<`, not `<=`
+        mid = lo + (hi - lo) // 2
+        if a[mid] < target:
+            lo = mid + 1            # mid is too small — discard it
+        else:
+            hi = mid                # mid might BE the answer — keep it
+    return lo                       # lo == hi == the boundary
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+/** Index of the first element >= target. Returns a.length if none is. */
+function lowerBound(a: number[], target: number): number {
+  let lo = 0;
+  let hi = a.length; // hi is EXCLUSIVE here
+  while (lo < hi) {
+    // so `<`, not `<=`
+    const mid = lo + ((hi - lo) >> 1);
+    if (a[mid] < target) lo = mid + 1; // mid is too small — discard it
+    else hi = mid; // mid might BE the answer — keep it
+  }
+  return lo; // lo === hi === the boundary
+}
+```
+
+</TabItem>
+</Tabs>
+
+**The invariant, stated once:** every index below `lo` is known to fail the
+predicate, and every index at or above `hi` is known to satisfy it. The loop
+shrinks the unknown region between them; when it is empty, `lo` is the boundary.
+
+Note the asymmetry — `lo = mid + 1` but `hi = mid`. It is not sloppiness: when
+`a[mid] < target`, `mid` definitively cannot be the answer, so we exclude it. When
+`a[mid] >= target`, `mid` might be the answer, so we keep it. **The asymmetry is
+the correctness argument**, and it is why this version has no off-by-one to get
+wrong.
+
+This one function answers a surprising range of questions:
+
+```python
+i = lower_bound(a, x)
+found      = i < len(a) and a[i] == x     # does x exist?
+first_ge   = i                            # first element >= x
+count_lt   = i                            # how many are < x
+insert_at  = i                            # where to insert to stay sorted
+```
+
+## Complexity
+
+**Why it is $\log_2 n$, derived.** Each iteration discards half the remaining
+range, so after $k$ iterations the range is $n / 2^k$. The loop ends when that
+reaches 1:
+
+$$
+\frac{n}{2^k} = 1 \quad\Longrightarrow\quad k = \log_2 n
+$$
+
+The logarithm counts **halvings**, which is the general reading whenever you see
+$\log n$ in a bound. It is worth internalising how flat that is:
+
+| $n$ | Linear (worst) | Binary (worst) |
+|---:|---:|---:|
+| 1,000 | 1,000 | 10 |
+| 1,000,000 | 1,000,000 | 20 |
+| 1,000,000,000 | 1,000,000,000 | 30 |
+| 1,000,000,000,000 | $10^{12}$ | 40 |
+
+**A thousand-fold increase in $n$ costs 10 more comparisons.** Going from a billion
+to a trillion elements costs ten comparisons — which is why $\log n$ algorithms
+essentially never become the bottleneck.
+
+**But the sort is not free, and that is the decision.** If the data is not already
+sorted, the comparison is not $O(n)$ against $O(\log n)$ — it is:
+
+$$
+\underbrace{O(n)}_{\text{one linear scan}} \quad\text{versus}\quad \underbrace{O(n \log n) + k \cdot O(\log n)}_{\text{sort once, then } k \text{ searches}}
+$$
+
+Sorting pays off when $k \cdot n > n \log n$, i.e. when $k > \log n$. For a million
+elements, $\log_2 n \approx 20$: **fewer than 20 lookups and you should just scan.**
+This is the calculation people skip, and it is why "sort it first" is sometimes a
+pessimisation.
+
+And if you are going to do many lookups, a
+[hash table](/cs-fundamentals/2-data-structures/hash-tables/) is $O(1)$ average and
+beats both — unless you need *range* queries or ordered iteration, which is exactly
+what a hash table cannot do and a sorted structure can.
+
+## When NOT to use it
+
+**When the data is not sorted.** Binary search on unsorted data does not error — it
+returns a confidently wrong answer, which is worse. Nothing in the code checks the
+precondition.
+
+**When $n$ is small.** Below roughly 50 elements, a linear scan usually wins on
+real hardware: it is branch-predictable and sequential, while binary search jumps
+around memory and mispredicts nearly every branch. The asymptotics say otherwise
+and the asymptotics are the wrong model at that size.
+
+**When you would have to sort first for a handful of lookups.** Per the arithmetic
+above: fewer than $\log n$ lookups, just scan.
+
+**When the structure is a linked list.** Binary search needs $O(1)$ random access.
+On a [linked list](/cs-fundamentals/2-data-structures/linked-lists/), reaching the
+midpoint is $O(n)$, so binary search degrades to $O(n \log n)$ — worse than the
+linear scan it was meant to replace. This is the clearest example of an algorithm's
+complexity depending on its data structure rather than on itself.
+
+**When you need exact-match lookup and nothing else.** A hash table is $O(1)$.
+Reach for sorted order when you need ranges, ordering, or nearest-neighbour
+queries.
+
+**When the predicate is not monotonic.** The whole method depends on
+`False…False True…True`. If the predicate flips back and forth, halving discards
+regions that contained answers. This is the failure mode when people apply binary
+search to optimisation problems without checking monotonicity.
+
+## Real-world usage
+
+**Database indexes are this idea on disk.** A B-tree lookup is binary search with a
+branching factor of hundreds rather than two, chosen so each node is one disk page.
+Same $O(\log n)$, different base — and as the
+[databases page](/cs-fundamentals/5-systems/databases/) derives, that base is the
+entire engineering.
+
+**Use the standard library.** Python's `bisect` module *is* `lower_bound`:
+
+```python
+import bisect
+
+i = bisect.bisect_left(a, x)     # first index where x could be inserted
+j = bisect.bisect_right(a, x)    # last such index
+count_of_x = j - i               # occurrences of x, in O(log n)
+bisect.insort(a, x)              # insert, keeping sorted order
+```
+
+`bisect_left` is `lower_bound` and `bisect_right` is `upper_bound`. Having both is
+what makes counting duplicates a two-line, $O(\log n)$ operation.
+
+**`git bisect` is binary search over commits.** The predicate is "does the bug
+exist at this commit?", which is monotonic if the bug was introduced once and never
+fixed. Finding the culprit among 10,000 commits takes 14 builds instead of 10,000.
+It is the most common encounter most engineers have with the algorithm, usually
+without noticing.
+
+**Binary searching the answer** is the technique that generalises furthest, and it
+is the reason to internalise the boundary framing. When a problem asks for the
+minimum value satisfying some condition, and the condition is monotonic in that
+value, you can binary search the *answer space* rather than an array:
+
+```python
+def min_capacity(weights, days):
+    """Smallest ship capacity that delivers all packages within `days`."""
+    def feasible(capacity):
+        needed, load = 1, 0
+        for w in weights:
+            if load + w > capacity:
+                needed, load = needed + 1, 0
+            load += w
+        return needed <= days
+
+    # Monotonic: if capacity C works, every capacity > C works too.
+    lo, hi = max(weights), sum(weights)
+    while lo < hi:
+        mid = lo + (hi - lo) // 2
+        if feasible(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+```
+
+The array being searched does not exist. What is being searched is the range of
+possible capacities, and the "sorted" property is the monotonicity of `feasible`.
+Recognising that shape is one of the highest-leverage pattern-matches in
+algorithms.
+
+## Failure modes
+
+**Symptom: an infinite loop.** `lo = mid` instead of `lo = mid + 1` on a range that
+has stopped shrinking. Always this.
+
+**Symptom: the element is missing, but only when it is at an end.** `lo < hi` with
+inclusive bounds, skipping the final single-element range. Test data with the
+target in the middle never catches it.
+
+**Symptom: a negative index, only on very large arrays.** `(lo + hi) / 2`
+overflowing in a fixed-width integer language. Nine years in the JDK.
+
+**Symptom: a wrong answer with no error at all.** Unsorted input. There is no
+precondition check and there cannot cheaply be one — verifying sortedness is $O(n)$,
+which defeats the purpose.
+
+**Symptom: correct for distinct values, wrong with duplicates.** Plain binary
+search returns *an* occurrence, not the first or last. If you need a specific one,
+you need `lower_bound` / `upper_bound`, not a post-hoc linear scan backwards — that
+scan makes the whole thing $O(n)$ when all elements are equal.
+
+**Symptom: it works on the array and hangs on the answer space.** Binary searching
+a *continuous* range with integer-style updates. With floats, `hi = mid` may never
+converge to `lo`; iterate a fixed number of times (100 iterations halves the range
+by $2^{100}$) or loop while `hi - lo > epsilon`.
+
+**Symptom: slower than the linear version it replaced.** Either $n$ is small, or
+the data is a linked list, or the comparator is doing real work per call.
+
+## Practice problems
+
+**1. Find the first and last occurrence** of a target in a sorted array with
+duplicates, both in $O(\log n)$.
+
+<details>
+<summary>Solution</summary>
+
+Two boundary searches. The trick is that "last occurrence of x" is "first element
+greater than x, minus one".
+
+```python
+from bisect import bisect_left, bisect_right
+
+def first_last(a, x):
+    lo = bisect_left(a, x)          # first index where a[i] >= x
+    if lo == len(a) or a[lo] != x:
+        return (-1, -1)
+    hi = bisect_right(a, x) - 1     # first index where a[i] > x, minus one
+    return (lo, hi)
+```
+
+Written out, the only difference between the two is `<` versus `<=`:
+
+```python
+def lower_bound(a, x):
+    lo, hi = 0, len(a)
+    while lo < hi:
+        mid = lo + (hi - lo) // 2
+        if a[mid] < x: lo = mid + 1     # `<`  → stops at the first x
+        else: hi = mid
+    return lo
+
+def upper_bound(a, x):
+    lo, hi = 0, len(a)
+    while lo < hi:
+        mid = lo + (hi - lo) // 2
+        if a[mid] <= x: lo = mid + 1    # `<=` → skips past every x
+        else: hi = mid
+    return lo
+```
+
+One character apart, and that character is the whole difference between the two
+functions. This is the clearest argument for the boundary framing: once you think
+in terms of "where does the predicate flip", both variants are the same code with
+a different predicate, rather than two algorithms to remember.
+
+The tempting wrong answer is to binary search once and then walk outwards. That is
+$O(\log n + k)$, which is $O(n)$ when every element equals the target — turning the
+best case for the data into the worst case for the algorithm.
+
+</details>
+
+**2. Search a rotated sorted array.** `[4,5,6,7,0,1,2]` was sorted, then rotated.
+Find a target in $O(\log n)$.
+
+<details>
+<summary>Solution</summary>
+
+The array is not sorted, so the predicate is not monotonic — but the key
+observation rescues it: **at least one half of any subrange is always properly
+sorted**, and you can tell which by comparing endpoints.
+
+```python
+def search_rotated(a, target):
+    lo, hi = 0, len(a) - 1
+    while lo <= hi:
+        mid = lo + (hi - lo) // 2
+        if a[mid] == target:
+            return mid
+
+        if a[lo] <= a[mid]:                     # left half is sorted
+            if a[lo] <= target < a[mid]:        # target is inside it
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        else:                                   # right half is sorted
+            if a[mid] < target <= a[hi]:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+    return -1
+```
+
+Each iteration still discards half, so it is still $O(\log n)$. The extra work is
+deciding *which* half to discard, which needs the sorted-half test rather than a
+single comparison against `a[mid]`.
+
+The detail that catches people: `a[lo] <= a[mid]` uses `<=`, not `<`. When the
+range has two elements, `lo == mid`, and `<` would misclassify the left half as
+unsorted.
+
+**With duplicates this breaks**, and it is worth knowing why: given
+`[1,1,1,0,1,1]`, `a[lo] == a[mid] == a[hi]` tells you nothing about which side is
+sorted. The fallback is to shrink the range by one and accept $O(n)$ worst case —
+which means for duplicate-heavy rotated arrays, the logarithmic guarantee simply
+does not exist.
+
+</details>
+
+**3. Find the square root** of a non-negative integer, floored, without using a
+square-root function.
+
+<details>
+<summary>Solution</summary>
+
+Binary search the answer space. There is no array — what makes it work is that
+`mid * mid <= n` is monotonic in `mid`.
+
+```python
+def isqrt(n):
+    if n < 2:
+        return n
+    lo, hi = 1, n // 2 + 1          # sqrt(n) <= n/2 for n >= 4
+    while lo < hi:
+        mid = lo + (hi - lo + 1) // 2   # round UP — see below
+        if mid * mid <= n:
+            lo = mid                     # mid might be the answer
+        else:
+            hi = mid - 1
+    return lo
+```
+
+This is the *upper*-boundary variant — we want the largest value satisfying the
+predicate rather than the smallest — and it comes with a trap worth meeting once.
+
+**The midpoint must round up here.** With `lo = mid` and ordinary floor division,
+a two-element range where the predicate holds at `lo` computes `mid == lo`, sets
+`lo = mid`, and never shrinks: an infinite loop. The `+ 1` biases the midpoint
+upward so the range always contracts.
+
+The rule that covers both variants: **whichever side keeps `mid`, bias the midpoint
+away from it.** Lower-bound searches use `hi = mid` and floor division;
+upper-bound searches use `lo = mid` and ceiling division.
+
+$O(\log n)$ — about 30 iterations for a billion — against $O(\sqrt n)$ for the
+obvious linear scan, which is roughly 31,000.
+
+</details>
+
+<Quiz
+  client:visible
+  id="searching-invariant"
+  kind="output"
+  question="What goes wrong with this binary search?"
+  snippet={`def search(a, target):
+    lo, hi = 0, len(a) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if a[mid] == target:
+            return mid
+        elif a[mid] < target:
+            lo = mid
+        else:
+            hi = mid - 1
+    return -1`}
+  lang="python"
+  options={[
+    { label: 'It can loop forever, and it can miss the last element', correct: true },
+    { label: 'It always misses the last element, but terminates' },
+    { label: 'It works, but is O(n) rather than O(log n)' },
+    { label: 'It only fails when the array contains duplicates' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Two independent bugs.
+      </p>
+      <p>
+        <strong>The hang</strong> is <code>lo = mid</code>. With{' '}
+        <code>lo = 0, hi = 1</code>, the midpoint is 0, so <code>lo = mid</code>{' '}
+        assigns <code>lo = 0</code> — the range never shrinks and the loop spins
+        forever. This is the single most common binary search bug, and it manifests
+        as a hang rather than a wrong answer.
+      </p>
+      <p>
+        <strong>The miss</strong> is <code>lo &lt; hi</code> with inclusive bounds.
+        When <code>lo == hi</code> the range still holds one unexamined element, and
+        the loop exits without checking it.
+      </p>
+      <p>
+        Both are fixed by the discipline the page argues for: make every branch
+        strictly shrink the range (<code>mid + 1</code> / <code>mid - 1</code>), and
+        match the loop condition to whether the bounds are inclusive.{' '}
+        <code>(lo + hi) // 2</code> is fine in Python but would overflow in a
+        fixed-width language.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="searching-sort-first"
+  kind="concept"
+  question="You have 1,000,000 unsorted records and need to look up 5 of them, once. What is fastest?"
+  options={[
+    { label: 'Five linear scans', correct: true },
+    { label: 'Sort once, then five binary searches' },
+    { label: 'Build a hash table, then five lookups' },
+    { label: 'Sort once, then one linear scan' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Five linear scans: about 5 million operations. Sorting alone is roughly n log
+        n ≈ 20 million before you search anything, so it loses by 4× — and building a
+        hash table is a full O(n) pass plus allocation and hashing per element, which
+        also costs more than the scans it saves.
+      </p>
+      <p>
+        The break-even is <em>k &gt; log n</em>. With n = 10⁶, log₂n ≈ 20, so
+        preprocessing only pays from about 20 lookups onward. At five, it cannot.
+      </p>
+      <p>
+        This is the calculation people skip when they reach for "sort it first"
+        reflexively. Preprocessing is an investment amortised over future queries, so
+        the question is never "is binary search faster than linear" — it is "how many
+        queries am I going to make?"
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Implement binary search."** Narrate the invariant, not the mechanics — that is
+what separates a memorised version from an understood one:
+
+> I'll write the boundary version, because it is harder to get wrong. The invariant
+> is that everything below `lo` fails the predicate and everything from `hi` up
+> satisfies it, so the loop shrinks the unknown region between them and `lo` is the
+> answer when it is empty.
+>
+> Two things I am deliberate about. `lo + (hi - lo) / 2` rather than
+> `(lo + hi) / 2`, because the sum overflows in a fixed-width language — that bug
+> was in the JDK for nine years. And the asymmetry: `lo = mid + 1` when `mid`
+> definitively fails, `hi = mid` when `mid` might be the answer. That asymmetry is
+> the correctness argument, and it is also what guarantees the range shrinks, so
+> the loop terminates.
+
+**"When would you not use it?"**
+
+> If the data is not sorted and I only need a few lookups. Sorting is n log n, so
+> it only pays off after about log n queries — for a million elements that is around
+> 20. Below that a linear scan wins outright.
+>
+> Also on a linked list, where there is no random access, so finding the midpoint is
+> O(n) and binary search degrades to O(n log n) — worse than the scan it replaced.
+> And below about 50 elements, where a scan is faster in practice because it is
+> sequential and branch-predictable.
+
+**"Where does binary search show up that isn't an array?"** The answer that shows
+you have generalised it:
+
+> Binary searching the *answer space*. If a problem asks for the minimum value
+> satisfying a condition, and the condition is monotonic in that value, you can
+> binary search over the range of possible answers with no array involved — the
+> "sorted" property is the monotonicity of the predicate.
+>
+> `git bisect` is the same idea over commits, with "does the bug exist here?" as the
+> predicate. And a B-tree index is binary search with a branching factor of hundreds
+> instead of two.
+
+**The caveats worth voicing:**
+
+- Binary search on unsorted data does not error, it returns a confidently wrong
+  answer — and you cannot cheaply assert the precondition, because checking
+  sortedness is $O(n)$.
+- Plain binary search finds *an* occurrence, not the first. With duplicates you
+  want `lower_bound` / `upper_bound`, and walking backwards from a hit is $O(n)$
+  when everything is equal.
+- For exact-match lookups a hash table beats it outright. Sorted order earns its
+  keep when you need ranges, ordering, or nearest-neighbour.

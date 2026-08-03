@@ -1,0 +1,657 @@
+---
+title: Backtracking
+description: >-
+  Exhaustive search that undoes its choices — and pruning, which is the entire
+  difference between a solver that finishes and one that does not.
+sidebar:
+  order: 4
+difficulty: advanced
+status: complete
+prereqs: ['3-algorithms/recursion', '2-data-structures/graphs']
+tags: [backtracking, pruning, n-queens, permutations, constraint-satisfaction]
+languages: [python, typescript]
+complexity:
+  permutations: O(n!)
+  subsets: O(2ⁿ)
+  n-queens: O(n!) pruned
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Backtracking is what you do when there is no clever algorithm: try everything, but
+try it in a way that abandons doomed branches as early as possible.
+
+The mental model is a maze. Walk forward making choices. When you hit a wall, walk
+back to the last junction and take a different turn. When you have tried every turn
+at a junction, back up further. You will explore the whole maze if you must, but
+you never re-walk a corridor you already know is a dead end.
+
+Formally it is depth-first search over a tree of partial solutions:
+
+```text
+                        [ ]
+            ┌────────────┼────────────┐
+          [1]           [2]          [3]
+        ┌──┴──┐       ┌──┴──┐      ┌──┴──┐
+     [1,2]  [1,3]  [2,1]  [2,3]  [3,1]  [3,2]
+       │      │      │      │      │      │
+   [1,2,3] [1,3,2] …
+```
+
+Three things distinguish it from plain recursion, and the third is the one that
+matters:
+
+**It builds a partial solution incrementally**, one choice at a time.
+
+**It undoes each choice on the way back up** — that is the "backtrack", and it is
+what lets a single mutable working structure serve the entire search instead of
+allocating a copy per branch.
+
+**It prunes.** Before recursing, it asks whether this partial solution can possibly
+lead anywhere. If not, it abandons the entire subtree unexplored.
+
+Pruning is the whole game. Without it, backtracking is just brute force with extra
+steps and it will not finish. With it, problems that are exponential in theory are
+routinely solved in milliseconds — a Sudoku has $9^{81}$ possible grids and a good
+solver finishes instantly, because almost every branch dies at the first
+constraint check.
+
+## Mechanics
+
+### The template
+
+```python
+def backtrack(state, choices, solutions):
+    if is_complete(state):
+        solutions.append(state.copy())    # COPY — state is about to be mutated
+        return
+
+    for choice in choices:
+        if not is_valid(state, choice):
+            continue                      # PRUNE: skip the whole subtree
+
+        state.append(choice)              # 1. make the choice
+        backtrack(state, next_choices(choices, choice), solutions)
+        state.pop()                       # 2. undo it — this is the backtrack
+```
+
+The make/recurse/undo triple is the pattern. Every backtracking algorithm is this
+with different `is_valid` and `is_complete`.
+
+**The `.copy()` on the solution matters.** `state` is a single mutable list reused
+across the whole search, so appending it directly stores a reference that will be
+mutated into something else moments later. The classic symptom is a result list
+full of identical — usually empty — entries.
+
+### Permutations
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def permutations(nums):
+    result, current = [], []
+    used = [False] * len(nums)
+
+    def backtrack():
+        if len(current) == len(nums):
+            result.append(current.copy())
+            return
+
+        for i, num in enumerate(nums):
+            if used[i]:
+                continue
+
+            used[i] = True          # choose
+            current.append(num)
+            backtrack()             # explore
+            current.pop()           # un-choose
+            used[i] = False
+
+        return
+
+    backtrack()
+    return result
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function permutations(nums: number[]): number[][] {
+  const result: number[][] = [];
+  const current: number[] = [];
+  const used = new Array(nums.length).fill(false);
+
+  function backtrack(): void {
+    if (current.length === nums.length) {
+      result.push([...current]); // copy — current is mutated below
+      return;
+    }
+
+    for (let i = 0; i < nums.length; i++) {
+      if (used[i]) continue;
+
+      used[i] = true; // choose
+      current.push(nums[i]!);
+      backtrack(); // explore
+      current.pop(); // un-choose
+      used[i] = false;
+    }
+  }
+
+  backtrack();
+  return result;
+}
+```
+
+</TabItem>
+</Tabs>
+
+Note that *two* things are undone — `current` and `used`. Every piece of state
+mutated on the way down must be restored on the way up, and forgetting one is the
+most common bug in the whole technique.
+
+### Subsets: the include/exclude shape
+
+```python
+def subsets(nums):
+    result = []
+
+    def backtrack(start, current):
+        result.append(current.copy())     # every node is a valid subset
+
+        for i in range(start, len(nums)):
+            current.append(nums[i])
+            backtrack(i + 1, current)     # i+1 prevents reusing earlier elements
+            current.pop()
+
+    backtrack(0, [])
+    return result
+```
+
+Two differences from permutations worth noticing. The result is recorded at **every
+node**, not just the leaves, because every prefix is itself a valid subset. And the
+`start` parameter enforces that elements are only ever chosen in increasing index
+order — which is what makes `[1,2]` and `[2,1]` the same subset rather than two.
+
+### N-Queens: where pruning earns its keep
+
+```python
+def solve_n_queens(n):
+    solutions = []
+    cols, diag1, diag2 = set(), set(), set()
+    placement = []
+
+    def backtrack(row):
+        if row == n:
+            solutions.append(placement.copy())
+            return
+
+        for col in range(n):
+            # O(1) conflict check. Two queens share a diagonal iff they share
+            # (row - col) or (row + col) — which is why these are the keys.
+            if col in cols or (row - col) in diag1 or (row + col) in diag2:
+                continue
+
+            cols.add(col); diag1.add(row - col); diag2.add(row + col)
+            placement.append(col)
+
+            backtrack(row + 1)
+
+            cols.remove(col); diag1.remove(row - col); diag2.remove(row + col)
+            placement.pop()
+
+    backtrack(0)
+    return solutions
+```
+
+Two design choices are doing the work.
+
+**One queen per row is baked into the structure.** By recursing on `row` and only
+choosing a column, entire classes of invalid placement are never generated. This
+takes the search space from $\binom{n^2}{n}$ — about $4.4 \times 10^9$ for $n = 8$ —
+down to $n^n = 1.6 \times 10^7$, before any pruning at all.
+
+**The conflict check is $O(1)$ rather than $O(n)$**, because the three sets encode
+exactly the three ways queens attack. Scanning previous placements would work and
+would multiply the runtime by $n$.
+
+## Complexity
+
+**The bound is the size of the tree you actually explore**, which is why stating a
+worst case is easy and stating a real one is hard.
+
+$$
+T = O(\text{nodes explored} \times \text{work per node})
+$$
+
+Unpruned, the search space is whatever the problem's combinatorics say:
+
+| Problem | Search space | At $n = 10$ | At $n = 20$ |
+|---|---|---:|---:|
+| Subsets | $2^n$ | 1,024 | 1,048,576 |
+| Permutations | $n!$ | 3.6M | $2.4 \times 10^{18}$ |
+| N-Queens (naive) | $n^n$ | $10^{10}$ | $10^{26}$ |
+| Sudoku | $9^{81}$ | — | $10^{77}$ |
+
+Those numbers say the problems are unsolvable. They are solved routinely, and the
+gap is entirely pruning.
+
+**What pruning actually buys**, measured on N-Queens — these are the counts of
+nodes the recursion visits:
+
+| $n$ | $n^n$ | Nodes visited | Solutions |
+|---:|---:|---:|---:|
+| 4 | 256 | 17 | 2 |
+| 6 | 46,656 | 153 | 4 |
+| 8 | 16,777,216 | 2,057 | 92 |
+| 10 | $10^{10}$ | 35,539 | 724 |
+
+(Counted by instrumenting the implementation above; a "node" is one call to
+`backtrack`.)
+
+At $n = 10$ the pruned search explores about **0.0004%** of the nominal space. The
+complexity class has not changed — it is still exponential — but the constant is
+transformed to the point where the distinction stops mattering at practical sizes.
+
+**Pruning earlier is worth much more than pruning cheaply.** A check at depth $d$
+in a tree with branching factor $b$ eliminates $b^{h-d}$ leaves. Cutting one branch
+at depth 2 of a depth-10 binary tree removes 256 leaves; cutting one at depth 8
+removes 4. So **an expensive check high in the tree usually beats a cheap check low
+in it**, which is the opposite of the usual optimisation instinct.
+
+**Space is $O(\text{depth})$**, not $O(\text{nodes})$ — the same distinction as
+[recursion](/cs-fundamentals/3-algorithms/recursion/). The tree is explored
+depth-first, so only one root-to-leaf path exists at a time. N-Queens for $n = 20$
+visits an enormous number of nodes and uses 20 stack frames.
+
+That is also why backtracking is preferable to generating all candidates and
+filtering: filtering needs $O(b^h)$ memory to hold them, backtracking needs
+$O(h)$.
+
+## When NOT to use it
+
+**When a polynomial algorithm exists.** Backtracking is the tool of last resort. If
+the problem has greedy or DP structure, use that — reaching for exhaustive search
+first means missing it.
+
+**When subproblems overlap.** If the same partial state is reached by different
+paths, you are recomputing. Memoise it, at which point you have
+[dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/). The
+distinction: backtracking explores *paths*, DP caches *states*, and the two combine
+when many paths reach the same state.
+
+**When you cannot prune.** Without a validity check that fails early, backtracking
+is brute force with the overhead of a recursion. If every partial solution is
+feasible until the very end, the tree cannot be cut and you will explore all of it.
+
+**When the search space is large and you only need a good answer.** Exhaustive
+search is for optimal or complete answers. If "good enough" is acceptable,
+heuristics, local search or a greedy approximation with a proven bound will finish
+when this will not.
+
+**When depth exceeds the stack.** Backtracking is recursion, so the depth limits
+apply — about 1,000 frames in CPython. Deep search trees need an explicit stack.
+
+**When you need all solutions and there are astronomically many.** Generating all
+permutations of 20 elements is $2.4 \times 10^{18}$ results; the algorithm is fine
+and the output is the problem. Generate lazily, or reconsider the question.
+
+## Real-world usage
+
+**Constraint satisfaction solvers.** Sudoku, timetabling, exam scheduling, seating
+plans, and register allocation in compilers are all backtracking with
+domain-specific pruning. Production solvers add two refinements worth naming:
+
+- **Constraint propagation** — after each choice, narrow the remaining domains.
+  Placing a 5 removes 5 from every cell in that row, column and box, which often
+  forces further placements without any search at all.
+- **Variable ordering heuristics** — choose the most constrained variable next
+  (fewest remaining options). This maximises the chance of failing early, which by
+  the depth argument above is where pruning pays most.
+
+**Regular expression backtracking.** Most regex engines — including
+JavaScript's and Python's — are backtracking matchers, and this is where the
+technique's failure mode becomes a security issue. A pattern like `/^(a+)+$/` on a
+non-matching input explores exponentially many ways to split the input among the
+nested quantifiers. That is **ReDoS**, and as the
+[event loop page](/cs-fundamentals/5-systems/event-loop/) notes, in a
+single-threaded runtime one such request stalls the entire server. RE2 avoids it by
+using an automaton with no backtracking at all.
+
+**SAT solvers.** DPLL, the basis of modern SAT solving, is backtracking plus unit
+propagation and clause learning. These solve instances with millions of variables
+routinely, which is a remarkable practical result for an NP-complete problem.
+
+**Type inference and unification** in compilers, where the search is over possible
+type assignments.
+
+**Parser backtracking** in PEG and recursive-descent parsers with ambiguity —
+try a production, and on failure rewind the input position and try the next.
+
+**Game AI.** Minimax with alpha-beta pruning is backtracking where the pruning rule
+is "this branch cannot affect the outcome given what we already found". Alpha-beta
+typically halves the effective depth cost, which is the difference between looking
+four moves ahead and eight.
+
+## Failure modes
+
+**Symptom: the result list contains identical or empty entries.** The missing
+`.copy()`. Every solution stored is a reference to the same mutable object, which
+ends the search empty. This is the single most common backtracking bug.
+
+**Symptom: wrong answers that look almost right.** Incomplete undo. If you mutate
+three structures on the way down and restore two, state leaks between branches.
+Keep the make/undo pairs adjacent and symmetric so a missing one is visible.
+
+**Symptom: it never finishes.** Either no pruning, or the pruning is at the wrong
+depth, or the state space is genuinely too large. Instrument the node count first —
+if it is astronomical, the fix is a better constraint check, not a faster machine.
+
+**Symptom: duplicate solutions.** Missing the ordering constraint. For subsets and
+combinations, the `start` index is what prevents `[1,2]` and `[2,1]` both being
+generated. With duplicate *values* in the input you also need to skip repeats at
+the same tree level:
+
+```python
+if i > start and nums[i] == nums[i - 1]:
+    continue     # requires nums to be sorted first
+```
+
+**Symptom: `RecursionError`.** Depth exceeded. Convert to an explicit stack, or
+bound the search depth.
+
+**Symptom: a regex hangs the process on one specific input.** Catastrophic
+backtracking. Nested quantifiers and overlapping alternations are the smell; never
+build a regex from user input.
+
+**Symptom: pruning made it slower.** The check costs more than the subtree it
+saves. This happens when an expensive check sits at the leaves — by the depth
+argument, the check is eliminating almost nothing there. Move it up, or drop it.
+
+**Symptom: it finds one solution fast and takes forever to prove there are no
+more.** Exhausting the space is much harder than finding a witness. If you only
+need one solution, return immediately — and make sure the recursion actually
+short-circuits rather than continuing to explore.
+
+## Practice problems
+
+**1. Generate all valid combinations of $n$ pairs of parentheses.**
+
+<details>
+<summary>Solution</summary>
+
+The pruning is the entire solution — generating all $2^{2n}$ strings and filtering
+is hopeless, but two counters make every generated string valid by construction.
+
+```python
+def generate_parens(n):
+    result, current = [], []
+
+    def backtrack(open_count, close_count):
+        if len(current) == 2 * n:
+            result.append(''.join(current))
+            return
+
+        # Prune 1: only open if we have brackets left to open.
+        if open_count < n:
+            current.append('(')
+            backtrack(open_count + 1, close_count)
+            current.pop()
+
+        # Prune 2: only close if there is something unclosed. This single
+        # condition is what makes every leaf valid — no filtering needed.
+        if close_count < open_count:
+            current.append(')')
+            backtrack(open_count, close_count + 1)
+            current.pop()
+
+    backtrack(0, 0)
+    return result
+```
+
+Because both constraints are checked *before* recursing, the search tree contains
+no invalid nodes at all. Every leaf reached is a solution, so the runtime is
+proportional to the output size rather than to the space searched.
+
+The number of results is the $n$-th Catalan number, $C_n = \frac{1}{n+1}\binom{2n}{n}$
+— 42 for $n = 5$, against $2^{10} = 1024$ candidate strings. So the pruning is
+doing roughly 25× of work-avoidance at $n=5$, and the ratio grows.
+
+**The transferable lesson:** the best pruning makes invalid states
+*unrepresentable* rather than detected. That is the same idea as the discriminated
+union in [TypeScript](/cs-fundamentals/6-languages/typescript/), applied to a
+search tree.
+
+</details>
+
+**2. Solve a Sudoku.** Explain why it finishes.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def solve_sudoku(board):
+    def candidates(r, c):
+        used = set(board[r]) | {board[i][c] for i in range(9)}
+        br, bc = 3 * (r // 3), 3 * (c // 3)
+        used |= {board[br + i][bc + j] for i in range(3) for j in range(3)}
+        return [d for d in '123456789' if d not in used]
+
+    def find_most_constrained():
+        # Choose the empty cell with FEWEST options, not the first one. This
+        # is the single most valuable heuristic here — see below.
+        best, best_options = None, None
+        for r in range(9):
+            for c in range(9):
+                if board[r][c] == '.':
+                    options = candidates(r, c)
+                    if best_options is None or len(options) < len(best_options):
+                        best, best_options = (r, c), options
+                        if not options:
+                            return best, options   # dead end — fail immediately
+        return best, best_options
+
+    cell, options = find_most_constrained()
+    if cell is None:
+        return True                      # no empty cells left: solved
+
+    r, c = cell
+    for digit in options:
+        board[r][c] = digit
+        if solve_sudoku(board):
+            return True                  # short-circuit: we only need one
+        board[r][c] = '.'                # undo
+
+    return False
+```
+
+**Why it finishes** despite a nominal $9^{81} \approx 10^{77}$ space: essentially
+every branch dies immediately. A filled Sudoku constrains its neighbours so heavily
+that most cells have one or two candidates rather than nine, so the effective
+branching factor is close to 1 rather than 9.
+
+**The most-constrained-cell heuristic is what makes it fast**, and it follows
+directly from the depth argument: choosing the cell with fewest options maximises
+the chance of failing high in the tree, where a cut eliminates the most. Picking
+the first empty cell instead can be orders of magnitude slower on hard puzzles.
+
+Returning `True` up the stack immediately is also load-bearing. Without the
+short-circuit the solver would continue exploring after finding an answer, and
+proving uniqueness is far more expensive than finding one solution.
+
+</details>
+
+**3. Word search in a grid.** Find whether a word exists along adjacent cells,
+without reusing a cell.
+
+<details>
+<summary>Solution</summary>
+
+```python
+def exists(board, word):
+    rows, cols = len(board), len(board[0])
+
+    def backtrack(r, c, i):
+        if i == len(word):
+            return True
+        if not (0 <= r < rows and 0 <= c < cols) or board[r][c] != word[i]:
+            return False
+
+        # Mark as visited by mutating the board itself — no extra set, and
+        # O(1) rather than O(len(word)) to check.
+        original, board[r][c] = board[r][c], '#'
+
+        found = any(
+            backtrack(r + dr, c + dc, i + 1)
+            for dr, dc in ((0, 1), (1, 0), (0, -1), (-1, 0))
+        )
+
+        board[r][c] = original           # undo — mandatory
+        return found
+
+    return any(
+        backtrack(r, c, 0) for r in range(rows) for c in range(cols)
+    )
+```
+
+$O(m \cdot n \cdot 4^L)$ worst case for a word of length $L$, and far better in
+practice because the `board[r][c] != word[i]` check kills most branches at depth 1.
+
+**Two details worth extracting.**
+
+Mutating the board in place as the visited-marker is the neat part — it avoids
+allocating a visited set per path, and it is $O(1)$ to check. The cost is that the
+undo is now mandatory for *correctness of the input*, not just of the search: an
+early return that skips the restore leaves the caller's board permanently
+corrupted with `#` characters.
+
+`any` with a generator short-circuits, so the moment one direction succeeds the
+others are never explored. Using a list comprehension instead would evaluate all
+four regardless — a quiet 4× on the successful path.
+
+</details>
+
+<Quiz
+  client:visible
+  id="backtracking-copy"
+  kind="output"
+  question="A permutation generator returns a list of N empty lists instead of the permutations. What is the bug?"
+  options={[
+    { label: 'The solution was appended by reference, not copied', correct: true },
+    { label: 'The base case fires too early' },
+    { label: 'The used[] array is never reset' },
+    { label: 'The recursion returns before appending' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <code>result.append(current)</code> instead of{' '}
+        <code>result.append(current.copy())</code>. Backtracking reuses one mutable
+        list for the whole search, so every stored "solution" is a reference to that
+        same object — and by the time the search finishes, the undo steps have popped
+        it back to empty.
+      </p>
+      <p>
+        The symptom is diagnostic: you get the <em>right number</em> of results, all
+        identical and all empty. Right count means the traversal is correct and only
+        the recording is wrong.
+      </p>
+      <p>
+        This is the most common backtracking bug, and it exists precisely because the
+        single-mutable-state trick is what makes the technique memory-efficient. The
+        copy is the one place you must opt out of it.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="backtracking-prune-depth"
+  kind="concept"
+  question="In a depth-10 binary search tree, is it better to prune at depth 2 or depth 8?"
+  options={[
+    { label: 'Depth 2 — it eliminates 256 leaves versus 4', correct: true },
+    { label: 'Depth 8 — checks near the leaves are cheaper to evaluate' },
+    { label: 'They are equivalent; both remove one subtree' },
+    { label: 'Depth 8, because more information is available to decide' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Depth 2. Cutting a branch at depth <em>d</em> in a tree of height <em>h</em>{' '}
+        with branching factor <em>b</em> removes b^(h−d) leaves — so at depth 2 that
+        is 2⁸ = 256 leaves, and at depth 8 it is 2² = 4.
+      </p>
+      <p>
+        The practical consequence inverts the usual optimisation instinct: an{' '}
+        <em>expensive</em> check high in the tree normally beats a cheap one near the
+        leaves, because it is eliminating hundreds of times more work.
+      </p>
+      <p>
+        It is also why the most-constrained-variable heuristic works in Sudoku and SAT
+        solvers. Choosing the variable with fewest remaining options maximises the
+        chance of failing early — deliberately arranging to hit contradictions as
+        high in the tree as possible.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Explain backtracking."**
+
+> Depth-first search over partial solutions, with three parts: build the solution
+> incrementally, undo each choice on the way back up, and prune branches that cannot
+> lead to a solution before recursing into them.
+>
+> The undo is what makes it memory-efficient — one mutable working structure serves
+> the whole search instead of a copy per branch, so space is O(depth) rather than
+> O(number of candidates).
+>
+> Pruning is the part that matters. Without it, it is brute force that will not
+> finish. N-Queens at n=10 has a nominal space of 10¹⁰ and a good implementation
+> visits about 350,000 nodes — the complexity class is unchanged and the constant
+> makes it a different problem.
+
+**"How would you make it faster?"** This is where the depth argument earns its
+keep:
+
+> Prune earlier rather than more cheaply. A cut at depth 2 of a depth-10 binary tree
+> removes 256 leaves; the same cut at depth 8 removes 4. So an expensive check high
+> in the tree usually beats a cheap check near the leaves, which is the opposite of
+> the normal instinct.
+>
+> Then constraint propagation — after each choice, narrow the remaining options,
+> which often forces further choices with no search. And variable ordering: pick the
+> most constrained variable next, because that maximises the chance of failing high
+> in the tree where cuts are worth most.
+
+**"When is it the wrong tool?"**
+
+> When something polynomial exists — it is a last resort, and reaching for it first
+> means missing greedy or DP structure. And when partial states are reached by
+> multiple paths, because then I am recomputing: memoise, and it becomes dynamic
+> programming. The distinction I use is that backtracking explores *paths* and DP
+> caches *states*.
+
+**The caveats worth voicing:**
+
+- Copy the solution when recording it. The same mutable structure is reused
+  throughout, so appending by reference gives you N references to one object that
+  ends up empty.
+- Every mutation on the way down needs a matching undo on the way up. Keeping the
+  pairs adjacent is what makes a missing one visible.
+- Backtracking regex engines are why ReDoS exists — nested quantifiers can explore
+  exponentially many splits, and in a single-threaded runtime one request stalls
+  the whole server.
+- Finding one solution is much cheaper than proving there are no others. If one is
+  enough, short-circuit and make sure the recursion actually stops.

@@ -962,3 +962,21 @@
   border-radius: var(--viz-radius);
   background: var(--viz-surface-sunken, transparent);
 }
+
+/* ── SortRace ─────────────────────────────────────────────────────────────── */
+
+/*
+ * A select rather than a row of buttons: with five algorithms per side, buttons
+ * would wrap into two rows above each pane and push the two arrays out of
+ * vertical alignment — which is the one thing a side-by-side comparison cannot
+ * afford.
+ */
+.viz-select {
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--viz-text, inherit);
+  background: var(--viz-surface, transparent);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+}

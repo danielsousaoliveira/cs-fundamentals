@@ -1,0 +1,477 @@
+---
+title: Linked Lists
+description: >-
+  O(1) insertion that loses to an O(n) array up to a few thousand elements —
+  the clearest case in this section of asymptotics losing to cache locality.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs: ['2-data-structures/arrays-lists']
+tags: [linked-list, pointers, cache, memory]
+languages: [python, typescript]
+complexity:
+  prepend: O(1)
+  append: O(n)
+  index: O(n)
+  delete: O(1)†
+sources:
+  - notebooks/2-data-structures/linked-lists.ipynb
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { PointerWalk } from '../../../components/viz/widgets/PointerWalk.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+An array's problems all come from being one contiguous block: it cannot grow in
+place, and inserting in the middle means shifting everything after it.
+
+A linked list makes the opposite trade. **Give up contiguity entirely.** Each
+element lives wherever the allocator happened to put it, and each one stores a
+pointer to the next.
+
+```
+head ──▶ [3|•]──▶ [7|•]──▶ [12|•]──▶ [18|✕]
+```
+
+Now insertion anywhere is just reassigning two pointers, no matter how long the
+list is. Nothing shifts, nothing gets copied, and the list can grow until memory
+runs out.
+
+The price is paid on every single read. There is no arithmetic that finds element
+`i`, because the elements are not laid out in any predictable pattern — you have
+to start at `head` and follow `next` `i` times. Indexing goes from $O(1)$ to
+$O(n)$, and that is not the worst of it. The worst of it is that following a
+pointer to an unpredictable address is one of the slowest things a modern CPU
+does, and the [measurements below](#when-not-to-use-it) show it costing an order
+of magnitude.
+
+## Visual
+
+Press **prepend** and **append** in turn, and watch the "pointers followed"
+counter. The two operations look symmetric in any API. They are not.
+
+<PointerWalk client:visible />
+
+Notice the step where the new node exists but nothing points at it yet. Pointer
+surgery has an order, and getting it backwards is catastrophic:
+
+```python
+self.head = node          # WRONG: head no longer points at the old list
+node.next = self.head     # ...so this points the new node at itself
+```
+
+Two lines, correct-looking, and the entire rest of the list is now unreachable.
+That is why the widget shows the intermediate state rather than jumping to the
+result.
+
+## Mechanics
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class Node:
+    __slots__ = ('data', 'next')     # see the failure modes — this matters
+    def __init__(self, data):
+        self.data = data
+        self.next = None
+
+class SinglyLinkedList:
+    def __init__(self):
+        self.head = None
+
+    def prepend(self, value):        # O(1)
+        node = Node(value)
+        node.next = self.head        # 1. link the new node in
+        self.head = node             # 2. only then move head
+
+    def append(self, value):         # O(n) — no tail pointer
+        node = Node(value)
+        if not self.head:
+            self.head = node
+            return
+        current = self.head
+        while current.next:          # walk to the end
+            current = current.next
+        current.next = node
+
+    def delete(self, value):         # O(n) to find, O(1) to splice
+        if not self.head:
+            return
+        if self.head.data == value:
+            self.head = self.head.next
+            return
+        current = self.head
+        while current.next and current.next.data != value:
+            current = current.next   # find the node BEFORE the target
+        if current.next:
+            current.next = current.next.next
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class Node<T> {
+  next: Node<T> | null = null;
+  constructor(public data: T) {}
+}
+
+class SinglyLinkedList<T> {
+  head: Node<T> | null = null;
+
+  prepend(value: T): void {          // O(1)
+    const node = new Node(value);
+    node.next = this.head;           // 1. link the new node in
+    this.head = node;                // 2. only then move head
+  }
+
+  append(value: T): void {           // O(n) — no tail pointer
+    const node = new Node(value);
+    if (!this.head) {
+      this.head = node;
+      return;
+    }
+    let current = this.head;
+    while (current.next) current = current.next;
+    current.next = node;
+  }
+
+  delete(value: T): void {           // O(n) to find, O(1) to splice
+    if (!this.head) return;
+    if (this.head.data === value) {
+      this.head = this.head.next;
+      return;
+    }
+    let current = this.head;
+    while (current.next && current.next.data !== value) {
+      current = current.next;        // find the node BEFORE the target
+    }
+    if (current.next) current.next = current.next.next;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+**The `delete` loop looks off by one and is not.** A singly linked list has no way
+back, so to remove a node you must be standing on its *predecessor* — you cannot
+unlink a node you are currently holding. That single constraint explains most of
+the awkwardness in linked-list code, and it is why doubly linked lists exist.
+
+### Variants
+
+**Doubly linked** — each node also stores `prev`. Deletion given a node reference
+becomes genuinely $O(1)$, and traversal works in both directions. Costs an extra
+pointer per node (8 more bytes) and doubles the number of updates per operation,
+so there are twice as many chances to leave the structure inconsistent.
+
+**Circular** — the tail points back at the head. Natural fit for round-robin
+schedulers and ring buffers. The trap is that every traversal needs an explicit
+termination condition, because there is no `null` to stop at — an infinite loop is
+one forgotten check away.
+
+**With a tail pointer** — one extra field makes `append` $O(1)$. Nearly every real
+implementation has one, which makes the $O(n)$ append in the widget above a
+property of the textbook version rather than of linked lists generally.
+
+## Complexity
+
+| Operation | Singly | Doubly | Note |
+|---|---|---|---|
+| Prepend | $O(1)$ | $O(1)$ | Two pointer writes |
+| Append | $O(n)$, or $O(1)$ with a tail pointer | $O(1)$ | |
+| Index `list[i]` | $O(n)$ | $O(n)$ | No arithmetic is possible |
+| Search by value | $O(n)$ | $O(n)$ | |
+| Delete, node in hand | $O(n)$ | $O(1)$ | Singly must find the predecessor |
+| Delete by value | $O(n)$ | $O(n)$ | The search dominates |
+
+### The bound that gets quoted misleadingly
+
+"Insertion is $O(1)$" is the standard claim, and it is true only with a large
+asterisk: **$O(1)$ once you are already holding the right node.** Getting there is
+$O(n)$, and unless you were already traversing for another reason, you pay it.
+
+$$
+\underbrace{O(n)}_{\text{find the position}} + \underbrace{O(1)}_{\text{splice}}
+$$
+
+An array's insert is $O(n)$ too — but it is $O(n)$ *memmove*, a single bulk memory
+operation that a CPU does at gigabytes per second, against $O(n)$ *pointer chases*,
+each potentially a cache miss. Same complexity class, wildly different constants,
+and the constants win far longer than anyone expects.
+
+## When NOT to use it
+
+This section is the reason this page exists, and the numbers below are from
+running the original notebook's own benchmark past the point where it stopped.
+
+### Almost always, in a high-level language
+
+The notebook that seeded this site benchmarked prepending to a linked list against
+`list.insert(0, …)` on a Python list, and concluded that **the array won at every
+size it tested** — including at 10,000 elements, the case linked lists are
+supposed to dominate. The linked list is $O(n)$ total there and the array is
+$O(n^2)$, so that result looks impossible.
+
+It is not impossible; the benchmark simply stopped at the crossover. Extending it:
+
+| n | linked list | Python `list.insert(0, …)` | winner |
+|---:|---:|---:|---|
+| 100 | 0.00002 s | 0.00001 s | array, 3.6× |
+| 1,000 | 0.00021 s | 0.00020 s | array, 1.02× |
+| 10,000 | 0.00224 s | 0.01280 s | linked list, 5.7× |
+| 40,000 | 0.00762 s | 0.18537 s | linked list, 24× |
+| 160,000 | 0.03450 s | 2.94881 s | linked list, 85× |
+
+The asymptotics do win — eventually, and then overwhelmingly. But the crossover
+sits somewhere around **one to two thousand elements**, and below that the array
+wins the very operation it is theoretically bad at. `list.insert(0, …)` is a
+`memmove` in C; the linked list is an object allocation and a pointer write in the
+interpreter. For most application code, "a few thousand elements" is the whole
+range that ever occurs.
+
+### When you traverse more than you splice
+
+Both are $O(n)$. They are not remotely the same:
+
+| n | linked list walk | array walk | |
+|---:|---:|---:|---|
+| 100,000 | 0.00290 s | 0.00029 s | array 9.9× faster |
+| 1,000,000 | 0.03161 s | 0.00278 s | array 11.4× faster |
+
+Ten times slower, for the same complexity class and the same number of elements.
+The array walks sequential memory, so the prefetcher has the next cache line ready
+before it is asked for; the linked list follows pointers to addresses nobody can
+predict, and each one may be a cache miss costing hundreds of cycles. **This is
+the clearest example in this entire section of Big-O being a statement about
+growth rate and nothing else.**
+
+### When you need random access
+
+Indexing is $O(n)$. Any algorithm that indexes inside a loop — binary search, most
+sorting, two-pointer techniques with jumps — becomes an order worse. `list[i]` in a
+loop over a linked list is a quiet $O(n^2)$.
+
+### When memory overhead matters
+
+A Python object node costs roughly 56 bytes with `__dict__`, or about 48 with
+`__slots__`, to store one 8-byte pointer's worth of payload. An array of the same
+data costs 8 bytes per element. **Six times the memory to store the same values**,
+and worse locality for it.
+
+### The honest summary
+
+Reach for a linked list when you have a node reference in hand and are splicing
+often — an LRU's recency list, a scheduler's run queue, a free list inside an
+allocator. In application code, the answer is usually a dynamic array, and when it
+is not, it is usually a deque.
+
+<Quiz
+  client:visible
+  id="linked-lists-when"
+  kind="concept"
+  question="You need a FIFO queue for a few thousand jobs, with pushes and pops at both ends. What do you reach for?"
+  options={[
+    { label: 'A deque (ring buffer over an array)', correct: true },
+    { label: 'A singly linked list — O(1) insertion' },
+    { label: 'A Python list with pop(0)' },
+    { label: 'A doubly linked list, for O(1) at both ends' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>A deque.</strong> Python's <code>collections.deque</code> is a
+        doubly linked list of <em>fixed-size blocks</em> — typically 64 elements
+        each. That gets O(1) at both ends like a linked list, while keeping runs of
+        elements contiguous so traversal stays cache-friendly and the pointer
+        overhead is amortised over 64 values instead of paid per value.
+      </p>
+      <p>
+        A plain linked list is right in principle and loses on constants. A Python
+        list with <code>pop(0)</code> is O(n) per pop, so O(n²) overall. The
+        general lesson: <strong>the winning structures are usually hybrids</strong>{' '}
+        — blocks of contiguous memory linked together, which is also how ropes,
+        B-trees, and chunked deques all work.
+      </p>
+    </>
+  }
+/>
+
+## Real-world usage
+
+**Inside allocators and kernels.** Free lists, page lists, and run queues are
+linked lists, because the node is already in hand and no separate index exists.
+The Linux kernel's `list_head` is embedded directly in the structs it links.
+
+**LRU caches.** The canonical pairing: a hash table for $O(1)$ lookup, plus a
+doubly linked list for $O(1)$ recency reordering. Every access splices a node to
+the front — node already in hand, no search, exactly the case linked lists win.
+
+**Blockchains and Git.** Each block or commit points at its parent. A linked list
+where the "pointer" is a cryptographic hash.
+
+**Chaining in hash tables.** Each bucket's collision chain, as on the
+[hash tables](/cs-fundamentals/2-data-structures/hash-tables/) page.
+
+**Undo stacks and text editors.** Rope and gap-buffer structures link chunks of
+contiguous text, which is the hybrid the quiz above describes.
+
+**Adjacency lists.** Graph representations, though these are usually arrays of
+arrays in practice — for the cache reasons above.
+
+## Failure modes
+
+**Losing the list by assigning `head` first.** The order error from the Visual
+section. In a garbage-collected language the orphaned nodes are silently
+collected, so the symptom is not a crash but *missing data* — the list is
+suddenly length 1.
+
+**Infinite loops from a cycle.** One bad `next` assignment makes a traversal never
+terminate. It hangs a thread rather than raising, so it presents as a stuck
+request or pegged CPU with no exception anywhere. Floyd's cycle detection — a slow
+pointer moving one step, a fast one moving two — finds it in $O(n)$ time and
+$O(1)$ space, and is worth having in your head:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def has_cycle(head):
+    slow = fast = head
+    while fast and fast.next:
+        slow, fast = slow.next, fast.next.next
+        if slow is fast:          # identity, not equality
+            return True
+    return False
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function hasCycle<T>(head: Node<T> | null): boolean {
+  let slow = head;
+  let fast = head;
+  while (fast && fast.next) {
+    slow = slow!.next;
+    fast = fast.next.next;
+    if (slow === fast) return true;   // reference equality
+  }
+  return false;
+}
+```
+
+</TabItem>
+</Tabs>
+
+**Stack overflow from recursive traversal.** Recursing down a list is $O(n)$ stack
+depth. Python's default limit is 1000, so a list of 10,000 nodes raises
+`RecursionError`; Node overflows at a few thousand frames. Neither is a problem in
+testing with 20 nodes.
+
+**Deep recursion in `__del__` / destructor chains.** In CPython, dropping the head
+of a long list frees each node, which drops the reference to the next, and the
+deallocation itself recurses. Freeing a 100,000-node list can segfault the
+interpreter — a genuinely surprising crash with no Python traceback at all.
+Iteratively unlinking before releasing avoids it.
+
+**The `__dict__` tax.** Without `__slots__`, every Python node carries a full
+instance dictionary. Measured above: about 1.5–1.6× slower to allocate, and
+substantially more memory. On a structure whose only justification is cheap
+allocation, that overhead attacks the one advantage it has.
+
+**Holding a reference to a spliced-out node.** Removing a node from the list does
+not remove it from your variable. In a GC language that keeps it and everything it
+points to alive — so a "removed" node still pinning the rest of the list is a
+straightforward leak.
+
+## Practice problems
+
+### 1. Reverse a linked list, iteratively
+
+The canonical three-pointer dance. $O(n)$ time, $O(1)$ space.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def reverse(head):
+    prev, current = None, head
+    while current:
+        following = current.next   # save it before we destroy it
+        current.next = prev        # flip the arrow
+        prev, current = current, following
+    return prev                    # prev is the new head
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function reverse<T>(head: Node<T> | null): Node<T> | null {
+  let prev: Node<T> | null = null;
+  let current = head;
+  while (current) {
+    const following = current.next;  // save it before we destroy it
+    current.next = prev;             // flip the arrow
+    prev = current;
+    current = following;
+  }
+  return prev;                       // prev is the new head
+}
+```
+
+</TabItem>
+</Tabs>
+
+Saving `current.next` before overwriting it is the whole problem. Drop that line
+and you lose the rest of the list on the first iteration — the same class of error
+as the prepend ordering above.
+
+### 2. Find the middle in one pass
+
+Slow pointer one step, fast pointer two. When `fast` hits the end, `slow` is at the
+middle. $O(n)$ time, $O(1)$ space, one traversal — the alternative is counting the
+length and walking again, which is two.
+
+### 3. Merge two sorted lists
+
+Splice nodes from whichever list has the smaller head. $O(n + m)$ time and — unlike
+the array version — $O(1)$ extra space, because the nodes are relinked rather than
+copied. **This is a case where the linked list genuinely wins**, and it is the
+merge step of an external merge sort.
+
+## Interview answers
+
+**"Array or linked list?"**
+
+> Array, almost always, and I'd want a specific reason to pick otherwise. The
+> reason is usually that I already hold a node reference and I'm splicing rather
+> than searching — an LRU's recency list is the clean example. If I'm indexing or
+> traversing, the array wins even though both are the same complexity class.
+
+**"Why, if insertion is O(1)?"**
+
+> Because that O(1) assumes you're already at the position. Getting there is O(n),
+> and it's O(n) pointer chases rather than an O(n) memmove — so the constants are
+> maybe an order of magnitude apart. I measured a traversal at around ten times
+> slower than the equivalent array walk at a million elements, purely from cache
+> behaviour.
+
+**The caveat that signals production experience:**
+
+> "The thing worth saying is that the crossover is much further out than people
+> expect. I benchmarked prepending, which is the linked list's best case against
+> an array's worst — O(n) total versus O(n²) — and the array still won below about
+> a thousand elements, because `list.insert(0, …)` is a memmove in C and the
+> linked list is an object allocation per node in the interpreter. So for
+> collections of a few hundred items, which is most application code, the
+> asymptotically worse structure is the faster one. Where I'd actually reach for a
+> linked list is where the node reference is already in hand — and even then I'd
+> look at a deque first, since a linked list of contiguous blocks gets O(1) at both
+> ends without paying the cache cost per element."

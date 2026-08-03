@@ -1,0 +1,577 @@
+---
+title: Advanced Structures
+description: >-
+  Tries, segment trees, Fenwick trees, and disjoint sets — four structures that
+  each buy one specific query, and what each one costs you for it.
+sidebar:
+  order: 8
+difficulty: advanced
+status: complete
+prereqs: ['2-data-structures/binary-trees', '2-data-structures/hash-tables']
+tags: [trie, segment-tree, fenwick, union-find, prefix]
+languages: [python, typescript]
+complexity:
+  trie: O(k)
+  range-query: O(log n)
+  union-find: ~O(1)
+sources:
+  - notebooks/2-data-structures/advanced.ipynb
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Everything so far has been general-purpose. These four are the opposite: each one
+exists because a specific query was too slow with a general structure, and each
+pays for that speed somewhere specific.
+
+| Structure | The query it makes fast | What it costs |
+|---|---|---|
+| **Trie** | "all keys with this prefix" | A lot of memory |
+| **Segment tree** | "aggregate over this range", with updates | 4n space, fiddly code |
+| **Fenwick tree** | "prefix sum", with updates | Prefix-shaped queries only |
+| **Union–find** | "are these two connected?" | Cannot un-merge |
+
+The shared idea worth carrying away is **precomputation with maintainable
+structure**: a plain prefix-sum array answers range sums in $O(1)$ but costs
+$O(n)$ to update. These structures accept a slightly worse query in exchange for a
+much better update, and $O(\log n)$ for both beats $O(1)$-and-$O(n)$ the moment
+updates are anything but rare.
+
+## Mechanics
+
+### Trie (prefix tree)
+
+A tree where the path spells the key. Each edge is one character, so all keys
+sharing a prefix share a path.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class TrieNode:
+    def __init__(self):
+        self.children = {}       # char → TrieNode
+        self.is_word = False     # is this the END of a key, not just a prefix?
+
+class Trie:
+    def __init__(self):
+        self.root = TrieNode()
+
+    def insert(self, word):              # O(k) for a key of length k
+        node = self.root
+        for char in word:
+            node = node.children.setdefault(char, TrieNode())
+        node.is_word = True
+
+    def search(self, word):              # O(k) — exact match
+        node = self._walk(word)
+        return node is not None and node.is_word
+
+    def starts_with(self, prefix):       # O(k) — the whole point
+        return self._walk(prefix) is not None
+
+    def _walk(self, text):
+        node = self.root
+        for char in text:
+            if char not in node.children:
+                return None
+            node = node.children[char]
+        return node
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class TrieNode {
+  children = new Map<string, TrieNode>();
+  isWord = false;      // is this the END of a key, not just a prefix?
+}
+
+class Trie {
+  private root = new TrieNode();
+
+  insert(word: string): void {           // O(k) for a key of length k
+    let node = this.root;
+    for (const char of word) {
+      if (!node.children.has(char)) node.children.set(char, new TrieNode());
+      node = node.children.get(char)!;
+    }
+    node.isWord = true;
+  }
+
+  search(word: string): boolean {        // O(k) — exact match
+    return this.walk(word)?.isWord ?? false;
+  }
+
+  startsWith(prefix: string): boolean {  // O(k) — the whole point
+    return this.walk(prefix) !== null;
+  }
+
+  private walk(text: string): TrieNode | null {
+    let node = this.root;
+    for (const char of text) {
+      const next = node.children.get(char);
+      if (!next) return null;
+      node = next;
+    }
+    return node;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+**The `is_word` flag is not optional.** Without it there is no way to distinguish a
+stored key from a prefix of one: insert `"cart"` and the trie contains the path for
+`"car"`, so `search("car")` would wrongly return `True`.
+
+Note what the complexity does *not* mention: $O(k)$ depends on the key length, not
+on how many keys are stored. A trie holding ten keys and one holding ten million
+look up a five-character word in the same time.
+
+### Segment tree
+
+A binary tree over *ranges*. The root covers the whole array, each node splits its
+range in half, and leaves are single elements. Every node caches the aggregate
+(sum, min, max, gcd) of its range.
+
+```
+                [0..7] sum=36
+          ┌───────────┴───────────┐
+      [0..3]=10                [4..7]=26
+     ┌────┴────┐              ┌────┴────┐
+  [0..1]=3  [2..3]=7      [4..5]=11  [6..7]=15
+```
+
+A query for `[2..6]` decomposes into a handful of nodes that exactly cover it —
+never more than $2\log n$ of them, which is where the bound comes from.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class SegmentTree:
+    def __init__(self, data):
+        self.n = len(data)
+        self.tree = [0] * (4 * self.n)     # 4n is the safe bound — see below
+        self._build(data, 0, 0, self.n - 1)
+
+    def _build(self, data, node, lo, hi):
+        if lo == hi:
+            self.tree[node] = data[lo]
+            return
+        mid = (lo + hi) // 2
+        self._build(data, 2 * node + 1, lo, mid)
+        self._build(data, 2 * node + 2, mid + 1, hi)
+        self.tree[node] = self.tree[2 * node + 1] + self.tree[2 * node + 2]
+
+    def query(self, ql, qr, node=0, lo=0, hi=None):    # sum over [ql, qr]
+        if hi is None:
+            hi = self.n - 1
+        if qr < lo or hi < ql:          # disjoint: contributes nothing
+            return 0
+        if ql <= lo and hi <= qr:       # fully covered: use the cached value
+            return self.tree[node]
+        mid = (lo + hi) // 2            # partial: recurse both halves
+        return (self.query(ql, qr, 2 * node + 1, lo, mid) +
+                self.query(ql, qr, 2 * node + 2, mid + 1, hi))
+
+    def update(self, index, value, node=0, lo=0, hi=None):
+        if hi is None:
+            hi = self.n - 1
+        if lo == hi:
+            self.tree[node] = value
+            return
+        mid = (lo + hi) // 2
+        if index <= mid:
+            self.update(index, value, 2 * node + 1, lo, mid)
+        else:
+            self.update(index, value, 2 * node + 2, mid + 1, hi)
+        self.tree[node] = self.tree[2 * node + 1] + self.tree[2 * node + 2]
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class SegmentTree {
+  private tree: number[];
+  private n: number;
+
+  constructor(data: number[]) {
+    this.n = data.length;
+    this.tree = new Array(4 * this.n).fill(0);   // 4n is the safe bound
+    this.build(data, 0, 0, this.n - 1);
+  }
+
+  private build(data: number[], node: number, lo: number, hi: number): void {
+    if (lo === hi) {
+      this.tree[node] = data[lo]!;
+      return;
+    }
+    const mid = (lo + hi) >> 1;
+    this.build(data, 2 * node + 1, lo, mid);
+    this.build(data, 2 * node + 2, mid + 1, hi);
+    this.tree[node] = this.tree[2 * node + 1]! + this.tree[2 * node + 2]!;
+  }
+
+  query(ql: number, qr: number, node = 0, lo = 0, hi = this.n - 1): number {
+    if (qr < lo || hi < ql) return 0;              // disjoint
+    if (ql <= lo && hi <= qr) return this.tree[node]!;  // fully covered
+    const mid = (lo + hi) >> 1;                    // partial: recurse
+    return (
+      this.query(ql, qr, 2 * node + 1, lo, mid) +
+      this.query(ql, qr, 2 * node + 2, mid + 1, hi)
+    );
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+**Why `4 * n` and not `2 * n`?** The tree is only perfectly balanced when `n` is a
+power of two. Otherwise the recursion creates a level of padding, and $4n$ is the
+smallest simple bound that is always safe. Sizing it $2n$ works for the powers of
+two you probably tested with and indexes out of bounds for everything else — an
+excellent example of a bug that only appears on the inputs you did not try.
+
+### Fenwick tree (binary indexed tree)
+
+A segment tree does more than prefix sums need. If every query is a *prefix* —
+`sum(0..i)` — a Fenwick tree gives the same $O(\log n)$ in a fraction of the code
+and exactly `n` slots:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class FenwickTree:
+    def __init__(self, n):
+        self.tree = [0] * (n + 1)     # 1-indexed; index 0 is unused
+
+    def update(self, i, delta):       # add delta at position i
+        i += 1
+        while i < len(self.tree):
+            self.tree[i] += delta
+            i += i & (-i)             # jump to the next node covering i
+
+    def prefix_sum(self, i):          # sum of [0..i]
+        i += 1
+        total = 0
+        while i > 0:
+            total += self.tree[i]
+            i -= i & (-i)             # strip the lowest set bit
+        return total
+
+    def range_sum(self, lo, hi):
+        return self.prefix_sum(hi) - self.prefix_sum(lo - 1) if lo else self.prefix_sum(hi)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class FenwickTree {
+  private tree: number[];
+
+  constructor(n: number) {
+    this.tree = new Array(n + 1).fill(0);   // 1-indexed; index 0 unused
+  }
+
+  update(i: number, delta: number): void {  // add delta at position i
+    for (let j = i + 1; j < this.tree.length; j += j & -j) {
+      this.tree[j]! += delta;               // next node covering j
+    }
+  }
+
+  prefixSum(i: number): number {            // sum of [0..i]
+    let total = 0;
+    for (let j = i + 1; j > 0; j -= j & -j) {
+      total += this.tree[j]!;               // strip the lowest set bit
+    }
+    return total;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`i & (-i)` isolates the lowest set bit, and each node stores the sum of a range
+whose length is exactly that bit. Stripping bits one at a time decomposes any
+prefix into at most $\log n$ pieces — which is the whole algorithm, hiding inside
+two-complement arithmetic. It is dense, and that density is the point: this is the
+smallest useful data structure in this section.
+
+### Union–find (disjoint set union)
+
+Answers "are these two things in the same group?" and "merge these two groups",
+both in effectively constant time.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class UnionFind:
+    def __init__(self, n):
+        self.parent = list(range(n))    # everyone is their own root
+        self.rank = [0] * n             # tree height, for union by rank
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]   # path compression
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False                # already together
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra             # attach the shorter tree under the taller
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
+        return True
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class UnionFind {
+  private parent: number[];
+  private rank: number[];
+
+  constructor(n: number) {
+    this.parent = Array.from({ length: n }, (_, i) => i);  // each its own root
+    this.rank = new Array(n).fill(0);
+  }
+
+  find(x: number): number {
+    while (this.parent[x] !== x) {
+      this.parent[x] = this.parent[this.parent[x]!]!;      // path compression
+      x = this.parent[x]!;
+    }
+    return x;
+  }
+
+  union(a: number, b: number): boolean {
+    let ra = this.find(a);
+    let rb = this.find(b);
+    if (ra === rb) return false;                    // already together
+    if (this.rank[ra]! < this.rank[rb]!) [ra, rb] = [rb, ra];
+    this.parent[rb] = ra;
+    if (this.rank[ra] === this.rank[rb]) this.rank[ra]!++;
+    return true;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+**Both optimisations are required.** Union by rank keeps trees shallow; path
+compression flattens them as a side effect of lookup. With only one, operations are
+$O(\log n)$; with both, they are $O(\alpha(n))$.
+
+## Complexity
+
+| Structure | Build | Query | Update | Space |
+|---|---|---|---|---|
+| Trie | $O(N \cdot k)$ | $O(k)$ | $O(k)$ | $O(N \cdot k \cdot \sigma)$ worst |
+| Segment tree | $O(n)$ | $O(\log n)$ | $O(\log n)$ | $O(4n)$ |
+| Fenwick tree | $O(n \log n)$ | $O(\log n)$ | $O(\log n)$ | $O(n)$ |
+| Union–find | $O(n)$ | $O(\alpha(n))$ | $O(\alpha(n))$ | $O(n)$ |
+
+`k` is key length, `N` the number of keys, $\sigma$ the alphabet size.
+
+### Why segment tree queries are $O(\log n)$
+
+A query range decomposes into disjoint nodes that exactly cover it. The key claim
+is that **at most 4 nodes are selected per level** — at most two on the left
+boundary and two on the right, since anything strictly inside is covered by an
+ancestor. With $\log n$ levels, that is $O(\log n)$ nodes visited.
+
+The recursion makes this visible: the `disjoint` and `fully covered` branches both
+terminate immediately, so only nodes straddling a boundary keep recursing, and only
+two boundaries exist.
+
+### Why union–find is "effectively" $O(1)$
+
+The true bound is $O(\alpha(n))$, the inverse Ackermann function. It grows so
+slowly that $\alpha(n) \le 4$ for any `n` that fits in the observable universe —
+$\alpha(2^{65536}) = 5$. It is not $O(1)$, and the distinction is meaningless in
+practice; quoting it as "effectively constant, technically inverse Ackermann" is
+the accurate phrasing.
+
+<Quiz
+  client:visible
+  id="advanced-choose"
+  kind="concept"
+  question="You have an array of a million prices. You need running totals over arbitrary ranges, and individual prices change constantly. What do you use?"
+  options={[
+    { label: 'A prefix-sum array — O(1) queries' },
+    { label: 'A Fenwick tree', correct: true },
+    { label: 'A hash table keyed by range' },
+    { label: 'Recompute the sum each time — O(n) is fine' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>A Fenwick tree.</strong> A prefix-sum array answers queries in O(1)
+        but costs O(n) per update, since changing one price invalidates every
+        prefix after it. With constant updates that is a million operations per
+        write.
+      </p>
+      <p>
+        The Fenwick tree accepts O(log n) queries to get O(log n) updates — about
+        20 operations each instead of one-and-a-million. That trade,{' '}
+        <strong>a slightly worse query for a dramatically better update</strong>, is
+        the reason all four structures on this page exist. A segment tree also works
+        and is the right answer if you need min/max or non-prefix ranges; the
+        Fenwick tree is smaller and faster when prefix sums are all you need.
+      </p>
+    </>
+  }
+/>
+
+## When NOT to use it
+
+**Trie: when memory matters or the alphabet is large.** The worst case is a node
+per character per key. Storing a million URLs in a naive trie can use more memory
+than the URLs themselves — each node carries a dict or map. A hash table gives
+$O(1)$ exact lookup with far less overhead. **Only use a trie if you actually need
+prefix queries**, and if you do, look at a radix tree, which collapses single-child
+chains and often cuts node count by an order of magnitude.
+
+**Segment tree: when the data never changes.** A static array with a precomputed
+prefix-sum table answers range sums in $O(1)$ with $O(n)$ space and five lines of
+code. The segment tree's entire justification is supporting updates; without them
+it is strictly worse on every axis.
+
+**Fenwick tree: when the query is not prefix-shaped.** It computes range sums as a
+difference of prefixes, which requires an invertible operation. **Min and max are
+not invertible** — there is no "subtract" that removes an element from a min — so a
+Fenwick tree cannot do range-minimum queries. That is a segment tree's job, and it
+is the single most common mistake in choosing between them.
+
+**Union–find: when you need to un-merge.** Path compression destroys the history of
+how the sets were built, so there is no undo. Problems requiring dynamic
+connectivity *with deletions* need a different structure entirely — link-cut trees,
+or offline processing where you reverse the operation order and turn deletions into
+insertions.
+
+**All of them: when `n` is small.** These pay off at scale. For a few hundred
+elements a linear scan beats all four, with none of the code to get wrong.
+
+## Real-world usage
+
+**Tries** — autocomplete and search suggestions; IP routing tables, where
+longest-prefix match is literally the operation a router performs per packet;
+spell-checkers; and the compressed radix-tree variant inside Redis (`rax`) and
+Ethereum's state storage.
+
+**Segment trees** — competitive programming above all, but also computational
+geometry (interval overlap), and the "lazy propagation" variant that supports
+range *updates* as well as range queries, which is how you build an interval
+scheduler.
+
+**Fenwick trees** — order statistics ("how many elements are below x"), inversion
+counting, and any leaderboard needing rank queries with live score updates.
+
+**Union–find** — Kruskal's minimum spanning tree; connected components in a graph
+that is being built incrementally; percolation models; and image segmentation,
+where merging adjacent similar pixels is exactly union.
+
+## Failure modes
+
+**Trie: forgetting the terminal flag.** Without `is_word`, prefixes of stored keys
+report as stored. Insert `"cart"` and `search("car")` wrongly returns true. Silent,
+and only reproducible with a key that happens to prefix another.
+
+**Trie: memory blowup on long unique keys.** Storing UUIDs or hashes creates a node
+per character with no sharing, since nothing has a common prefix. Millions of
+single-child nodes achieve nothing a hash table would not do better — and the trie
+is chosen for exactly the case its structure cannot exploit.
+
+**Segment tree: sizing the array `2n`.** Correct for powers of two, out of bounds
+otherwise. Tests with `n = 8` pass; production with `n = 1000` gets an
+`IndexError`. Use `4n`.
+
+**Fenwick tree: off-by-one from 1-indexing.** The bit trick requires 1-based
+indexing, so every method converts at the boundary. Mixing conventions gives
+answers that are subtly wrong — usually correct for the full prefix and wrong for
+sub-ranges, which is the hardest kind of wrong to notice.
+
+**Fenwick tree used for min/max.** Compiles, runs, returns nonsense on updates that
+decrease a value, because the "subtract prefixes" step is invalid for a
+non-invertible operation. Correct on the first build, wrong after the first update.
+
+**Union–find: recursive `find` overflowing the stack.** Before path compression has
+flattened them, chains can be long. The iterative version above avoids it; the
+elegant one-line recursive `find` does not.
+
+**Union–find: comparing `parent[x]` instead of `find(x)`.** Two elements can be in
+the same set with different immediate parents. Comparing parents directly gives
+false negatives that appear only for elements deeper in the tree.
+
+**All four: reaching for them too early.** These are optimisations with real
+complexity costs — a segment tree is 40 lines that a prefix sum does in 3. Writing
+one before profiling shows the simple version is the bottleneck is how you end up
+maintaining an intricate structure that was never on the critical path.
+
+## Practice problems
+
+### 1. Autocomplete from a trie
+
+Walk to the prefix node, then DFS from there collecting words. $O(k + m)$ for
+prefix length `k` and `m` matches — independent of dictionary size, which is the
+property a hash table cannot offer at any price.
+
+### 2. Count inversions with a Fenwick tree
+
+An inversion is a pair `i < j` with `a[i] > a[j]`. Sweep right to left, querying
+how many already-seen values are smaller, then insert the current one.
+$O(n \log n)$ — the same bound as the merge-sort solution, in a third of the code.
+
+### 3. Kruskal's minimum spanning tree
+
+Sort edges by weight, and add each one whose endpoints are not already connected —
+which is exactly `union` returning `False`. $O(E \log E)$ for the sort, plus
+effectively linear for the union–find. **The `union` return value is the entire
+cycle check**, which is why this algorithm is about eight lines given the
+structure.
+
+## Interview answers
+
+**"When would you use a trie over a hash table?"**
+
+> Only when I need prefix queries. A hash table beats a trie on exact lookup and
+> uses far less memory — a trie can allocate a node per character. But "all keys
+> starting with `foo`" is O(k) in a trie and O(n) in a hash table, because hashing
+> deliberately destroys the shared structure that prefixes depend on.
+
+**"Segment tree or Fenwick tree?"**
+
+> Fenwick if the operation is invertible and the queries are prefix-shaped — sums,
+> counts, XOR. It's smaller, faster, and much less code. Segment tree if I need min,
+> max, or gcd, because those can't be computed as a difference of prefixes, or if I
+> need lazy propagation for range updates.
+
+**The caveat that signals production experience:**
+
+> "The thing I'd say up front is that all four are optimisations, and I'd want a
+> profile before reaching for one. A prefix-sum array beats a segment tree on every
+> axis if the data is static — the segment tree's whole justification is supporting
+> updates. The specific trap I've seen is a Fenwick tree used for range minimum: it
+> compiles, and it's correct until the first update that decreases a value, because
+> min isn't invertible so the subtract-two-prefixes step is meaningless. That's a
+> nasty one, since the initial build looks right and it only goes wrong later,
+> under mutation."

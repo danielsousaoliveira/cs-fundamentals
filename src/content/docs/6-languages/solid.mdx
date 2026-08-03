@@ -1,0 +1,699 @@
+---
+title: SOLID
+description: >-
+  Five heuristics for where to draw boundaries — stated as "one reason to
+  change" rather than "one responsibility", with the violations that cost
+  something and the honest limits of each.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs: ['6-languages/oop']
+tags: [solid, design, coupling, dependency-inversion, liskov]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+SOLID is five heuristics for **where to draw boundaries**. Not laws, not a quality
+score, and not a thing you can apply more of to get better code — over-applying any
+of them produces indirection nobody can navigate.
+
+The useful framing is that all five are about the same underlying question:
+
+> When a requirement changes, how many files do I have to open?
+
+That reframes each principle into something checkable:
+
+| Principle | The question it answers |
+|---|---|
+| **S**ingle Responsibility | Does this file change for more than one reason? |
+| **O**pen/Closed | Can I add a case by adding code, or must I edit working code? |
+| **L**iskov Substitution | Can callers use a subtype without knowing which one it is? |
+| **I**nterface Segregation | Does an implementer have to supply methods nobody calls? |
+| **D**ependency Inversion | Which direction does the dependency arrow point? |
+
+The value is not in reciting them — everyone can do that. It is in recognising the
+violation *in code you are looking at* and being able to say what it will cost.
+
+## Mechanics
+
+### S — Single Responsibility
+
+*A class should have one reason to change.*
+
+"One responsibility" is uselessly vague; everything is one responsibility if you
+squint. The sharper version is **one reason to change**, or **one audience**: this
+file changes when the validation rules change, that one when the email copy
+changes. **If two different stakeholders can each force a change to the same file,
+it is doing two jobs.**
+
+```ts
+// ✗ Three jobs, three unrelated reasons to change.
+class UserService {
+  async createUser(dto: CreateUserDto) {
+    if (!dto.email.includes('@')) throw new Error('bad email'); // validation rules
+    if (dto.password.length < 8) throw new Error('weak');
+
+    const user = await this.db.collection('users').insertOne({ // persistence
+      ...dto,
+      password: await bcrypt.hash(dto.password, 10),
+    });
+
+    await sgMail.send({ to: dto.email, subject: 'Welcome!', html: '<h1>Hi</h1>' }); // email
+    return user;
+  }
+}
+```
+
+The cost is concrete: a marketing change to the welcome email requires touching,
+retesting and redeploying the file that owns password hashing.
+
+```ts
+class UserService {
+  constructor(
+    private validator: UserValidator,
+    private users: UserRepository,
+    private notifier: Notifier,
+  ) {}
+
+  async createUser(dto: CreateUserDto) {
+    this.validator.assertValid(dto);
+    const user = await this.users.create(dto);
+    await this.notifier.sendWelcome(user);
+    return user;
+  }
+}
+```
+
+### O — Open/Closed
+
+*Open for extension, closed for modification* — add behaviour by adding code, not
+by editing existing code.
+
+Why that is worth anything: editing a working function to add a case risks breaking
+the cases that already worked, and forces you to retest all of them. **Adding a new
+file cannot break the old ones.**
+
+```ts
+// ✗ Every new provider edits a function that is already tested and in production.
+function charge(provider: string, amount: number) {
+  if (provider === 'stripe') return chargeStripe(amount);
+  if (provider === 'paypal') return chargePaypal(amount);
+  // …and the next one goes here, in the middle of working code
+}
+
+// ✓ A new provider is a new file. Nothing existing is touched.
+interface PaymentProvider {
+  charge(amount: number): Promise<Receipt>;
+}
+
+class PaymentService {
+  constructor(private providers: Map<string, PaymentProvider>) {}
+  charge(name: string, amount: number) {
+    const provider = this.providers.get(name);
+    if (!provider) throw new UnknownProvider(name);
+    return provider.charge(amount);
+  }
+}
+```
+
+Note what this *is*: Open/Closed is the principle, and
+[Strategy](/cs-fundamentals/6-languages/design-patterns/) is how you implement it.
+
+### L — Liskov Substitution
+
+*A subtype must be usable anywhere its supertype is, without the caller needing to
+know the difference.*
+
+The point is about **behaviour**, not signatures. TypeScript will happily accept a
+subclass that type-checks and still violates Liskov, because the compiler checks
+shapes and Liskov is about semantics.
+
+```ts
+class Rectangle {
+  constructor(
+    protected w = 0,
+    protected h = 0,
+  ) {}
+  setWidth(w: number) { this.w = w; }
+  setHeight(h: number) { this.h = h; }
+  area() { return this.w * this.h; }
+}
+
+class Square extends Rectangle {
+  // A square must stay square, so each setter has to change both.
+  setWidth(w: number) { this.w = this.h = w; }
+  setHeight(h: number) { this.w = this.h = h; }
+}
+
+// Perfectly reasonable code that a Square breaks:
+function resize(r: Rectangle) {
+  r.setWidth(5);
+  r.setHeight(4);
+  return r.area(); // expects 20; a Square returns 16
+}
+```
+
+Every line type-checks. The violation is that `resize` holds an assumption —
+setting width does not change height — that `Rectangle` never stated and `Square`
+cannot honour.
+
+The lesson generalises past the textbook example: **a square is-a rectangle
+mathematically, and is not a subtype behaviourally.** "Is-a" in the domain does not
+imply substitutability in code. The tell in real code is a subclass that overrides a
+method to throw, to do nothing, or to strengthen a precondition.
+
+### I — Interface Segregation
+
+*Clients should not be forced to depend on methods they do not use.*
+
+```ts
+// ✗ One fat interface: every implementer must provide everything, including
+//   a read-only report source that has no business implementing delete().
+interface Repository<T> {
+  find(id: string): Promise<T>;
+  findAll(): Promise<T[]>;
+  save(t: T): Promise<T>;
+  delete(id: string): Promise<void>;
+}
+
+// ✓ Small capabilities, composed where genuinely needed.
+interface Reader<T> { find(id: string): Promise<T> }
+interface Writer<T> { save(t: T): Promise<T> }
+interface Deleter { delete(id: string): Promise<void> }
+
+// A consumer asks for exactly what it uses — and its signature now documents
+// that it cannot delete anything.
+function buildReport(source: Reader<Row>) {}
+```
+
+In TypeScript this costs even less than elsewhere, because
+[structural typing](/cs-fundamentals/6-languages/typescript/) means an existing
+class satisfies a narrow interface without declaring that it does.
+
+### D — Dependency Inversion
+
+*Depend on abstractions, not concretions. High-level modules should not depend on
+low-level ones — both should depend on an abstraction.*
+
+The word **inversion** refers to the direction of the arrow. Naturally, business
+logic imports the database driver:
+
+```text
+CreateOrder ──────────────► mongodb
+```
+
+Inverted, both point at an interface **the business layer owns**:
+
+```text
+CreateOrder ────► UserRepository ◄──── MongoUserRepository
+```
+
+The high-level module now defines the contract and the low-level module conforms to
+it. That is the inversion.
+
+```ts
+// ✗ Business logic imports the driver, so it knows about ObjectId, connection
+//   strings and BSON — none of which are business concepts.
+import { MongoClient, ObjectId } from 'mongodb';
+
+class CreateOrder {
+  async run(userId: string) {
+    const user = await this.mongo
+      .db()
+      .collection('users')
+      .findOne({ _id: new ObjectId(userId) });
+  }
+}
+
+// ✓ The interface lives with the business logic and speaks its language.
+interface UserRepository {
+  findById(id: string): Promise<User | null>;
+}
+
+class CreateOrder {
+  constructor(private users: UserRepository) {}
+  async run(userId: string) {
+    const user = await this.users.findById(userId);
+  }
+}
+```
+
+## Complexity
+
+**Coupling is what these principles actually measure**, and it is countable. For a
+module with $f$ dependents (afferent coupling) and $e$ dependencies (efferent), the
+**instability** is:
+
+$$
+I = \frac{e}{e + f} \qquad I \in [0, 1]
+$$
+
+$I = 0$ is maximally stable — many things depend on it, it depends on nothing — and
+$I = 1$ is maximally unstable. The useful rule is that **dependencies should point
+towards stability**: a module should depend only on modules at least as stable as
+itself.
+
+Dependency inversion is precisely a technique for satisfying this when the natural
+arrow points the wrong way. A concrete `MongoUserRepository` is unstable — it
+changes when the driver changes — so business logic must not depend on it. An
+interface has no implementation to change, so its $I$ is 0 and everything may
+safely depend on it.
+
+**The change-blast-radius argument, made numerically.** In a codebase where a
+change to a module forces changes in its dependents, the cost of an edit is the
+size of the transitive dependent set. With a switch statement over $n$ providers, a
+new provider means editing a file that $d$ modules depend on:
+
+| Design | Files touched to add a case | Files at risk of regression |
+|---|---:|---:|
+| Switch statement | 1 (edited) | $d$ dependents + all $n$ existing cases |
+| Strategy | 1 (new) | 0 |
+
+**But the counting cuts both ways, which is the part usually left out.** Each
+abstraction adds a hop. Reading a code path through $k$ interfaces means opening
+$k$ extra files and resolving $k$ runtime bindings that the type system will not
+tell you about. So the trade is:
+
+$$
+\text{cost} = \underbrace{k \cdot c_{\text{navigate}}}_{\text{paid on every read}} \;-\; \underbrace{p_{\text{change}} \cdot n \cdot c_{\text{edit}}}_{\text{saved when it changes}}
+$$
+
+The first term is paid continuously by everyone reading the code. The second is
+only collected if the change actually happens. **With one implementation and no
+second on the horizon, $n = 1$ and $p$ is low, so the abstraction is a net loss** —
+which is the whole case against premature abstraction, in a form you can argue with.
+
+## When NOT to use it
+
+**Do not apply Open/Closed before there are two implementations.** An interface
+with one implementer is indirection with no payoff. The trigger is the *second*
+case, not the first — and if you are wrong about the second case ever arriving, you
+have paid the navigation cost forever for nothing.
+
+> Over-applying Open/Closed produces indirection nobody can navigate, and that does
+> more damage than a long `switch` ever did.
+
+**Do not split a class until it has two reasons to change.** Single Responsibility
+taken to its limit produces a class per method, which is a call graph pretending to
+be an architecture. The test is whether two different *stakeholders* can force a
+change, not whether you can describe the class with more than one verb.
+
+**Do not use inheritance to satisfy Liskov.** Liskov is a constraint *on*
+inheritance, not an argument for it. If a subtype cannot honour the supertype's
+behavioural contract, the answer is usually that neither should be the other's
+subclass — the shared thing is an interface, or nothing at all.
+
+**Do not confuse Dependency Inversion with a DI framework.** Passing dependencies
+as constructor arguments *is* dependency inversion. A container is a convenience
+for wiring, not the principle, and a container used as a
+[service locator](/cs-fundamentals/6-languages/design-patterns/) —
+`Container.get('UserRepo')` inside a method — actively defeats it, because the
+dependency is no longer visible in the signature.
+
+**Do not build a repository interface that mirrors the database.** A repository
+exposing `query(filter: MongoFilter)` has leaked the database into the domain and
+bought nothing. The interface must speak the domain's language:
+`findConflicting(doctorId, range)`, not `find(criteria)`.
+
+**Do not treat these as laws.** They are heuristics with costs. The honest position
+is that Single Responsibility and Dependency Inversion earn their keep daily, and
+the other three are situational.
+
+## Real-world usage
+
+**Dependency inversion is why testing gets fast.** With the repository interface
+owned by the business layer, a unit test passes a twenty-line in-memory fake and
+runs in a millisecond. Without it, the same test needs a database, or a mock of a
+driver — and per the [testing page](/cs-fundamentals/5-systems/testing/), a mocked
+driver verifies your expectations about your own mock.
+
+**These apply outside OOP**, which is worth pre-empting because a lot of Node code
+is functional:
+
+| Principle | Functional form |
+|---|---|
+| Single Responsibility | A small pure function |
+| Open/Closed | Passing a function instead of branching on a flag |
+| Liskov | Honouring the contract implied by a function's type |
+| Interface Segregation | Taking the narrowest parameter type that works |
+| Dependency Inversion | Taking dependencies as arguments rather than importing them |
+
+A factory that closes over a repository is the same idea as constructor injection.
+**The principles are about coupling and change; classes are just one way to express
+them.**
+
+**Structural typing makes Interface Segregation nearly free** in TypeScript. The
+consumer declares the narrow interface it needs, and every existing implementation
+satisfies it with no changes — no `implements` clause, no edit to code you do not
+own.
+
+**Where the industry has landed**: hexagonal architecture, ports and adapters, and
+clean architecture are all essentially Dependency Inversion applied at the module
+level, with the same arrow-direction rule. Knowing that they are one idea with
+three names is more useful than knowing the three diagrams.
+
+## Failure modes
+
+**Symptom: a one-line copy change requires a full regression test.** Single
+Responsibility. The file being edited also owns something risky.
+
+**Symptom: adding the fourth payment provider breaks the second.** Open/Closed. The
+switch statement was edited, and the edit had a side effect on a case nobody was
+thinking about.
+
+**Symptom: callers check the concrete type before calling a method.**
+
+```ts
+if (shape instanceof Square) { /* special case */ }
+```
+
+A Liskov violation made visible. Polymorphism has stopped working — every consumer
+now needs to know the subtype, which is exactly what the abstraction existed to
+prevent.
+
+**Symptom: a class implements methods that throw `NotImplementedError`.** Interface
+Segregation. The interface is too fat, so implementers are lying about what they
+can do.
+
+**Symptom: unit tests need a database.** Dependency Inversion. Business logic
+depends on a concrete data-access class, so there is nothing to substitute.
+
+**Symptom: you cannot tell what a class needs without reading its whole body.**
+Service locator instead of injection. Dependencies are fetched from a global
+registry at the point of use, so the constructor signature is a lie and you find
+out what it needs when a test throws.
+
+**Symptom: navigating a request takes six file jumps and every interface has one
+implementation.** Over-application. This is a real failure mode with a real cost,
+and it is the one most likely to be caused by someone applying this page
+enthusiastically.
+
+## Practice problems
+
+**1. Which principle does this violate, and what does it cost?**
+
+```ts
+class ReportExporter {
+  export(rows: Row[], format: 'csv' | 'pdf' | 'xlsx') {
+    let content: Buffer;
+    if (format === 'csv') content = this.toCsv(rows);
+    else if (format === 'pdf') content = this.toPdf(rows);
+    else content = this.toXlsx(rows);
+
+    fs.writeFileSync(`/tmp/report.${format}`, content);
+    sgMail.send({ to: 'ops@example.com', attachments: [content] });
+  }
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+**Two violations, and the second is the expensive one.**
+
+**Open/Closed**: a fourth format means editing a method that already works. The
+cost is that the existing three must be retested, and the edit happens in the
+middle of production code rather than in a new file.
+
+**Single Responsibility**, which costs more: this class changes when the format
+logic changes, when the storage location changes, *and* when the ops email address
+changes. Three unrelated stakeholders can each force a change to the file that
+owns document generation.
+
+There is also a bug the structure invites — `writeFileSync` blocks the event loop,
+and it is easy to miss because the method is already doing too much for anyone to
+read it carefully.
+
+```ts
+interface Formatter {
+  readonly extension: string;
+  format(rows: Row[]): Buffer;
+}
+
+class ReportExporter {
+  constructor(
+    private formatters: Map<string, Formatter>,
+    private storage: Storage,
+    private notifier: Notifier,
+  ) {}
+
+  async export(rows: Row[], format: string) {
+    const formatter = this.formatters.get(format);
+    if (!formatter) throw new UnsupportedFormat(format);
+
+    const content = formatter.format(rows);
+    const location = await this.storage.put(`report.${formatter.extension}`, content);
+    await this.notifier.reportReady(location);
+  }
+}
+```
+
+A fourth format is now one new file implementing `Formatter`, and nothing existing
+is touched.
+
+**The honest caveat**: if there will only ever be these three formats, the original
+`if/else` is fine and this refactor is a net loss. The trigger is a fourth format
+arriving, or a second stakeholder.
+
+</details>
+
+**2. Does this violate Liskov?**
+
+```ts
+class Bird {
+  fly(): void {}
+}
+class Penguin extends Bird {
+  fly(): never {
+    throw new Error('penguins cannot fly');
+  }
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+Yes, and it is the clearest possible case: **a subclass overriding a method to
+throw is a Liskov violation by definition.** Any function taking a `Bird` and
+calling `fly()` is correct for every bird except this one, so callers must now know
+which subtype they have — which is exactly what the abstraction was for.
+
+Note that it type-checks perfectly. `never` is assignable to `void`, so the
+compiler is satisfied and the contract is broken anyway. That is the general point
+about Liskov: it is a *semantic* constraint, and the type system does not enforce
+it.
+
+The fix is not a cleverer hierarchy — it is recognising that flight is a
+capability, not a taxonomy:
+
+```ts
+interface Bird { layEgg(): Egg }
+interface Flying { fly(): void }
+
+class Sparrow implements Bird, Flying {}
+class Penguin implements Bird {} // simply has no fly() to get wrong
+```
+
+Now `function migrate(b: Flying)` cannot be handed a penguin at all — the error
+moves from runtime to compile time, and the impossible state stops being
+representable. This is the same move as
+[making illegal states unrepresentable](/cs-fundamentals/6-languages/typescript/),
+applied to behaviour instead of data.
+
+</details>
+
+**3. Invert the dependency**, and say what you can now test that you could not
+before.
+
+```ts
+import Stripe from 'stripe';
+import { sendEmail } from './mailer';
+
+export class SubscriptionService {
+  private stripe = new Stripe(process.env.STRIPE_KEY!);
+
+  async subscribe(userId: string, plan: string) {
+    const sub = await this.stripe.subscriptions.create({ customer: userId, items: [{ plan }] });
+    await sendEmail(userId, `You are subscribed to ${plan}`);
+    return sub;
+  }
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+The class depends on two concretions, and it *constructs* one of them, so there is
+no seam to substitute at all. Testing it requires network access, a real API key,
+and it will send real email.
+
+```ts
+// Interfaces owned by the business layer, speaking its language — note
+// `PaymentGateway`, not `StripeClient`, and no Stripe types in the signature.
+interface PaymentGateway {
+  createSubscription(customerId: string, plan: string): Promise<Subscription>;
+}
+interface Notifier {
+  send(userId: string, message: string): Promise<void>;
+}
+
+export class SubscriptionService {
+  constructor(
+    private payments: PaymentGateway,
+    private notifier: Notifier,
+  ) {}
+
+  async subscribe(userId: string, plan: string) {
+    const sub = await this.payments.createSubscription(userId, plan);
+    await this.notifier.send(userId, `You are subscribed to ${plan}`);
+    return sub;
+  }
+}
+```
+
+What becomes testable in milliseconds, with no network:
+
+- **Failure paths.** What happens when the gateway throws? Previously you would
+  have had to make Stripe fail on demand.
+- **Ordering.** That no email is sent when the subscription fails — a real bug, and
+  one you cannot provoke against a live API.
+- **Every plan variant**, without creating real subscriptions.
+
+The subtler win is the type boundary. The signature returns *your* `Subscription`,
+not Stripe's, so the vendor's types stop spreading through the codebase — and
+switching providers becomes one new adapter class rather than a search-and-replace
+across every file that touched a Stripe type.
+
+</details>
+
+<Quiz
+  client:visible
+  id="solid-liskov"
+  kind="concept"
+  question="A Square subclasses Rectangle and overrides both setters to keep the sides equal. Everything compiles. What is the actual problem?"
+  options={[
+    {
+      label: 'Callers hold an assumption Square breaks — setting width changes height',
+      correct: true,
+    },
+    { label: 'Square should not override the parent methods at all' },
+    { label: 'Rectangle should have been an interface rather than a class' },
+    { label: 'Nothing — it compiles and both classes are internally consistent' },
+  ]}
+  explanation={
+    <>
+      <p>
+        A function that calls <code>setWidth(5)</code> then{' '}
+        <code>setHeight(4)</code> and expects an area of 20 is perfectly reasonable
+        code against <code>Rectangle</code>'s implied contract. Hand it a{' '}
+        <code>Square</code> and it gets 16. The subtype cannot honour a guarantee
+        the supertype never wrote down.
+      </p>
+      <p>
+        The important part is that the compiler is no help. Liskov is about
+        behaviour, and TypeScript checks shapes — so a subclass can type-check
+        perfectly and still break every caller.
+      </p>
+      <p>
+        The generalisable lesson is that "is-a" in the domain does not imply
+        substitutability in code. A square <em>is</em> a rectangle mathematically,
+        and is not a subtype behaviourally, because mutability is what the two
+        disagree about. Immutable value types with an <code>area()</code> and no
+        setters have no such problem.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="solid-premature"
+  kind="concept"
+  question="A codebase has an interface for every class, each with exactly one implementation, and nothing is planned to change. What has this bought?"
+  options={[
+    { label: 'Nothing yet — a navigation cost paid daily for an option unused', correct: true },
+    { label: 'Correct Dependency Inversion, which is worth it regardless' },
+    { label: 'Faster unit tests, since every dependency can be substituted' },
+    { label: 'Compliance with Open/Closed, so future changes are additive' },
+  ]}
+  explanation={
+    <>
+      <p>
+        A cost with no matching benefit. Every interface adds a hop: reading a code
+        path means opening extra files and resolving bindings the type system will
+        not point you to, and that cost is paid by everyone, on every read, forever.
+      </p>
+      <p>
+        The benefit — cheap substitution when a second implementation arrives — is
+        only collected if that implementation actually arrives. With one implementer
+        and none planned, the expected value is close to zero.
+      </p>
+      <p>
+        Option three is the tempting one, and it is worth being precise about: an
+        interface is not required for a test seam. Constructor injection of a
+        concrete class is already substitutable, and TypeScript's structural typing
+        means a test fake satisfies the shape without any <code>implements</code>{' '}
+        clause. The extra interface adds nothing there either.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Explain SOLID."** The failure mode is reciting definitions, because everyone
+can. What scores is definition → a violation you have seen → what it cost. Two
+examples, done properly:
+
+> **Single Responsibility** — one reason to change. "One responsibility" is too
+> vague, because everything is one responsibility if you squint. The version I use
+> is: if two different stakeholders can each force a change to the same file, it is
+> doing two jobs. I have seen a `UserService` that validated, hashed passwords,
+> wrote to Mongo and sent the welcome email — so a marketing change to the email
+> copy meant retesting password hashing.
+>
+> **Dependency Inversion** — the interesting word is "inversion". Naturally,
+> business logic imports the database driver. Inverted, both point at an interface
+> the *business layer* owns, so the high-level module defines the contract and the
+> low-level one conforms. Practically that is what makes unit tests fast: I pass a
+> twenty-line in-memory fake instead of standing up Mongo.
+
+**"Which matters most?"**
+
+> Single Responsibility and Dependency Inversion, because they are the two that
+> change how a codebase feels day to day. The others largely fall out of them —
+> once dependencies point at interfaces, Interface Segregation is natural, and once
+> responsibilities are separate you are less tempted into deep hierarchies where
+> Liskov breaks.
+>
+> I would also say SOLID is a set of heuristics rather than laws. Over-applying
+> Open/Closed produces indirection nobody can navigate, and I have seen that do
+> more damage than a long `switch` ever did.
+
+**"Do these apply outside OOP?"** Worth pre-empting, since a lot of Node is
+functional:
+
+> Yes, with different mechanics. Single Responsibility is a small pure function.
+> Open/Closed is passing a function instead of branching on a flag. Dependency
+> Inversion is taking your dependencies as arguments rather than importing them — a
+> factory that closes over a repository is the same idea as constructor injection.
+> The principles are about coupling and change; classes are just one way to express
+> them.
+
+**The caveats worth voicing:**
+
+- Liskov is about behaviour, not signatures. A subclass can type-check perfectly
+  and still break every caller — a subtype that overrides a method to throw is the
+  canonical case.
+- Dependency inversion is not a DI framework. Constructor arguments are the
+  principle; a container is wiring convenience, and using one as a service locator
+  defeats the point by hiding the dependency from the signature.
+- An interface per class with one implementation each is a cost, not a design.
+  Wait for the second implementation.

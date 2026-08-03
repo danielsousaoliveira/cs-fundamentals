@@ -1,0 +1,472 @@
+---
+title: Big-O and Complexity
+description: >-
+  How to derive the cost of a program instead of memorising a table — and why an
+  O(n²) algorithm is sometimes the right choice.
+sidebar:
+  order: 1
+difficulty: foundational
+status: complete
+prereqs: []
+tags: [complexity, big-o, analysis, amortized]
+languages: [python, typescript]
+sources:
+  - notebooks/1-complexity/examples.ipynb
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { GrowthPlot } from '../../../components/viz/widgets/GrowthPlot.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Complexity analysis answers one question: **when the input gets bigger, how much
+worse does this get?**
+
+Not "how many milliseconds" — that depends on your laptop, the language, the
+cache, what else is running. Those change. What does not change is the *shape* of
+the relationship between input size and work done. Doubling the input might double
+the work, or square it, or barely move it. That shape is the thing worth knowing,
+because it is the thing that decides whether your program survives success.
+
+The formal machinery says: $f(n) = O(g(n))$ if there exist constants $c > 0$ and
+$n_0$ such that $f(n) \le c \cdot g(n)$ for all $n \ge n_0$. In English:
+**beyond some input size, $f$ grows no faster than $g$, ignoring constant
+factors.**
+
+Both escape hatches in that definition matter enormously, and most explanations
+skip past them:
+
+- **"beyond some input size"** — Big-O says nothing about small inputs. An
+  $O(n^2)$ algorithm can beat an $O(n \log n)$ one for every input you will ever
+  actually see.
+- **"ignoring constant factors"** — two $O(n)$ algorithms can differ by 100×, and
+  Big-O calls them identical.
+
+Big-O is a statement about the limit. Your production system runs at a specific
+`n`. Keeping both facts in view at once is most of what separates useful analysis
+from cargo-culted analysis.
+
+## Visual
+
+Below, the constant factor is a slider rather than an assumption. Drag `c` up and
+watch the crossover point — the value of `n` below which the $O(n^2)$ algorithm is
+*genuinely faster* — march to the right.
+
+<GrowthPlot client:visible />
+
+This is why every real sorting implementation switches to insertion sort for small
+subarrays. CPython's `list.sort` uses binary insertion sort for short runs; V8's
+`Array#sort` does the same under 22 elements. Both are $O(n^2)$ algorithms, chosen
+deliberately, by people who know exactly what the asymptotics say.
+
+## Mechanics
+
+You derive a bound by counting operations as a function of `n`, then discarding
+everything that does not dominate. Three rules do almost all the work:
+
+1. **Sequential blocks add.** $O(n) + O(n^2) = O(n^2)$ — the bigger term wins.
+2. **Nested loops multiply.** A loop of `n` containing a loop of `m` is $O(nm)$.
+3. **Constants and lower-order terms vanish.** $O(3n^2 + 500n + 9) = O(n^2)$.
+
+Work through a real one — the pair-sum problem from the original notebooks:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def has_pair_naive(numbers, target):
+    for i in range(len(numbers)):             # n iterations
+        for j in range(i + 1, len(numbers)):  # n-1, then n-2, then n-3...
+            if numbers[i] + numbers[j] == target:
+                return True
+    return False
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function hasPairNaive(numbers: number[], target: number): boolean {
+  for (let i = 0; i < numbers.length; i++) {
+    for (let j = i + 1; j < numbers.length; j++) {
+      if (numbers[i] + numbers[j] === target) return true;
+    }
+  }
+  return false;
+}
+```
+
+</TabItem>
+</Tabs>
+
+The inner loop runs $n-1$ times, then $n-2$, then $n-3$… so the total is
+
+$$
+\sum_{i=1}^{n-1} i \;=\; \frac{n(n-1)}{2} \;=\; \frac{n^2 - n}{2}
+$$
+
+The $\tfrac{1}{2}$ is a constant factor and $-n$ is a lower-order term, so this is
+$O(n^2)$. Notice what the derivation gives you that the label does not: the
+algorithm really does about **half** of $n^2$ comparisons, so it is roughly twice
+as fast as a version checking every ordered pair. Big-O throws that away; you
+should not.
+
+Now trade memory for time:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def has_pair(numbers, target):
+    seen = set()                    # O(n) extra space
+    for value in numbers:           # n iterations
+        if target - value in seen:  # O(1) average
+            return True
+        seen.add(value)             # O(1) amortised
+    return False
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function hasPair(numbers: number[], target: number): boolean {
+  const seen = new Set<number>();             // O(n) extra space
+  for (const value of numbers) {              // n iterations
+    if (seen.has(target - value)) return true; // O(1) average
+    seen.add(value);                          // O(1) amortised
+  }
+  return false;
+}
+```
+
+</TabItem>
+</Tabs>
+
+One pass, constant work per element: $O(n)$ time, $O(n)$ space. That is the single
+most common optimisation in this whole subject — **a hash set turning a nested
+scan into a lookup** — and it is worth recognising on sight.
+
+But read the annotations again: "average" and "amortised". Neither says
+"guaranteed". We come back to that below.
+
+<Quiz
+  client:visible
+  id="complexity-nested-different-arrays"
+  kind="complexity"
+  question="What is the time complexity of this function?"
+  snippet={`def f(a, b):
+    total = 0
+    for x in a:
+        for y in b:
+            total += x * y
+    return total`}
+  lang="python"
+  options={[
+    { label: 'O(n²)' },
+    { label: 'O(n · m)', correct: true },
+    { label: 'O(n + m)' },
+    { label: 'O(n)' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>O(n · m)</strong>, where n and m are the lengths of two{' '}
+        <em>different</em> lists. Writing it as O(n²) quietly assumes they are the
+        same size, and that assumption is where a lot of bad analysis starts.
+      </p>
+      <p>
+        It matters in practice: if <code>b</code> is a fixed lookup table of 10
+        elements, this is O(10n) = <strong>O(n)</strong> — linear, not quadratic.
+        Naming your variables honestly is half of analysing correctly.
+      </p>
+    </>
+  }
+/>
+
+### Space complexity
+
+The same counting, applied to memory. Two things get forgotten.
+
+**The call stack counts.** A recursion `n` levels deep holds `n` stack frames, so
+it is $O(n)$ space even if it allocates nothing. This is exactly why a recursive
+descent over a linked list of a million nodes dies with `RecursionError` in Python
+(default limit 1000) or a stack overflow in Node, while the loop version runs fine.
+
+**Slices and copies count.** `arr[1:]` in Python and `arr.slice(1)` in JavaScript
+each build a new array. A recursion that slices at every level is silently
+$O(n^2)$ in both time and space — a real and common accident:
+
+```python
+def total(numbers):
+    if not numbers:
+        return 0
+    return numbers[0] + total(numbers[1:])   # copies n-1 elements, n times
+```
+
+Passing an index instead of a slice makes it $O(n)$ time and $O(n)$ stack.
+
+## Complexity
+
+The bounds themselves, each with what the notation is actually counting.
+
+| Class | Name | What it means | Where you meet it |
+|---|---|---|---|
+| $O(1)$ | constant | Input size is irrelevant | Array index, hash lookup, stack push |
+| $O(\log n)$ | logarithmic | Each step halves the problem | Binary search, balanced-tree descent |
+| $O(n)$ | linear | One pass | Scan, sum, filter |
+| $O(n \log n)$ | linearithmic | `n` items × `log n` work each | Comparison sorting, heapsort |
+| $O(n^2)$ | quadratic | Every pair | Nested scans, bubble/insertion sort |
+| $O(2^n)$ | exponential | Every subset | Brute-force subsets, naive recursion |
+| $O(n!)$ | factorial | Every ordering | Brute-force permutations, naive TSP |
+
+**Why $\log n$ appears so often:** it counts how many times you can halve `n`
+before reaching 1. That is why the base does not matter — $\log_2 n$ and
+$\log_{10} n$ differ by a constant — and why it is so small. $\log_2$ of a million
+is 20; of a billion, 30. A binary search over every person on earth takes 33
+comparisons.
+
+**Why $n \log n$ is the sorting floor:** a comparison sort must distinguish between
+$n!$ possible orderings, and each comparison yields one bit, so it needs at least
+$\log_2(n!) \approx n \log_2 n - 1.44n$ comparisons. That is a proof about *all*
+comparison sorts, not a property of any one algorithm — which is why no cleverness
+beats it, and why the sorts that do beat it (radix, counting) must avoid comparing
+at all.
+
+### Amortised is not average
+
+These get conflated constantly, and the difference is what bites in production.
+
+- **Average case** is a statement about *inputs*: over random inputs, this is the
+  expected cost. An adversary who picks the input can defeat it.
+- **Amortised** is a statement about *sequences of operations*: any `k`
+  consecutive operations cost $O(k)$ in total, so the expensive ones are
+  guaranteed rare. No adversary can make every operation expensive.
+
+Appending to a dynamic array is amortised $O(1)$: most appends are a pointer bump,
+the occasional resize copies everything, and doubling the capacity makes the copies
+exponentially rarer. Summing them:
+
+$$
+\underbrace{1 + 2 + 4 + \dots + n}_{\text{all copying during } n \text{ appends}} \;<\; 2n
+$$
+
+So `n` appends cost under $3n$ operations in total — $O(1)$ each across the
+sequence, *guaranteed*, not merely likely.
+
+Hash table lookup is **average** $O(1)$, a much weaker promise: with adversarial
+keys that all collide, it degrades to $O(n)$. That difference is a real
+denial-of-service vector, covered on the
+[hash tables](/cs-fundamentals/2-data-structures/hash-tables/) page.
+
+**The distinction that matters operationally:** amortised $O(1)$ still means one
+individual operation can take $O(n)$. If that operation happens inside a request
+with a p99 latency budget, "amortised constant" is no comfort at all — your
+average is fine and your tail is on fire.
+
+## When NOT to use it
+
+Big-O is a tool with a specific range, and applying it outside that range produces
+confident nonsense.
+
+**When `n` is small and bounded.** If a list holds at most 20 items, a "slow"
+$O(n^2)$ scan over an array beats an $O(n)$ hash lookup, because the array is
+contiguous and the hash has to be computed. Optimising the asymptotics of a loop
+over a fixed-size config file is wasted work.
+
+**When the constant hides the real cost.** $O(n)$ over a database, one query per
+element, is a thousand times slower than $O(n \log n)$ in memory. Big-O counts
+operations and does not know that some operations are network round-trips. This is
+exactly the N+1 query problem: asymptotically fine, operationally a disaster.
+
+**When you have not measured.** Complexity tells you how something scales, not
+where the time goes. A profiler routinely shows the $O(n^2)$ function is 2% of
+runtime and the $O(n)$ one calling `JSON.parse` is 80%. Choosing what to optimise
+from analysis alone is how you spend a week making the wrong function faster.
+
+**When the worst case cannot occur.** Quicksort is $O(n^2)$ worst case and is still
+the default in most standard libraries, because with a randomised pivot the worst
+case requires an adversary who can predict your random numbers.
+
+## Real-world usage
+
+**Database query planning.** `EXPLAIN ANALYZE` is complexity analysis with real
+numbers attached. A sequential scan is $O(n)$; a B-tree index lookup is
+$O(\log n)$. When the planner ignores your index, it is because it estimated that
+for *this* query's selectivity, the constant factor of random I/O beats the better
+asymptotics — the same trade the widget above shows.
+
+**The N+1 query problem.** One query for a list, then one per item: $O(n)$ queries.
+Each is fast; the round-trips are not. Batching into a single `WHERE id IN (…)`
+takes it to $O(1)$ queries, and it is the single most common performance bug in
+application code.
+
+**Rate limiters and caches.** Sizing an LRU means weighing $O(1)$ amortised access
+against $O(n)$ memory, with the constant factor — per-entry overhead — deciding
+whether it fits in RAM at all.
+
+**Interview screens.** Being able to derive rather than recall is the actual signal
+being tested. "It's O(n log n)" is a memorised fact; "it's n log n because we sort
+once and then do a linear pass, and the sort dominates" is understanding.
+
+## Failure modes
+
+**Hidden loops inside library calls.** The most common analysis error by a wide
+margin:
+
+```python
+result = []
+for item in items:          # looks like O(n)
+    if item not in result:  # `in` on a list is O(n)
+        result.append(item)
+# actually O(n²)
+```
+
+`in` on a `list` scans; on a `set` it hashes. Same syntax, different complexity
+class. The JavaScript equivalents are `Array#includes` and `Array#indexOf` inside a
+loop. This bug is invisible in code review and invisible when testing with small
+fixtures, and it surfaces the day a customer uploads a large file.
+
+**String concatenation in a loop.** In Python, `s += x` in a loop is $O(n^2)$:
+strings are immutable, so each `+=` copies the whole accumulated string.
+`''.join(parts)` is $O(n)$. JavaScript engines optimise this case with rope
+representations, so the same code is fine in Node and quadratic in Python — a
+genuinely surprising asymmetry when porting between them.
+
+**Amortised costs landing inside a latency budget.** A dynamic array's resize is
+amortised free and individually $O(n)$. When the array holding a request's results
+resizes at four million elements, that one request pays for all of it. The symptom
+is a p99 latency spike with no change in average latency and no slow query to
+blame — the kind of thing that gets misdiagnosed as garbage collection for a week.
+
+**Optimising the wrong term.** Making an $O(n)$ preprocessing step twice as fast,
+when it is followed by an $O(n^2)$ step, changes nothing. "Sequential blocks add,
+biggest wins" cuts both ways: it tells you which term to attack and, just as
+usefully, which one is not worth touching.
+
+**Recursion depth as an invisible space bound.** $O(\log n)$ *time* for a tree
+descent is also $O(h)$ *space* on the call stack. On a degenerate tree — inserting
+already-sorted data into an unbalanced BST — `h` becomes `n`, and a function that
+was fine in testing overflows the stack in production.
+
+<Quiz
+  client:visible
+  id="complexity-hidden-loop"
+  kind="complexity"
+  question="What is the actual complexity of this deduplication?"
+  snippet={`const unique = [];
+for (const item of items) {
+  if (!unique.includes(item)) unique.push(item);
+}`}
+  lang="typescript"
+  options={[
+    { label: 'O(n)' },
+    { label: 'O(n log n)' },
+    { label: 'O(n²)', correct: true },
+    { label: 'O(1)' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>O(n²).</strong> The loop is O(n), but <code>Array#includes</code>{' '}
+        is itself an O(n) scan, so the cost is n × n. Nothing about the code{' '}
+        <em>looks</em> quadratic — which is exactly what makes this the most common
+        complexity bug there is.
+      </p>
+      <p>
+        <code>[...new Set(items)]</code> is O(n), because a Set hashes instead of
+        scanning. The general lesson: <strong>a method call is not O(1) just
+        because it is one line.</strong> Whenever a loop body calls into a
+        collection, ask what that call costs.
+      </p>
+    </>
+  }
+/>
+
+## Practice problems
+
+### 1. Derive the bound for recursive Fibonacci
+
+```python
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+```
+
+Each call spawns two more and the recursion is `n` deep, so the call tree has about
+$2^n$ nodes: $O(2^n)$ time, $O(n)$ space for the stack. More precisely the count is
+$\Theta(\phi^n)$ with $\phi \approx 1.618$, since the tree is uneven.
+
+Memoising makes each `n` computed once: $O(n)$ time, $O(n)$ space. The iterative
+version keeping two variables is $O(n)$ time and $O(1)$ space. **Three complexities
+for one function, decided entirely by what you choose to remember.**
+
+### 2. Find the complexity of the halving loop
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def f(n):
+    count = 0
+    while n > 1:
+        n = n // 2
+        count += 1
+    return count
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function f(n: number): number {
+  let count = 0;
+  while (n > 1) {
+    n = Math.floor(n / 2);
+    count++;
+  }
+  return count;
+}
+```
+
+</TabItem>
+</Tabs>
+
+$O(\log n)$ — the loop runs as many times as you can halve `n`, which is the
+definition of $\log_2 n$. Note the subtlety: this is logarithmic in the *value* of
+`n`, not in the size of a collection. If `n` arrives as a 64-bit integer, the loop
+runs at most 64 times, which for practical purposes is $O(1)$.
+
+### 3. Two sorted arrays, one merged result
+
+Merging two sorted arrays of sizes `n` and `m` is $O(n + m)$ with two pointers.
+Concatenating and re-sorting is $O((n+m)\log(n+m))$. The two-pointer version wins
+because it uses the ordering that is already there — and recognising "the input is
+already sorted" as exploitable structure is worth more than any single algorithm.
+
+## Interview answers
+
+**"What's the time complexity of your solution?"**
+
+> Answer with the derivation, not the label. "It's O(n log n): I sort once, which
+> dominates, then do a single linear pass over the sorted array. Space is O(n) for
+> the copy, or O(1) extra if I'm allowed to sort in place."
+
+**"Can you do better?"**
+
+> The honest structure names the lower bound first. "Not with a comparison sort —
+> that's bounded below by n log n. I could get to O(n) if the values are bounded
+> integers, using counting sort, at the cost of O(k) space in the value range.
+> Whether that's worth it depends on how big k is relative to n."
+
+**The caveat that signals production experience:**
+
+> "I'd add that the asymptotics are only half the answer. If n is bounded — say
+> this is a per-request list that's never more than a few hundred items — I'd take
+> the simpler O(n²) version, because the constant factor on a contiguous array
+> beats a hash table at that size and the code is easier to be sure about. The
+> place I'd actually spend optimisation effort is anywhere the loop touches the
+> network or the database, because Big-O counts operations and has no idea that
+> some of them cost ten milliseconds."

@@ -1,0 +1,603 @@
+---
+title: Message Brokers
+description: >-
+  Queues and logs, why exactly-once delivery does not exist, and how to build
+  idempotent consumers that make it not matter.
+sidebar:
+  order: 5
+difficulty: advanced
+status: complete
+prereqs: ['5-systems/databases', '2-data-structures/stacks-queues']
+tags: [kafka, rabbitmq, queue, idempotency, outbox, dlq]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Two services need to talk. The obvious way is an HTTP call: A calls B, waits, gets
+an answer. That works, and it has three properties that get worse as the system
+grows.
+
+**A must know where B is**, and how many Bs there are, and must be redeployed when
+that changes.
+
+**A's load is B's load, instantly.** A traffic spike propagates downstream at the
+speed of the network, and the slowest service in the chain decides whether the
+whole chain survives. This is the property that turns a slow service into a
+cascade of 503s.
+
+**A failed call is gone.** If B is down, the request is lost — unless A implements
+durable retry, at which point A has built a queue, badly, inside itself.
+
+A broker is a [queue](/cs-fundamentals/2-data-structures/stacks-queues/) that
+lives between them and fixes all three. A writes a message and moves on; B reads
+it when it can. The producer no longer knows the consumer's address. A spike
+becomes a *growing queue* rather than a cascade — the slow consumer falls behind
+and catches up. And because the message is durable, a consumer that is down misses
+nothing.
+
+The cost is not small, and stating it is what separates using a broker from
+cargo-culting one:
+
+> Everything becomes asynchronous, and you inherit ordering, duplication, and
+> observability problems you did not have. You can no longer answer "did it work?"
+> in the response — which is a product change, not just a technical one.
+
+## Mechanics
+
+### Two shapes: queue and log
+
+Almost every broker is one of these, and picking the wrong one is the expensive
+mistake.
+
+| | **Queue** (RabbitMQ, SQS, BullMQ) | **Log** (Kafka, Pub/Sub, Kinesis) |
+|---|---|---|
+| Model | Message consumed and removed | Append-only log; consumers hold an offset |
+| Consumers | One per message (competing consumers) | Many independent readers of the same events |
+| Replay | No — gone once acked | **Yes** — rewind the offset and reprocess |
+| Ordering | Per queue, lost as soon as you add concurrency | **Per partition**, guaranteed |
+| Retention | Until consumed | Time- or size-based, regardless of consumption |
+| Fits | Task distribution: send email, resize image | Event streaming, audit, multiple consumers |
+
+The question that picks between them is **"do this work" or "this happened".**
+
+> Work goes in a queue — it has one owner, it is done once, and then it is
+> finished. Facts go in a log — they have no owner, any number of systems may care,
+> and **a system that does not exist yet may care later.**
+
+That last clause is the real argument for a log. Publish `appointment.confirmed`
+to a log, and a team can build a consumer next year over historical data. With a
+queue, that data is gone the moment it was acked.
+
+**Replay is the underrated property.** It means a bug in a consumer is
+*recoverable*: fix the consumer, reset the offset, reprocess. With a queue, a
+consumer that acked and then crashed before finishing has silently lost the work,
+and there is nothing to go back to.
+
+### Delivery guarantees, and why one of them is a myth
+
+- **At-most-once** — ack on receipt, then process. Fast, and **loses messages**
+  whenever a consumer dies mid-work. Fine for metrics and telemetry where a gap
+  does not matter.
+- **At-least-once** — process, *then* ack. If the consumer dies before acking, the
+  broker redelivers. This is the realistic default, and **duplicates are guaranteed
+  to happen** — not rare, not unlikely. Every redeploy, every timeout, every
+  network hiccup produces one.
+- **Exactly-once** — does not exist end-to-end, and the reason is worth
+  understanding rather than memorising.
+
+Kafka does offer exactly-once semantics **within Kafka**, via idempotent producers
+and transactional writes that atomically commit both the output messages and the
+consumer offset. That is a real guarantee, and it holds precisely because both
+things being committed live in the same system.
+
+The moment your consumer writes to an external database, the offset commit and the
+database write are two systems again, with no shared transaction. Whichever order
+you do them in, a crash in between leaves them disagreeing. That is the dual-write
+problem, and it puts you back at at-least-once.
+
+> The practical answer is **at-least-once delivery plus idempotent consumers**,
+> which gives you exactly-once *effects*. That is what people mean when they say
+> exactly-once.
+
+### Making a consumer idempotent
+
+This is the follow-up question, and it has three parts.
+
+**1. Every message needs a stable id.** A business key like
+`appointment:a1:confirmed`, or an id assigned at the *source of the event* — **not
+a random UUID generated at publish time.** This matters more than it looks: a
+random id generated per publish attempt makes a redelivery look like a brand new
+message, which defeats the entire mechanism.
+
+**2. Record processed ids with a unique constraint, in the same transaction as the
+side effect.**
+
+```ts
+await db.transaction(async (tx) => {
+  // The unique constraint is the whole mechanism. It is enforced by the
+  // database, so it holds across processes, restarts and redeploys — which an
+  // in-memory "seen" set does not.
+  await tx.insert('processed_messages', { id: msg.id });
+  await tx.insert('appointments', { /* the actual effect */ });
+});
+```
+
+**3. On a duplicate, the insert violates the constraint — skip and ack.**
+
+This is exactly the same technique as an `Idempotency-Key` on a payments endpoint,
+and noticing that is worth something: it is one idea, not two recipes.
+
+When the effect is *naturally* idempotent — setting a status to a fixed value, an
+upsert keyed on a business id — skip the bookkeeping entirely and just make the
+write idempotent. That is better whenever you can arrange it, because there is no
+extra table to grow and prune.
+
+### The dual-write problem and the outbox
+
+You cannot atomically write to your database and publish to a broker. They are two
+systems with no shared transaction, so either:
+
+- the database write commits and the publish fails — the event is lost; or
+- the publish succeeds and the transaction rolls back — **you have announced
+  something that did not happen**, which is worse.
+
+The **transactional outbox** makes the publish a *consequence* of the commit
+rather than a second action:
+
+<Tabs syncKey="lang">
+<TabItem label="The write">
+
+```ts
+// One atomic write. Either both rows land or neither does.
+await db.transaction(async (tx) => {
+  await tx.insert('appointments', appointment);
+  await tx.insert('outbox', {
+    id: `appointment:${appointment.id}:confirmed`,   // stable, not random
+    topic: 'appointment.confirmed',
+    payload: JSON.stringify(appointment),
+  });
+});
+```
+
+</TabItem>
+<TabItem label="The relay">
+
+```ts
+// A separate worker turns committed rows into published messages. It may
+// publish the same row twice — if it crashes after publishing and before
+// marking — which is exactly why consumers must be idempotent.
+for (const row of await db.outbox.findUnpublished({ limit: 100 })) {
+  await broker.publish(row.topic, row.payload, { id: row.id });
+  await db.outbox.markPublished(row.id);
+}
+```
+
+</TabItem>
+</Tabs>
+
+Change-data-capture tools like Debezium do the relay step for you by reading the
+database's write-ahead log directly, which removes the polling.
+
+## Complexity
+
+**Queue depth is the integral of the imbalance, and that is why it is dangerous.**
+With arrival rate $\lambda$ and total consumer throughput $\mu$, depth after time
+$t$ is:
+
+$$
+D(t) = \max(0,\ (\lambda - \mu) \, t)
+$$
+
+Linear, not bounded. A consumer that is 10% too slow does not settle at a
+comfortable backlog — it accumulates forever. At $\lambda = 1{,}100$/s and
+$\mu = 1{,}000$/s, that is 100 messages per second, 360,000 per hour, 8.6 million
+per day. Nothing breaks, no alert fires on error rate, and the oldest message gets
+steadily older.
+
+**Which gives you the metric that actually matters.** Depth alone does not tell
+you how bad it is; depth divided by drain rate does:
+
+$$
+T_{\text{drain}} = \frac{D}{\mu - \lambda} \quad (\text{only if } \mu > \lambda)
+$$
+
+A depth of 1,000,000 with 20% spare capacity drains in 83 minutes. A depth of
+50,000 with 1% spare capacity takes 83 hours. **The smaller backlog is the worse
+incident**, which is why alerting on raw queue depth produces both false alarms and
+missed outages. Alert on *oldest unacked message age* — it is what users feel, and
+it is already the answer in the units that matter.
+
+**Retries multiply load exactly when you can least afford it.** With $r$ attempts,
+a downstream failure means the failing service receives $r\times$ its normal
+traffic while it is trying to recover. This is why exponential backoff with jitter
+is not a nicety:
+
+$$
+\text{delay}_n = \min(\text{cap},\ \text{base} \cdot 2^n) \times (1 + \text{jitter})
+$$
+
+Without jitter, everything that failed together retries together, forever in
+lockstep — the thundering herd, self-sustaining.
+
+**Partitions bound your parallelism, permanently.** In a log, ordering is per
+partition, so a consumer group can have at most one active consumer per partition.
+With $p$ partitions, adding the $(p+1)$th consumer does nothing at all — it sits
+idle. Partition count is therefore a capacity ceiling chosen at design time, and
+increasing it later reshuffles which key goes to which partition, breaking the
+ordering guarantee across the change.
+
+## When NOT to use it
+
+**When you need the answer in the response.** "Did the payment succeed?" cannot be
+answered by "it is in a queue". Making it async is a product decision — the UI now
+needs a pending state, a polling or push mechanism, and a story for terminal
+failure. If nobody has agreed to that, you are not simplifying the backend, you are
+moving the complexity to the frontend without asking.
+
+**When there is exactly one consumer and it is fast.** A direct call is simpler,
+synchronous, easier to debug, and gives you a stack trace. A broker adds an
+operational surface: another thing to monitor, another failure mode, another set of
+dashboards, and a whole class of bugs that are asynchronous and therefore harder to
+reproduce.
+
+**When ordering across all messages is genuinely required.** Total ordering means
+one partition and one consumer, so you have bought a broker and thrown away its
+throughput. If that is a real requirement, question the requirement — usually only
+per-entity ordering is needed.
+
+**Kafka, when the problem is background jobs.** A log is for event streaming.
+"Send this email" is work: it has one owner, it is done once, and nobody will ever
+replay it. Reach for BullMQ or SQS or Pub/Sub before Kafka every time the problem
+is jobs rather than streams.
+
+**When you have not decided who owns the dead-letter queue.** Covered below, and
+it is a real precondition rather than a formality.
+
+**When the trigger is aesthetic.** The trigger for adding a broker should be a
+problem you can name — a spike that took down a downstream service, a consumer
+that needs to be deployed separately, a second team that wants the same events —
+not "microservices should be event-driven".
+
+## Real-world usage
+
+**The technologies, one line each:**
+
+- **RabbitMQ** — AMQP, rich routing through exchanges (direct by exact key, topic
+  by pattern, fanout to everyone), per-message ack. The default when you want a
+  real queue with routing logic.
+- **Kafka** — a distributed, partitioned, replicated log. Consumer groups,
+  retention, replay, very high throughput. Heavier to operate; right for event
+  streaming, overkill for "send this email".
+- **Google Pub/Sub** — managed, log-ish with per-message ack, push or pull
+  subscriptions, DLQ and backoff built in, ordering keys available. The push model
+  pairs naturally with serverless containers: it POSTs to your endpoint and the
+  platform scales you with the backlog.
+- **AWS SQS / SNS** — SQS standard is at-least-once and unordered with
+  near-unlimited throughput; SQS FIFO is ordered and deduplicated at much lower
+  throughput. SNS is fanout, and SNS → several SQS queues is the classic
+  combination.
+- **Redis Streams / BullMQ** — good enough for job queues where you already run
+  Redis: retries, delays, repeatable cron jobs, priorities, a dashboard. Watch the
+  [eviction policy](/cs-fundamentals/5-systems/caching/) — `allkeys-lru` silently
+  drops pending jobs.
+- **NATS** — lightweight, very fast, minimal operational surface; JetStream adds
+  persistence and consumer groups.
+
+**Ordering in practice is per-entity, not global.** Partition by the entity id —
+`doctorId`, `accountId`, `orderId` — so all events for one entity are ordered
+relative to each other while different entities process in parallel.
+
+> That is usually the only ordering anyone actually needs. It does not matter
+> whether doctor A's event precedes doctor B's; it matters that A's cancellation
+> does not overtake A's booking.
+
+The caveat: this makes a hot entity a hot partition, and that cannot be
+parallelised away — the same shape as a hot key in Redis.
+
+**Schema evolution becomes a real problem**, because the contract now lives in the
+message and, unlike an HTTP API, **you cannot see who is consuming it**. Use a
+schema registry with compatibility checks enforced at publish time, or at minimum
+versioned, additive-only JSON. Old consumers must tolerate new fields, and new
+consumers must tolerate old messages, because a log can contain events written by
+code that no longer exists. Never repurpose a field's meaning — add a new one.
+
+## Failure modes
+
+**Symptom: everything is processed twice, occasionally.** At-least-once working as
+designed. The bug is the assumption, not the broker. Make the consumer idempotent.
+
+**Symptom: everything is processed twice, constantly, and the queue never drains.**
+The visibility timeout — the window in which you must ack before the broker assumes
+you died. If your job takes longer than the deadline, **the message is redelivered
+while you are still working on it**, so two workers do the same job, and both
+exceed the deadline again. Fix by extending the deadline while working (a
+heartbeat), or by setting it comfortably above p99 processing time.
+
+**Symptom: messages are being lost, and the broker says everything was
+delivered.** Acking on receipt instead of after processing. This silently converts
+at-least-once into at-most-once, and it usually arrives as an innocent-looking
+refactor that moves the ack earlier.
+
+**Symptom: one consumer is busy and five are idle while the queue grows.**
+`prefetch` / `maxInFlight` set too high. One consumer grabs 1,000 unacked messages
+and works through them slowly while the others have nothing to take. Set it **low
+for slow work** — often to 1. Genuinely non-obvious, and a common cause of "we
+added consumers and nothing improved".
+
+**Symptom: one partition stops entirely and the rest are fine.** A poison message.
+In a queue it burns retry capacity; **in Kafka it blocks the partition**, because
+offsets advance in order, so one malformed message stops every message behind it
+indefinitely. Dead-letter it and move the offset on.
+
+Related: **only retry retryable failures.** A malformed message will fail
+identically forever, so five retries just multiply the load and delay it reaching
+the DLQ. Distinguish "the downstream service is down" from "this message is
+invalid" — the first deserves backoff, the second deserves the DLQ immediately.
+
+**Symptom: nothing. Silence. And then a customer asks where their order went.**
+The dead-letter queue nobody is watching.
+
+> A DLQ nobody monitors is a silent data-loss mechanism.
+
+It is worse than losing the messages outright, because the messages are technically
+still there and everyone believes the system is working. A DLQ needs three things
+before it counts as done: an **alert** on non-zero depth, a named **owner**, and a
+**replay path** for after the fix.
+
+**Symptom: the database has the row but no event was published — or an event was
+published for a row that does not exist.** The dual-write problem. Use the outbox.
+
+**Symptom: consumer lag grows steadily and nothing errors.** This is the most
+important alert in an async system, because it is a *leading* indicator — it rises
+before anything breaks. By the time error rates move, you have a backlog measured
+in hours. Watch lag, queue depth, DLQ count, and oldest unacked message age.
+
+## Practice problems
+
+**1. Make this consumer safe.** It charges a card:
+
+```ts
+broker.on('order.placed', async (msg) => {
+  const order = JSON.parse(msg.body);
+  await payments.charge(order.customerId, order.total);
+  await db.orders.markPaid(order.id);
+});
+```
+
+<details>
+<summary>Solution</summary>
+
+Three bugs, and the first is expensive.
+
+**It double-charges.** At-least-once means redelivery is normal, so any redeploy
+during processing charges the customer twice.
+
+**It has no acknowledgement handling**, so a thrown error either loses the message
+or redelivers it forever depending on the client's defaults — and you cannot tell
+which from this code.
+
+**The two writes are not atomic.** A crash between `charge` and `markPaid` leaves a
+charged customer with an unpaid order, and the redelivery charges them again.
+
+```ts
+broker.on('order.placed', async (msg) => {
+  const order = JSON.parse(msg.body);
+
+  try {
+    await db.transaction(async (tx) => {
+      // Unique constraint. A duplicate delivery throws here, before any money
+      // moves, and we ack without doing anything.
+      await tx.insert('processed_messages', { id: msg.id });
+
+      // Pass the id downstream so the payment provider dedupes too — the charge
+      // is an external effect the transaction cannot roll back.
+      await payments.charge(order.customerId, order.total, {
+        idempotencyKey: msg.id,
+      });
+      await tx.orders.markPaid(order.id);
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) return msg.ack();   // already done — not an error
+    return msg.nack({ requeue: isRetryable(err) }); // invalid → straight to DLQ
+  }
+
+  msg.ack();   // only after the work succeeded
+});
+```
+
+The subtle point worth dwelling on: the `idempotencyKey` on the charge is doing
+real work even with the `processed_messages` row. The transaction can roll back
+the database rows, but it cannot un-charge a card — so if the process dies after
+the charge and before the commit, only the provider's own deduplication saves you.
+**Any external effect inside a transaction needs its own idempotency key**, because
+the transaction's atomicity stops at your database's boundary.
+
+</details>
+
+**2. Queue or log?** For each, say which and why.
+
+1. Sending a welcome email on signup.
+2. `order.placed` events consumed by fulfilment, analytics, and fraud detection.
+3. Resizing an uploaded image.
+4. Replicating changes to a search index.
+5. Recording every state change for a regulatory audit trail.
+
+<details>
+<summary>Solution</summary>
+
+1. **Queue.** Work, one owner, done once. Nobody replays a welcome email.
+2. **Log.** Three independent consumers of the same fact, and a fourth is likely.
+   With a queue you would need three queues and a fanout, and adding the fourth
+   means changing the producer.
+3. **Queue.** Work again, and it is CPU-heavy, so the consumer scales
+   independently — the classic case.
+4. **Log.** Replay is the requirement: rebuilding an index from scratch means
+   reprocessing history, which a queue cannot give you.
+5. **Log**, and specifically its retention property. The audit trail *is* the
+   retained log, so a queue is disqualified by definition — it deletes on ack.
+
+The pattern: 1 and 3 are "do this work", 2, 4 and 5 are "this happened". Only #4 is
+subtle, and the tell is the word *rebuilding*.
+
+</details>
+
+**3. Design the retry policy** for a consumer calling a third-party API that is
+occasionally down for a few minutes. Say what you would do about a message that
+fails 500 times.
+
+<details>
+<summary>Solution</summary>
+
+```ts
+const policy = {
+  attempts: 5,
+  backoff: { type: 'exponential', delay: 1000 },  // 1s, 2s, 4s, 8s, 16s
+  jitter: true,                                   // essential — see below
+};
+```
+
+Five attempts spanning ~31 seconds, which covers a brief blip. **Jitter is not
+optional**: without it, every message that failed during the outage retries at
+exactly the same moments, and the recovering service is hit by a synchronised wave
+that knocks it back down. The failure becomes self-sustaining.
+
+For an outage of *minutes*, retrying in-consumer is the wrong tool — five attempts
+in 31 seconds all fail and the messages go to the DLQ, where they need a manual
+replay for an entirely predictable failure. Better is a **circuit breaker**: after
+N consecutive failures, stop consuming altogether for a minute. The messages stay
+in the queue, which is exactly where durable messages should be while their
+destination is down, and the queue's buffering does the job it exists for.
+
+For a message that fails 500 times: it should never have got there. Retry limits
+exist so that a permanently invalid message reaches the DLQ quickly instead of
+burning capacity. If it fails 500 times, either retryable and non-retryable errors
+are not being distinguished, or the DLQ threshold is not wired up. And once it *is*
+in the DLQ, someone must be alerted — otherwise you have built a place for data to
+go and be forgotten.
+
+</details>
+
+<Quiz
+  client:visible
+  id="broker-exactly-once"
+  kind="concept"
+  question="Your consumer reads from Kafka and writes to Postgres. Kafka is configured for exactly-once semantics. Can a duplicate write reach Postgres?"
+  options={[
+    { label: 'Yes — the offset commit and the DB write are separate systems', correct: true },
+    { label: 'No — exactly-once semantics covers the whole pipeline' },
+    { label: 'No, provided the consumer is in a transactional consumer group' },
+    { label: 'Only if the producer is not idempotent' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Yes. Kafka's exactly-once is a guarantee <em>within Kafka</em>: it can
+        atomically commit produced messages and the consumer offset because both
+        live in Kafka. Your Postgres write does not.
+      </p>
+      <p>
+        So the two are back to being separate systems with no shared transaction.
+        Commit the offset first and a crash loses the write; write first and a
+        crash replays it. Either way, one of the two failure modes is available.
+      </p>
+      <p>
+        The answer is at-least-once delivery plus an idempotent consumer — a unique
+        constraint on the message id, inserted in the same transaction as the
+        effect. That gives exactly-once <em>effects</em>, which is what the phrase
+        means in practice.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="broker-prefetch"
+  kind="concept"
+  question="Jobs take 30 seconds each. You run six consumers with prefetch set to 100, and the queue keeps growing. What is the most likely cause?"
+  options={[
+    { label: 'One consumer holds most messages while the others idle', correct: true },
+    { label: 'Six consumers cannot keep up — you need more' },
+    { label: 'The visibility timeout is too long' },
+    { label: 'Messages are being redelivered because acks are too slow' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Prefetch is the problem. With a prefetch of 100 and 30-second jobs, the
+        first consumer to connect reserves up to 100 messages — 50 minutes of work
+        — before anyone else gets one. The other five sit idle with an empty local
+        buffer while the queue grows behind them.
+      </p>
+      <p>
+        For slow work, prefetch should be low, often exactly 1: take one message,
+        finish it, take the next. High prefetch is an optimisation for messages so
+        small that the round trip to fetch one dominates the work of processing it,
+        which is the opposite of this case.
+      </p>
+      <p>
+        This is why "we added consumers and nothing improved" is a common and
+        confusing report. The consumers were added; they just had nothing to do.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Why use a message broker?"**
+
+> Three things a direct HTTP call cannot do. It decouples producer from consumer,
+> so they deploy and scale independently. It buffers, so a traffic spike becomes a
+> growing queue instead of a cascade of 503s — with synchronous calls the slowest
+> service decides whether the whole chain survives. And it makes retries possible,
+> because the message outlives the consumer being down.
+>
+> The cost is that everything becomes asynchronous. You inherit duplication,
+> ordering and observability problems, and you can no longer answer "did it work?"
+> in the response — which is a product change, not just a technical one.
+
+**"Queue or log?"** Ask whether it is "do this work" or "this happened". Work has
+one owner and is done once; facts have no owner, any number of systems may care,
+and a system that does not exist yet may care later.
+
+**"Can you guarantee exactly-once delivery?"** This is the highest-signal question
+in the section, because the confident wrong answer is "yes, you configure it".
+
+> Not end-to-end. Kafka has exactly-once semantics within Kafka — idempotent
+> producers and a transaction that atomically commits both the output messages and
+> the consumer offset. But the moment my consumer writes to an external database,
+> that write and the offset commit are two systems again with no shared
+> transaction, so I am back to at-least-once.
+>
+> What I actually build is at-least-once delivery plus idempotent consumers, which
+> gives exactly-once *effects*. Concretely: a stable message id from the source of
+> the event, and a `processed_messages` table with a unique constraint, inserted in
+> the same transaction as the side effect. A duplicate violates the constraint, so
+> I skip and ack.
+
+**"How do you publish an event when you write to the database?"** The outbox — one
+atomic write to the database including an `outbox` row, and a separate relay (or
+change-data-capture) that turns committed rows into published messages. Otherwise
+you have a dual write, and either the event is lost or you have announced something
+that did not happen.
+
+**The caveats worth voicing:**
+
+- Alert on consumer lag and oldest-message age, not raw queue depth. Lag is a
+  leading indicator; depth without a drain rate does not tell you how bad it is.
+- A DLQ nobody monitors is a silent data-loss mechanism. It needs an alert, an
+  owner, and a replay path.
+- Ordering is per partition, and partitioning by entity id gives the only ordering
+  most systems actually need — at the cost of a hot entity becoming a hot
+  partition.
+- I would start with a job queue plus an outbox table, and introduce a log when
+  there are genuinely multiple independent consumers of the same events, or when
+  replay becomes a requirement rather than a nice idea. The trigger should be a
+  problem, not an aesthetic.

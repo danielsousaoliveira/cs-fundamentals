@@ -6,7 +6,7 @@ export interface Positioned {
   y: number;
 }
 
-export type LayoutKind = 'tree' | 'circle' | 'grid';
+export type LayoutKind = 'tree' | 'circle' | 'grid' | 'chain';
 
 const H_GAP = 62;
 const V_GAP = 78;
@@ -87,6 +87,23 @@ function layoutCircle(nodes: NodeState[]): Positioned[] {
   });
 }
 
+/**
+ * A single horizontal row, in the order the nodes were given.
+ *
+ * For linked lists the node order IS the structure, so this layout deliberately
+ * ignores the edges: a list whose `next` pointers are mid-surgery should still
+ * draw its nodes where they were, with the arrows visibly wrong. That is the
+ * moment the reader needs to see, not one the layout should tidy away.
+ */
+function layoutChain(nodes: NodeState[]): Positioned[] {
+  const gap = H_GAP + 34;
+  return nodes.map((node, i) => ({
+    id: node.id,
+    x: i * gap + PADDING,
+    y: PADDING,
+  }));
+}
+
 function layoutGrid(nodes: NodeState[]): Positioned[] {
   return nodes.map((node, i) => ({
     id: node.id,
@@ -107,7 +124,9 @@ export function layoutNodes(
       ? layoutTree(nodes, edges)
       : kind === 'circle'
         ? layoutCircle(nodes)
-        : layoutGrid(nodes);
+        : kind === 'chain'
+          ? layoutChain(nodes)
+          : layoutGrid(nodes);
 
   return new Map(positioned.map((p) => [p.id, p]));
 }

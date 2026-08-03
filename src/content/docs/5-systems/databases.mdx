@@ -1,0 +1,671 @@
+---
+title: Databases
+description: >-
+  What an index actually is, why the column order matters, what the isolation
+  levels really guarantee, and the one bug that is fast in dev and fatal in
+  production.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs: ['2-data-structures/binary-trees', '1-complexity/big-o']
+tags: [sql, indexes, transactions, acid, n+1, postgres, mongodb]
+languages: [typescript]
+complexity:
+  indexed-lookup: O(log n)
+  sequential-scan: O(n)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A database without indexes is an array. Every query is a linear scan: read every
+row, test it, discard it. That is genuinely fine for a hundred rows — the scan is
+sequential, disks and memory are fast at sequential, and maintaining an index
+would cost more than it saves.
+
+An index is the same trade the [data structures
+section](/cs-fundamentals/2-data-structures/binary-trees/) makes over and over:
+**pay on write to make reads cheap.** It is a second, ordered copy of one or more
+columns, each entry carrying a pointer back to the full row. Ordered means you can
+binary-search it, so lookups go from $O(n)$ to $O(\log n)$.
+
+That is the whole idea, and everything else on this page is a consequence of it:
+
+- Because the index is *ordered*, it serves ranges and `ORDER BY` too, not just
+  equality.
+- Because it is *a copy*, every write has to update it — so indexes make writes
+  slower, and "just add an index" is not a free action.
+- Because it is ordered *by specific columns in a specific sequence*, the order of
+  those columns decides which queries it can serve at all.
+
+The other half of the page is what happens when two people write at once. A
+database is the one component in most systems that can arbitrate between
+concurrent processes, which makes it the correct place to enforce anything that
+must be true exactly once.
+
+## Mechanics
+
+### What the index actually is
+
+Almost always a **B-tree**: a balanced tree with a very high branching factor.
+High fanout is the point — with a few hundred keys per node, a table of a billion
+rows is only about four levels deep, so a lookup is four page reads rather than
+thirty. The leaves hold the values in sorted order and are linked to each other,
+which is what makes range scans cheap.
+
+| | 100 rows | 10 million rows |
+|---|---|---|
+| Sequential scan | ~0.1 ms | ~4 s |
+| Index scan | ~0.1 ms | ~1 ms |
+
+At small scale the index is not worth having; the planner knows this and will
+ignore your index if it thinks a scan is cheaper. That is usually correct.
+
+### Composite indexes and the leftmost-prefix rule
+
+This is the part that most often goes wrong. An index on `(doctor_id, starts_at)`
+is sorted by `doctor_id` first, and *within each doctor* by `starts_at`. So it
+serves:
+
+```sql
+WHERE doctor_id = ?                        -- ✓ leftmost column
+WHERE doctor_id = ? AND starts_at > ?      -- ✓ leftmost, then a range on the next
+WHERE doctor_id = ? ORDER BY starts_at     -- ✓ already in order — no sort step at all
+```
+
+but not:
+
+```sql
+WHERE starts_at > ?                        -- ✗ needs its own index
+```
+
+The intuition: it is a phone book sorted by surname, then first name. You can find
+every "Oliveira", and every "Oliveira, Daniel". You cannot use it to find every
+"Daniel" — those are scattered through the whole book.
+
+The rule of thumb for choosing the order is **equality, then sort, then range**
+(MongoDB spells this out as the ESR rule; it applies equally to Postgres). So
+`WHERE doctor_id = ? AND starts_at > ? ORDER BY starts_at` wants
+`(doctor_id, starts_at)`.
+
+**A covering index** goes one step further: if every column the query needs is in
+the index, the database answers from the index alone and never touches the table.
+
+```sql
+CREATE INDEX ON appointments (doctor_id, starts_at) INCLUDE (status);
+```
+
+That matters because the table lookup is a *random* I/O per row, which is the
+expensive part — skipping it can be a bigger win than the index itself.
+
+### Transactions and what the isolation levels actually promise
+
+ACID, with each letter given a sentence, because the acronym on its own carries
+no information:
+
+- **Atomicity** — every statement applies, or none does. No half-applied transfer.
+- **Consistency** — declared constraints hold at commit. Note this is *not* the
+  same "consistency" as in CAP, which is a property about replicas. Same word, two
+  meanings.
+- **Isolation** — concurrent transactions do not see each other's incomplete work.
+  How strictly is the isolation level.
+- **Durability** — once committed, it survives a crash. Achieved by writing to a
+  write-ahead log and `fsync`ing *before* acknowledging.
+
+The isolation levels are defined by which anomalies they prevent:
+
+- **Dirty read** — you read a row another transaction has modified but not
+  committed. If it rolls back, you acted on data that never existed.
+- **Non-repeatable read** — you read the same row twice and get different values.
+- **Phantom read** — you run the same *query* twice and get a different set of
+  rows, because someone inserted or deleted one matching your `WHERE`. This one is
+  about the set, which is why it needs different machinery to prevent.
+
+| Level | Dirty read | Non-repeatable | Phantom |
+|---|---|---|---|
+| Read Uncommitted | possible | possible | possible |
+| **Read Committed** *(Postgres default)* | no | possible | possible |
+| **Repeatable Read** *(MySQL InnoDB default)* | no | no | possible* |
+| Serializable | no | no | no |
+
+Three details worth having exactly right:
+
+**Postgres never allows dirty reads at all.** It accepts `READ UNCOMMITTED` as
+syntax and behaves as Read Committed.
+
+**Postgres's Repeatable Read is snapshot isolation**, and is stronger than the
+standard requires — it does prevent phantoms (hence the asterisk). What it does
+*not* prevent is **write skew**: two transactions each read a consistent snapshot,
+each make a decision that is valid on its own, and together they break an
+invariant. That is exactly the double-booking shape, and it is why "I'll raise the
+isolation level" is not automatically the fix.
+
+**`SERIALIZABLE` in Postgres is optimistic.** It does not block; it detects a
+conflict at commit time and aborts one transaction with SQLSTATE `40001`. So
+choosing Serializable means **you must implement retry** — otherwise you have
+converted a rare data corruption into a rare 500.
+
+```ts
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      // 40001 = serialization failure, 40P01 = deadlock. Both are transient
+      // by definition: the same transaction retried will usually succeed.
+      if ((e.code === '40001' || e.code === '40P01') && i < attempts - 1) continue;
+      throw e;
+    }
+  }
+}
+```
+
+### The constraint beats the isolation level
+
+Given two concurrent bookings for the same slot, there are three ways to make the
+race impossible, and they are not equally good.
+
+<Tabs syncKey="lang">
+<TabItem label="Constraint (best)">
+
+```sql
+-- The database refuses to hold two overlapping appointments for one doctor.
+-- Correct under every isolation level, and under any number of app instances.
+ALTER TABLE appointments
+  ADD CONSTRAINT no_overlap
+  EXCLUDE USING gist (
+    doctor_id WITH =,
+    tstzrange(starts_at, ends_at) WITH &&
+  ) WHERE (status <> 'CANCELLED');
+```
+
+</TabItem>
+<TabItem label="Conditional write">
+
+```sql
+-- Also correct: the check and the write are one atomic statement, so there is
+-- no window between them. Zero affected rows means someone beat you to it.
+UPDATE seats SET taken = true
+WHERE id = $1 AND taken = false;
+```
+
+</TabItem>
+<TabItem label="Serializable (costly)">
+
+```ts
+// Correct, but it costs throughput on every transaction and obliges you to
+// write the retry loop. Reach for this when the invariant genuinely cannot be
+// expressed as a constraint.
+await withRetry(() =>
+  db.tx({ isolation: 'serializable' }, async (t) => {
+    const clash = await t.findOverlapping(doctorId, start, end);
+    if (clash) throw new ConflictError();
+    await t.insertAppointment(/* … */);
+  }),
+);
+```
+
+</TabItem>
+</Tabs>
+
+The ordering is the lesson: **a constraint is cheap and always correct; a stronger
+isolation level is expensive and correct; application-level checking is neither.**
+Reach for a constraint whenever the invariant can be expressed as one.
+
+## Complexity
+
+**Why the tree is shallow.** A B-tree node is sized to one disk page, typically
+8 KB. With keys and pointers of around 16 bytes, that is roughly 500 entries per
+node, so the height for $n$ rows is:
+
+$$
+h = \log_{500} n = \frac{\log_2 n}{\log_2 500} \approx \frac{\log_2 n}{9}
+$$
+
+| Rows | $\log_2 n$ | B-tree height |
+|---:|---:|---:|
+| 1,000 | 10 | 2 |
+| 1,000,000 | 20 | 3 |
+| 1,000,000,000 | 30 | 4 |
+
+This is why the constant matters more than the class. A binary tree of a billion
+rows is 30 levels — 30 random reads. The B-tree is 4, and the top two levels are
+always cached, so it is really 2 reads that touch disk. **The $O(\log n)$ is the
+same; the base of the logarithm is the entire engineering.**
+
+**Why writes get slower.** With $k$ indexes on a table, an `INSERT` does 1 table
+write plus $k$ index writes, each of which may split a node. So write cost is
+$O(k \log n)$ while an unindexed read is $O(n)$. Indexes trade a factor of $k$ on
+writes for a factor of $n/\log n$ on reads — an enormous win, right up until the
+table is write-heavy and the reads are rare, which is the case people forget.
+
+**Selectivity decides whether the index is used at all.** Selectivity is the
+fraction of rows a lookup eliminates. Reading an index and then fetching matching
+rows costs roughly:
+
+$$
+C_{\text{index}} = h + s \cdot n \cdot C_{\text{random}}
+$$
+
+where $s$ is the selected fraction, against $C_{\text{scan}} = n \cdot
+C_{\text{sequential}}$ for a scan. Random I/O costs perhaps 4× sequential, so once
+$s$ exceeds roughly 25% the scan wins. That is why an index on a boolean, or on a
+status column where 90% of rows are `CONFIRMED`, is dead weight — the planner
+correctly ignores it.
+
+The fix is a **partial index**, which indexes only the interesting minority:
+
+```sql
+CREATE INDEX ON appointments (doctor_id, starts_at) WHERE status = 'REQUESTED';
+```
+
+Small enough to stay in memory, and it serves the pending-requests screen directly.
+
+## When NOT to use it
+
+**Do not index a low-selectivity column.** Covered above: if a value matches a
+large fraction of the table, the index costs writes and buys nothing. Use a
+partial index or nothing.
+
+**Do not index every column "just in case".** Each one slows every write, consumes
+memory, and competes for the buffer cache with the data you actually want cached.
+Redundant indexes are the same mistake in a subtler form: `(a)` is entirely
+redundant if `(a, b)` exists, because the leftmost prefix already covers it.
+
+**Do not reach for a stronger isolation level when a constraint would do.**
+Serializable costs throughput on every transaction and obliges you to write retry
+logic. A unique or exclusion constraint costs one index and cannot be got wrong.
+
+**Do not denormalise before you have a measured read problem.** Normalisation
+means each fact lives in exactly one place, and the benefit is not disk space —
+it is the absence of **update anomalies**. If a patient's name is on the patient
+row, renaming is one `UPDATE`. If it is copied onto 400 appointments, renaming is
+400 updates that must all succeed, and any you miss is a permanently wrong copy
+with no way to tell which is authoritative.
+
+When you do denormalise: **a denormalised field must have exactly one owner, and
+that owner's write must be transactional with the source of truth.** Otherwise it
+drifts, and drift is unfixable without a reconciliation job.
+
+**Do not shard.** Not as a first, second, or third resort. The order that actually
+works:
+
+1. **Fix the queries.** An index or an N+1 fix routinely gives 100× for an
+   afternoon's work and no new infrastructure. Nobody should shard a database
+   whose queries have not been looked at.
+2. **Vertical scaling.** Unfashionable and correct — modern machines are very
+   large, and the alternative adds permanent complexity.
+3. **Connection pooling.** Postgres uses a process per connection, so its ceiling
+   is in the hundreds. Twenty autoscaled app instances with a pool of 20 each is
+   400 connections from a mostly-idle service. PgBouncer in transaction mode
+   multiplexes them — with the catch that transaction-mode pooling breaks
+   session-level features: prepared statements, `LISTEN/NOTIFY`, session
+   variables, because you do not get the same backend twice.
+4. **Read replicas.** Two problems to name: replication lag, and its user-visible
+   form, **read-your-own-writes** — a user saves a change, the next read hits a
+   lagging replica, and their change appears to have vanished.
+5. **Partitioning** — splitting one table within one database. Cheap deletion of
+   old data by dropping a partition, and the planner skips irrelevant ones.
+6. **Sharding** — splitting across separate databases. A one-way door. The whole
+   game is the shard key: it must distribute evenly (`doctor_id`, not `country`)
+   and keep common queries inside one shard, because cross-shard joins and
+   transactions are either impossible or slow enough to force a redesign.
+
+**Do not put an HTTP call inside a transaction.** Your lock duration is now a
+third party's latency, and their timeout is your outage.
+
+## Real-world usage
+
+**`EXPLAIN ANALYZE` is the answer to "how would you debug a slow query".**
+`EXPLAIN` shows the plan the planner intends; `EXPLAIN ANALYZE` runs it and shows
+real timings and real row counts. What to look for:
+
+- **`Seq Scan` on a large table** where you expected an index scan.
+- **Bad row estimates** — the plan says `rows=12` and reality is `rows=48000`. The
+  planner chose its strategy on wrong information, usually stale statistics
+  (`ANALYZE`) or a predicate it cannot estimate, like a function call. Fixing the
+  estimate often fixes the plan by itself.
+- **A `Nested Loop` over a large set** — fine for a handful of rows, catastrophic
+  for a million, where you want a hash join.
+- **Sorts spilling to disk** (`external merge Disk: 40MB`) — raise `work_mem` or
+  provide an index in that order.
+- **`loops=5000`** — the per-row cost multiplied. This is how an N+1 shows up
+  inside a single plan.
+
+**Functions on an indexed column defeat the index**, because the index stores the
+raw value, not the transformed one:
+
+```sql
+WHERE LOWER(email) = 'a@b.com'          -- ✗ cannot use an index on (email)
+CREATE INDEX ON users (LOWER(email));   -- ✓ an expression index
+
+WHERE DATE(created_at) = '2026-07-22'   -- ✗ same trap
+WHERE created_at >= '2026-07-22'        -- ✓ a range instead
+  AND created_at <  '2026-07-23'
+```
+
+The same happens with an implicit cast on a mismatched type, which is harder to
+spot because nothing in the query looks like a function call.
+
+**In MongoDB the normalisation question becomes embed versus reference:**
+
+- **Embed** when the child is always read with the parent, the array is bounded,
+  and the child is not queried independently.
+- **Reference** when the array could grow without bound, the child is queried on
+  its own, or the relationship is many-to-many.
+- **The 16 MB document limit is a hard ceiling**, so "unbounded array" is not a
+  stylistic worry — it is a scheduled outage. The document eventually refuses
+  another push. Updating a growing document also rewrites it, and indexes on large
+  arrays get expensive.
+- **The hybrid is what real schemas do**: embed a summary (`{ patientId,
+  patientName }`) for display, reference the full document for detail, and decide
+  deliberately how much you care that the cached name goes stale.
+
+**CAP, stated correctly.** When a network partition happens, a distributed system
+must give up either consistency or availability. It is a choice you face *during a
+partition* — the common misstatement is treating it as "pick two of three" in
+normal operation. The useful extension is **PACELC**: during a **P**artition choose
+**A** or **C**; **E**lse choose **L**atency or **C**onsistency. That second half is
+the trade you live with every day, because a synchronous replica costs latency on
+every write forever, partition or not.
+
+Applying it beats defining it: bookings choose consistency — better to fail the
+write than risk a double booking. Notification counts can be eventually
+consistent, because a stale count for four seconds costs nothing. "We are a CP
+system" is rarely true of a whole system, only of specific operations.
+
+## Failure modes
+
+**Symptom: an endpoint is 60 ms instead of 3 ms, and every query in the log is
+fast.** The N+1 — one query for a list, then one per item:
+
+```ts
+const appts = await repo.findByDoctor(id);           // 1 query
+for (const a of appts) {
+  a.patient = await patients.findById(a.patientId);  // N queries
+}
+```
+
+Fifty appointments is 51 round trips. Each is 1 ms, so nothing looks wrong
+anywhere; the endpoint is just mysteriously slow, and it degrades *linearly with
+data*, so it is worse in production than in dev. That "individually fast,
+collectively fatal" quality is exactly why it survives code review.
+
+Fixes by layer: a `JOIN` or a batched `WHERE patient_id IN (...)` with an
+in-memory stitch; eager loading in an ORM (`include` in Prisma, `relations` in
+TypeORM, `.populate()` in Mongoose — note the default is *lazy*, which is how the
+bug happens); DataLoader in GraphQL.
+
+Detection is the part that shows experience: query logging in development with a
+per-request count, where anything over about ten for a simple endpoint gets looked
+at; and in production, an APM trace showing 200 identical queries with different
+parameters, which is unmistakable once you have seen it once.
+
+**Symptom: two transactions hang, then one dies with SQLSTATE `40P01`.** A
+deadlock — each holds a lock the other wants. The classic cause is grabbing the
+same rows in different orders:
+
+```text
+T1: lock A … then wants B
+T2: lock B … then wants A      → deadlock
+```
+
+The mitigation is almost embarrassingly simple: **acquire locks in a consistent
+order**. A one-line `sort` by id before a batch update removes an entire class of
+deadlock. Keep transactions small, and retry — deadlocks are transient by nature.
+
+**Symptom: disk usage grows, queries slow down, and nothing was deleted.** In
+Postgres, a long-running or idle-in-transaction session pins an old snapshot and
+blocks vacuum from reclaiming dead rows. A forgotten transaction is a genuine
+operational incident, not just a slow request. `idle_in_transaction_session_timeout`
+exists for this.
+
+**Symptom: a user saves a change and it disappears on the next page load.**
+Read-your-own-writes against a lagging replica. Route reads to the primary for a
+short window after that user writes, or pin their session to the primary.
+
+**Symptom: the app is idle and the database refuses connections.** Pool exhaustion
+from autoscaling, or connections leaked by a path that does not release on error.
+`try/finally` around every checkout, and a pool size chosen against the database's
+ceiling divided by the maximum instance count — not against what one instance
+would like.
+
+**Symptom: a query that was instant last month now takes four seconds, unchanged.**
+The table crossed the point where the planner's estimate flipped it to a
+sequential scan, or statistics went stale. `EXPLAIN ANALYZE` and compare estimated
+against actual rows.
+
+## Practice problems
+
+**1. Choose the index.** This endpoint is slow:
+
+```sql
+SELECT id, status, starts_at
+FROM appointments
+WHERE doctor_id = $1
+  AND starts_at BETWEEN $2 AND $3
+ORDER BY starts_at;
+```
+
+<details>
+<summary>Solution</summary>
+
+```sql
+CREATE INDEX ON appointments (doctor_id, starts_at) INCLUDE (id, status);
+```
+
+Apply equality-sort-range: `doctor_id` is equality so it goes first; `starts_at`
+serves both the range and the `ORDER BY`, and because the index is already in
+that order the sort step disappears entirely.
+
+`INCLUDE (id, status)` makes it covering — every column the query selects is in
+the index, so Postgres can use an index-only scan and never do the random table
+fetch per row. On a range returning a few hundred rows, that heap-fetch elimination
+is often the larger half of the win.
+
+The trap to avoid: `(starts_at, doctor_id)` looks equivalent and is not. It sorts
+by time first, so the doctor's rows are scattered across the whole index and the
+range condition cannot be applied until after the scan.
+
+</details>
+
+**2. Two users book the last seat at the same moment.** This code is wrong. Say
+precisely where, and fix it without a distributed lock.
+
+```ts
+const seat = await db.seats.findById(id);
+if (seat.taken) throw new ConflictError();
+await db.seats.update(id, { taken: true });
+```
+
+<details>
+<summary>Solution</summary>
+
+The bug is the gap between the read and the write. Every `await` is a yield, so
+another request — or another process entirely — can run between lines 2 and 3, and
+both requests can observe `taken: false`.
+
+Wrapping it in a transaction at the default isolation level does **not** fix it:
+Read Committed lets both transactions read the old value. Even snapshot isolation
+does not, because each sees a snapshot where the seat is free — this is write
+skew.
+
+The fix is to make the check and the write a single atomic statement:
+
+```ts
+const { rowCount } = await db.query(
+  `UPDATE seats SET taken = true WHERE id = $1 AND taken = false`,
+  [id],
+);
+if (rowCount === 0) throw new ConflictError();
+```
+
+The database evaluates `taken = false` while holding the row lock, so exactly one
+of the two updates affects a row. The other gets `rowCount === 0` and a clean 409.
+
+Why not a distributed lock: it adds a dependency that can fail, needs a lease
+timeout you will get wrong, and is *still* only advisory — anything that writes
+without taking the lock corrupts the invariant anyway. The database constraint
+cannot be bypassed.
+
+</details>
+
+**3. Explain the plan.** A query is slow and `EXPLAIN ANALYZE` shows:
+
+```text
+Nested Loop  (cost=0.29..8.31 rows=1 width=64)
+             (actual time=0.02..3891.44 rows=48213 loops=1)
+  ->  Index Scan on appointments  (actual rows=48213 loops=1)
+  ->  Index Scan on patients      (actual time=0.07..0.08 rows=1 loops=48213)
+```
+
+What is wrong, and what would you do?
+
+<details>
+<summary>Solution</summary>
+
+Two things, and the second is the cause of the first.
+
+**The visible problem** is `loops=48213` on the inner scan. Each lookup takes
+0.08 ms, which is fine; multiplied by 48,213 it is 3.9 seconds. This is an N+1
+happening *inside* a single query plan.
+
+**The root cause** is the estimate. The planner predicted `rows=1` and got 48,213.
+It chose a nested loop because a nested loop is the right plan for one row — the
+strategy was reasonable given the information, and the information was wrong. With
+a correct estimate it would have chosen a hash join and read `patients` once.
+
+So the fix is not "force a hash join". It is to find out why the estimate is off:
+stale statistics (run `ANALYZE`), a predicate the planner cannot estimate such as
+a function call or a correlated condition, or a join on a column with no
+statistics. Fixing the estimate usually fixes the plan by itself, and does so for
+every future query on that table rather than just this one.
+
+The general lesson: in a plan, compare *estimated* against *actual* rows first.
+A large discrepancy explains the plan choice, and the plan choice explains the
+time.
+
+</details>
+
+<Quiz
+  client:visible
+  id="db-composite-index"
+  kind="concept"
+  question="Given an index on (country, city, created_at), which query CANNOT use it?"
+  options={[
+    { label: "WHERE city = 'Porto' AND created_at > '2026-01-01'", correct: true },
+    { label: "WHERE country = 'PT'" },
+    { label: "WHERE country = 'PT' AND city = 'Porto'" },
+    { label: "WHERE country = 'PT' ORDER BY city" },
+  ]}
+  explanation={
+    <>
+      <p>
+        The one that skips <code>country</code>. The index is sorted by country
+        first, so entries for Porto are scattered across every country's section —
+        there is no contiguous range to scan.
+      </p>
+      <p>
+        The other three all start at the leftmost column. The fourth is worth
+        noticing specially: it uses the index for the <code>WHERE</code> and gets
+        the <code>ORDER BY</code> for free, because within one country the entries
+        are already sorted by city. No sort step at all.
+      </p>
+      <p>
+        This is the leftmost-prefix rule, and it is why the column order in a
+        composite index is a design decision rather than a formality.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="db-isolation"
+  kind="concept"
+  question="Two transactions run at Postgres's Repeatable Read (snapshot isolation). Each checks that a doctor has no overlapping appointment, and each inserts one. What happens?"
+  options={[
+    { label: 'Both succeed, and the doctor is double-booked', correct: true },
+    { label: 'One blocks until the other commits, then fails its check' },
+    { label: 'One is aborted with a serialization failure' },
+    { label: 'The second insert is rejected by the isolation level' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Both succeed. This is <strong>write skew</strong>: each transaction reads a
+        consistent snapshot in which the slot is free, each makes a decision that is
+        perfectly valid given what it saw, and the two decisions are only
+        contradictory together. Neither transaction wrote a row the other read, so
+        snapshot isolation sees no conflict to report.
+      </p>
+      <p>
+        Raising to <code>SERIALIZABLE</code> would catch it — Postgres detects the
+        conflict at commit and aborts one with SQLSTATE <code>40001</code>, which
+        means you must write a retry loop or you have traded corruption for a 500.
+      </p>
+      <p>
+        The cheaper and more robust answer is an exclusion constraint. It costs one
+        index, works at every isolation level, and cannot be bypassed by a code path
+        that forgot the rule.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"What is an index, and what does it cost?"**
+
+> An index is a separate ordered structure holding the indexed columns plus a
+> pointer to the row — almost always a B-tree, with a branching factor high enough
+> that a billion rows is about four levels deep. That gives $O(\log n)$ lookup, and
+> because the leaves are in sorted order it also serves range scans and `ORDER BY`
+> without a sort step.
+>
+> The cost is that every index has to be updated on every insert, update of an
+> indexed column, and delete — so writes get slower in proportion to how many you
+> have, and each one competes for memory with the data you wanted cached. So
+> "add an index" is a trade, not a free win. I would also check selectivity first:
+> an index on a boolean, or on a status where 90% of rows share one value, will be
+> correctly ignored by the planner, and a partial index is the right tool there.
+
+**"How would you debug a slow endpoint?"**
+
+> Query count first, then query plan. A per-request query count catches N+1s
+> immediately, and that is the most common cause by a wide margin — fifty
+> individually fast queries that nothing in the logs flags as slow. Then
+> `EXPLAIN ANALYZE` on the remaining suspect, and the first thing I look at is
+> estimated versus actual rows, because a bad estimate explains a bad plan choice,
+> and fixing the estimate usually fixes the plan without any hints.
+
+**"How do you prevent double booking?"** The answer that signals experience is
+choosing the cheapest correct mechanism rather than the most powerful one:
+
+> With a database constraint — an exclusion constraint on the doctor and the time
+> range, or a conditional `UPDATE … WHERE taken = false` and checking the affected
+> row count. Not with an application-level check, because there is always a window
+> between the read and the write, and not with a distributed lock, because that is
+> advisory and adds a dependency that can fail.
+>
+> The reason I would not just raise the isolation level: snapshot isolation does
+> not prevent this — it is write skew, and both transactions see a snapshot where
+> the slot is free. Serializable does catch it, but it costs throughput on
+> everything and obliges me to write retry logic for `40001`. The constraint is one
+> index and cannot be got wrong.
+
+**The caveats worth voicing:**
+
+- The "consistency" in ACID and the "consistency" in CAP are different properties
+  that share a word.
+- Normalise by default; denormalise deliberately, and only where the copy has one
+  owner writing it in the same transaction as the source of truth.
+- Before sharding: fix the queries, then buy a bigger machine, then pool
+  connections, then add replicas. Sharding is a one-way door and the shard key is
+  effectively permanent.
+- Never make an HTTP call inside a transaction.

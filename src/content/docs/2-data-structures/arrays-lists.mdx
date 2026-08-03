@@ -1,0 +1,448 @@
+---
+title: Arrays and Dynamic Arrays
+description: >-
+  One contiguous block of memory, indexed by arithmetic — and the resize that
+  makes appending free on average but occasionally O(n) at the worst moment.
+sidebar:
+  order: 1
+difficulty: foundational
+status: complete
+prereqs: ['1-complexity/big-o']
+tags: [array, list, memory, amortized, cache]
+languages: [python, typescript]
+complexity:
+  index: O(1)
+  append: O(1)*
+  insert: O(n)
+  search: O(n)
+sources:
+  - notebooks/2-data-structures/arrays-lists.ipynb
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { DynamicArrayGrowth } from '../../../components/viz/widgets/DynamicArrayGrowth.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+An array is **one contiguous block of memory holding equally-sized elements.**
+Everything else about arrays follows from that sentence.
+
+Because the elements are the same size and laid out end to end, the address of
+element `i` is pure arithmetic:
+
+$$
+\text{address}(i) = \text{base} + i \times \text{sizeof(element)}
+$$
+
+No searching, no following pointers — one multiplication and one addition. That is
+why indexing is $O(1)$, and it is the entire reason arrays exist.
+
+But the same sentence explains every limitation. "Contiguous" means the block has a
+fixed size and whatever sits immediately after it in memory belongs to someone
+else. So you cannot simply grow an array. And "equally-sized elements" means
+inserting in the middle requires physically shifting everything after it.
+
+A *dynamic* array — Python's `list`, JavaScript's `Array`, C++'s `vector`, Go's
+slice — is the standard patch: a fixed-size block plus a policy for replacing it
+with a bigger one when it fills up. That policy is where all the interesting
+behaviour lives.
+
+## Visual
+
+Watch the block fill, then get abandoned for a bigger one. The dashed cells are
+reserved-but-unused capacity — memory you are paying for so that most appends cost
+nothing — and the bar chart underneath is the cost of each individual append.
+
+<DynamicArrayGrowth client:visible />
+
+Two things to notice. The cost chart is almost entirely flat with a few enormous
+spikes: that shape *is* amortisation. And drag the growth factor down to 1× — every
+append becomes a full copy, and the whole structure collapses to quadratic. The
+doubling is not an implementation detail; it is what makes the data structure work.
+
+## Mechanics
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+# Python's `list` is a dynamic array of pointers — NOT of the values themselves.
+numbers = [3, 1, 4]
+
+numbers[1]              # O(1)  — address arithmetic
+numbers.append(5)       # O(1)  amortised
+numbers.insert(0, 9)    # O(n)  — shifts every element right
+numbers.pop()           # O(1)  — from the end
+numbers.pop(0)          # O(n)  — shifts every element left
+9 in numbers            # O(n)  — linear scan
+numbers[1:3]            # O(k)  — builds a new list
+
+# For a true contiguous array of raw values, use `array` or NumPy:
+from array import array
+raw = array('i', [3, 1, 4])   # 4 bytes per int, no pointer indirection
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+// A JavaScript Array is not necessarily an array. Engines use a contiguous
+// backing store while the array stays "packed" — dense, same-typed elements —
+// and silently switch to a hash-table representation when it doesn't.
+const numbers = [3, 1, 4];
+
+numbers[1];             // O(1)
+numbers.push(5);        // O(1)  amortised
+numbers.unshift(9);     // O(n)  — shifts every element right
+numbers.pop();          // O(1)
+numbers.shift();        // O(n)
+numbers.includes(9);    // O(n)  — linear scan
+numbers.slice(1, 3);    // O(k)  — builds a new array
+
+// For a genuine fixed-size contiguous array of numbers:
+const raw = new Int32Array([3, 1, 4]);   // 4 bytes each, no boxing
+```
+
+</TabItem>
+</Tabs>
+
+The growth policy itself is about ten lines:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class DynamicArray:
+    def __init__(self):
+        self._capacity = 1
+        self._length = 0
+        self._store = [None] * self._capacity
+
+    def append(self, value):
+        if self._length == self._capacity:     # full: must move
+            self._capacity *= 2
+            bigger = [None] * self._capacity
+            for i in range(self._length):      # THE O(n) step
+                bigger[i] = self._store[i]
+            self._store = bigger
+        self._store[self._length] = value      # the common case: O(1)
+        self._length += 1
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class DynamicArray<T> {
+  private capacity = 1;
+  private length = 0;
+  private store: (T | undefined)[] = new Array(1);
+
+  append(value: T): void {
+    if (this.length === this.capacity) {      // full: must move
+      this.capacity *= 2;
+      const bigger = new Array<T | undefined>(this.capacity);
+      for (let i = 0; i < this.length; i++) { // THE O(n) step
+        bigger[i] = this.store[i];
+      }
+      this.store = bigger;
+    }
+    this.store[this.length] = value;          // the common case: O(1)
+    this.length++;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Complexity
+
+| Operation | Cost | Why |
+|---|---|---|
+| Index `a[i]` | $O(1)$ | Address arithmetic |
+| Append | $O(1)$ amortised | Usually a pointer bump; occasionally a full copy |
+| Insert / delete at position `i` | $O(n)$ | Must shift $n - i$ elements |
+| Insert / delete at front | $O(n)$ | Shifts everything |
+| Search (unsorted) | $O(n)$ | No structure to exploit |
+| Search (sorted) | $O(\log n)$ | Binary search |
+| Slice of length `k` | $O(k)$ | Copies |
+
+### Deriving the amortised bound
+
+The claim is that `n` appends cost $O(n)$ *in total*, so $O(1)$ each on average
+across the sequence. Count the copying directly.
+
+Starting from capacity 1 and doubling, resizes happen when the length reaches
+$1, 2, 4, 8, \dots$ up to `n`. The resize at capacity $2^k$ copies $2^k$ elements.
+So the total copying across `n` appends is
+
+$$
+\sum_{k=0}^{\lfloor \log_2 n \rfloor} 2^k \;=\; 2^{\lfloor \log_2 n \rfloor + 1} - 1 \;<\; 2n
+$$
+
+Fewer than $2n$ element copies across `n` appends — so under 3 operations per
+append, forever. That is the whole proof, and you can watch the counter in the
+widget approach it.
+
+**Why the growth factor must be multiplicative.** If you grow by a constant $c$
+instead of a factor, resizes happen every $c$ appends and each copies the whole
+array, giving $\sum n/c$ terms averaging $n/2$ — that is $O(n^2)$ total, $O(n)$ per
+append. The test suite for this page asserts exactly that degradation, because it
+is the counter-example that shows the doubling is load-bearing.
+
+**Why 2 and not something bigger.** A larger factor means fewer copies but more
+wasted memory: at factor $f$, up to $(1 - 1/f)$ of the block is unused, so 2×
+wastes up to half and 4× up to three quarters. There is also a memory-reuse
+argument for factors below 2 — with doubling, the new block is always larger than
+the sum of all previously freed blocks, so the allocator can never reuse them.
+That is why Java's `ArrayList` grows by 1.5× and why several allocators prefer
+$\phi \approx 1.618$.
+
+<Quiz
+  client:visible
+  id="arrays-amortized-vs-worst"
+  kind="concept"
+  question="Appending is amortised O(1). Your service has a strict 50 ms p99 budget and appends to a list holding millions of items. Is amortised O(1) good enough?"
+  options={[
+    { label: 'Yes — amortised O(1) means every append is fast' },
+    { label: 'No — one individual append is still O(n)', correct: true },
+    { label: 'Yes, as long as you pre-sort the data' },
+    { label: 'No — appending is actually O(log n)' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>Amortised says nothing about any individual operation.</strong>{' '}
+        The append that triggers a resize at four million elements copies four
+        million elements, inside one unlucky request. Your average stays flat and
+        your p99 spikes.
+      </p>
+      <p>
+        The fix is to remove the surprise, not the cost: pre-allocate when you know
+        the size (<code>[None] * n</code>, or <code>new Array(n)</code>), which
+        turns n resizes into one that happens where you chose. This is the same
+        reason hash-map rehashes and GC pauses get blamed for mysterious tail
+        latency — rare, expensive, and invisible in the mean.
+      </p>
+    </>
+  }
+/>
+
+## When NOT to use it
+
+**When you insert or delete at the front, repeatedly.** Every `pop(0)` or
+`shift()` is $O(n)$, so a loop doing it is $O(n^2)$. Use a deque — Python's
+`collections.deque` gives $O(1)$ at both ends. This is the single most common
+accidental quadratic in queue-shaped code.
+
+**When you need lookup by key rather than by position.** A linear `in` over a
+10,000-element list, inside a loop, is the hidden-quadratic bug from the
+[complexity page](/cs-fundamentals/1-complexity/big-o/). If you are searching by
+value, you want a set or a dict.
+
+**When elements are large and you insert in the middle often.** Every insert
+memmoves the tail. At that point a linked list's $O(1)$ splice starts to look
+attractive — though read the [linked lists](/cs-fundamentals/2-data-structures/linked-lists/)
+page before believing it, because cache behaviour usually reverses the verdict.
+
+**When memory is tight and the array is huge.** A dynamic array can hold twice the
+memory it needs right after a resize. For a multi-gigabyte buffer that is a real
+constraint, and it is why `sys.getsizeof` on a list surprises people.
+
+**When you need stable references into the collection.** A resize moves every
+element to a new address. In C++ this invalidates iterators and pointers outright;
+in Python and JavaScript the objects themselves do not move, but any code holding
+an *index* while another writer inserts is holding a stale reference to a
+different element.
+
+## Real-world usage
+
+**Essentially every list you have ever used.** Python `list`, JavaScript `Array`,
+Java `ArrayList`, C++ `vector`, Go slices, Rust `Vec` — all dynamic arrays over a
+contiguous block, differing mainly in growth factor.
+
+**Database pages and columnar storage.** Parquet, Arrow, and every column-store
+engine lay values out contiguously precisely to get sequential-scan speed and
+vectorised (SIMD) processing, which pointer-chasing structures cannot offer.
+
+**Typed arrays for binary data.** `Int32Array`, `Float64Array`, and Node `Buffer`
+are true fixed-size arrays with no per-element boxing. Image pixels, audio
+samples, and network frames are all handled this way.
+
+**Ring buffers.** A fixed-size array plus two indices gives an $O(1)$ queue with
+no allocation at all — the standard structure for audio pipelines, log buffers,
+and lock-free queues.
+
+## Failure modes
+
+**Accidentally quadratic front operations.** `list.pop(0)` and `Array#shift` look
+like the natural way to consume a queue and are $O(n)$ each:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+queue = list(range(100_000))
+while queue:
+    item = queue.pop(0)      # O(n) each → O(n²) overall
+
+from collections import deque
+queue = deque(range(100_000))
+while queue:
+    item = queue.popleft()   # O(1) each → O(n) overall
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const queue = Array.from({ length: 100_000 }, (_, i) => i);
+while (queue.length) {
+  const item = queue.shift();   // O(n) each → O(n²) overall
+}
+
+// Use an index instead of mutating the front:
+let head = 0;
+while (head < queue.length) {
+  const item = queue[head++];   // O(1) each
+}
+```
+
+</TabItem>
+</Tabs>
+
+The symptom is a job that finishes in seconds on 1,000 records and never finishes
+on 100,000 — a 100× larger input taking 10,000× longer.
+
+**Sparse arrays in JavaScript silently leave the fast path.** V8 keeps arrays in a
+packed, contiguous representation only while they stay dense. One assignment past
+the end converts the whole array to a dictionary:
+
+```js
+const a = [1, 2, 3];
+a[10000] = 4;          // now a hash table internally
+// Every subsequent access is a hash lookup, not address arithmetic.
+```
+
+Also `delete a[1]` — which leaves a hole rather than shortening the array — and
+`new Array(1000)`, which allocates holes rather than zeros. The performance cliff
+is invisible in the code and roughly an order of magnitude.
+
+**Slicing in a loop.** `arr[1:]` and `arr.slice(1)` copy. A recursion or loop that
+slices at every step is $O(n^2)$ in both time and memory, and it reads like clean
+functional code.
+
+**Mutating a list while iterating it.** Both languages iterate by index under the
+hood, so removing an element shifts everything left and the iterator skips one:
+
+```python
+items = [1, 2, 3, 4]
+for item in items:
+    if item % 2 == 0:
+        items.remove(item)   # skips 4 — result is [1, 3, 4], not [1, 3]
+```
+
+No error, just a wrong answer that survives a small test fixture. Build a new list
+instead.
+
+**Assuming contiguity where there is none.** A Python `list` of integers is an
+array *of pointers* to integer objects scattered across the heap — so iterating it
+does pointer-chase, and it uses roughly 8 bytes of pointer plus 28 bytes of object
+per element. `array.array` or NumPy is the fix when that matters. The cache
+consequences of this are the subject of the linked-lists page.
+
+## Practice problems
+
+### 1. Rotate an array by k positions, in place
+
+The trick is three reversals: reverse the whole array, then reverse the first `k`,
+then reverse the rest. $O(n)$ time, $O(1)$ space.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def rotate(a, k):
+    n = len(a)
+    k %= n                        # k > n is the same as k mod n
+
+    def reverse(lo, hi):
+        while lo < hi:
+            a[lo], a[hi] = a[hi], a[lo]
+            lo, hi = lo + 1, hi - 1
+
+    reverse(0, n - 1)
+    reverse(0, k - 1)
+    reverse(k, n - 1)
+    return a
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function rotate(a: number[], k: number): number[] {
+  const n = a.length;
+  k %= n;
+
+  const reverse = (lo: number, hi: number) => {
+    while (lo < hi) {
+      [a[lo], a[hi]] = [a[hi]!, a[lo]!];
+      lo++;
+      hi--;
+    }
+  };
+
+  reverse(0, n - 1);
+  reverse(0, k - 1);
+  reverse(k, n - 1);
+  return a;
+}
+```
+
+</TabItem>
+</Tabs>
+
+The obvious `a[-k:] + a[:-k]` is $O(n)$ time too, but $O(n)$ extra space. Worth
+knowing both and knowing why you would pick each.
+
+### 2. Remove duplicates from a sorted array in place
+
+Two pointers: one reads, one writes. Since duplicates are adjacent in sorted data,
+one pass suffices — $O(n)$ time, $O(1)$ space. Compare with the
+`includes`-in-a-loop version from the complexity page, which is $O(n^2)$ and needs
+no sorting.
+
+### 3. Pre-allocate and measure
+
+Time appending a million elements to an empty list against filling a
+pre-allocated one. The asymptotics are identical; the wall clock is not. Then run
+it with the growth factor set to 1× in the widget above and watch the same code
+become unusable.
+
+## Interview answers
+
+**"Why is array access O(1)?"**
+
+> Because the elements are contiguous and the same size, so the address is
+> `base + i × element_size` — one multiply and one add, regardless of how big the
+> array is or which index you ask for. It's not a search; it's arithmetic.
+
+**"Why is appending O(1) if it sometimes copies everything?"**
+
+> It's amortised O(1). Doubling the capacity means resizes get exponentially
+> rarer, and the total copying across n appends sums to under 2n — a geometric
+> series. So the average cost per append is constant, even though one individual
+> append is O(n).
+
+**The caveat that signals production experience:**
+
+> "The distinction I'd flag is that amortised isn't the same as guaranteed. One
+> append still costs O(n), and if that lands inside a request with a p99 budget,
+> you get a latency spike with a completely flat average — which is miserable to
+> diagnose, because there's no slow query and no obvious culprit. If I know the
+> size up front I pre-allocate, which turns log n resizes into one that happens
+> somewhere I chose. It's the same class of problem as a hash-map rehash or a GC
+> pause: rare, expensive, and invisible in the mean."

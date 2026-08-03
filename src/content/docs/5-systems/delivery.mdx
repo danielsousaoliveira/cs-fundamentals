@@ -1,0 +1,626 @@
+---
+title: Delivery and Operations
+description: >-
+  Why renaming a column correctly takes six deploys, why liveness and readiness
+  checks are not interchangeable, and why you should alert on symptoms rather
+  than causes.
+sidebar:
+  order: 8
+difficulty: advanced
+status: complete
+prereqs: ['5-systems/databases', '5-systems/testing']
+tags: [ci-cd, docker, migrations, observability, slo, twelve-factor]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+The hard part of deployment is not getting new code onto a machine. It is that
+**for a few minutes, two versions of your code are running at once, against one
+database.**
+
+Everything difficult here follows from that single fact:
+
+- Migrations must be compatible with the code that is about to be replaced *and*
+  the code replacing it, because both are live.
+- A rollback is not "undo" — the schema has already moved forward, and it does not
+  come back with the code.
+- A process that is being shut down still has requests in flight, and severing
+  them is a user-visible error caused entirely by your deploy.
+
+The mental shift that makes operations tractable is to stop treating a deploy as an
+event and start treating it as an **overlap**. Once you design for the overlap,
+zero-downtime stops being a technique and becomes a consequence.
+
+The second idea, equally load-bearing: **the artifact you tested must be the
+artifact you ship.** Rebuild per environment and you have tested something you did
+not deploy — a different base-image digest, a different transitive dependency, a
+different build timestamp. One image, one digest, promoted forward by re-tagging.
+Environment differences come from configuration injected at runtime, never from a
+rebuild.
+
+## Mechanics
+
+### The pipeline, in cost order
+
+```text
+lint + typecheck              ← seconds; fails fast on the cheapest signal
+unit tests                    ← seconds
+build                         ← compile, bundle
+integration tests             ← against ephemeral Postgres/Redis
+build + scan container image  ← Trivy/Grype for CVEs; fail on critical
+push to registry              ← tagged with the git SHA, never just :latest
+deploy to staging             ← the same image
+smoke tests                   ← a handful of real requests
+gate (manual or automatic)
+deploy to production          ← canary or rolling
+```
+
+**Fail fast, run in parallel.** Cheap checks first, so a missing semicolon does not
+cost eight minutes, and parallelise anything independent — lint, typecheck and unit
+tests have no reason to be sequential. The number to optimise is **time-to-red on a
+broken commit**, because that is what everyone waits for.
+
+**Cache dependencies keyed on the lockfile hash**, not on a branch name or a date:
+
+```yaml
+key: node-${{ hashFiles('pnpm-lock.yaml') }}
+```
+
+The cache is then reused exactly while the lockfile is unchanged, and rebuilt
+automatically when it changes. Keying on anything else gives you either stale
+caches or useless ones.
+
+**CI is also where a distinction worth knowing lives:** CD means either continuous
+*delivery* (every green build is deployable, a human chooses when) or continuous
+*deployment* (every green build goes to production automatically). They are
+different commitments.
+
+### Migrations: expand–contract
+
+This is the part most people underprepare, and it follows directly from the
+overlap. During a rolling deploy, old and new code run simultaneously against one
+migrated schema. **If a migration drops a column the old pods still select, you
+break production while deploying the fix for it.**
+
+Renaming `patient_name` to `full_name`, correctly:
+
+1. **Expand** — add `full_name`, nullable. Deploy. Old code ignores it.
+2. Deploy code that **writes both** columns and reads the old one.
+3. **Backfill** `full_name`, in batches so you do not lock the table.
+4. Deploy code that **reads the new** column and still writes both.
+5. Stop writing the old column. Deploy.
+6. **Contract** — drop `patient_name`, once no rollback target still needs it.
+
+Six deploys to rename a column, and that is the correct number.
+
+> Each step is independently safe and independently reversible. The failure mode
+> being avoided is a migration that is only correct if the deploy succeeds —
+> because then a rollback of the code leaves the schema ahead of it, and you cannot
+> go back.
+
+Additive migrations should also be non-blocking: `CREATE INDEX CONCURRENTLY` in
+Postgres, or you hold a write lock on a large table for the duration.
+
+### Deploy strategies
+
+| Strategy | How | Cost |
+|---|---|---|
+| **Rolling** | Replace instances a few at a time | Requires old and new to coexist — hence expand–contract |
+| **Blue-green** | Two full environments; deploy to the idle one, flip the router | Instant rollback; double resources, shared database both versions must tolerate |
+| **Canary** | 5% of traffic to the new version, watch, then ramp | Catches problems that only appear under real traffic, which is most of them |
+| **Feature flags** | Ship the code dark, enable it separately | Decouples deploy from release; costs flag debt |
+
+**Feature flags are the one worth emphasising.** They decouple deploy from
+release: the code ships dark, you turn it on for internal users, then 1%, then
+everyone, and turning it off is a config change taking seconds rather than a
+rollback taking minutes. The honest cost is flag debt — a flag that lives forever
+is a permanent untested branch — so flags need an owner and a removal date.
+
+### Containers: the practices and their reasons
+
+```dockerfile
+# Multi-stage: build with the full toolchain, ship only the artifact.
+FROM node:22-slim AS build
+WORKDIR /app
+
+# Dependencies BEFORE source. Docker invalidates a layer when its inputs change;
+# source changes every commit, dependencies rarely. Wrong order = reinstall
+# everything, every build.
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+
+USER node                # a container escape from root is far worse
+ENV NODE_ENV=production
+CMD ["node", "dist/server.js"]
+```
+
+- **`--frozen-lockfile`** (or `npm ci`) installs exactly the lockfile and fails if
+  it disagrees with `package.json`. A plain `install` may resolve new versions,
+  which makes the build non-reproducible — the same Dockerfile producing different
+  images on different days.
+- **`.dockerignore`** excluding `node_modules`, `.git`, `.env`. Otherwise you bloat
+  the build context, invalidate caches, and risk baking secrets into the image.
+- **One process per container.** The platform handles multiplication; a container
+  running a process manager hides failures from the orchestrator, which can then no
+  longer restart what is actually broken.
+- **Read the port from the environment.** A hardcoded 3000 simply will not receive
+  traffic on a platform that assigns one.
+- **Alpine caveat**: it uses musl rather than glibc, which occasionally breaks
+  native modules. `-slim` is the safer default when that bites.
+
+### Graceful shutdown
+
+The platform sends `SIGTERM`, waits a grace period, then `SIGKILL`. **Without a
+handler, in-flight requests are severed on every single deploy** — a self-inflicted
+error rate proportional to how often you ship.
+
+```ts
+process.on('SIGTERM', async () => {
+  // 1. Fail readiness FIRST, so the load balancer stops routing to us before
+  //    we stop accepting. Closing the server first races the routing update
+  //    and produces connection-refused errors for a second or two.
+  healthState.ready = false;
+  await sleep(5_000);
+
+  server.close();          // 2. stop accepting new connections
+  await drainInFlight();   // 3. let current requests finish
+  await db.end();          // 4. release resources
+  process.exit(0);
+});
+```
+
+That first step is the subtle one, and it is the difference between a clean deploy
+and a small burst of 502s on every release.
+
+## Complexity
+
+**Deploy frequency and batch size are inversely related, and risk follows batch
+size.** If changes arrive at rate $\lambda$ and you deploy every $T$, each deploy
+carries $\lambda T$ changes. When something breaks, the number of candidates you
+must bisect is exactly that:
+
+$$
+\text{time to diagnose} \propto \lambda T \quad\text{(and }\log(\lambda T)\text{ with a clean bisect)}
+$$
+
+| Deploy cadence | Changes per deploy | Candidates when it breaks |
+|---|---:|---:|
+| Per merge | 1 | 1 |
+| Daily | ~10 | 10 |
+| Fortnightly | ~100 | 100 |
+
+This is the actual argument for continuous deployment, and it is a counterintuitive
+one: **deploying more often is safer, not riskier.** The intuition that says "fewer
+deploys, fewer chances to break" is measuring the wrong thing — it is trading
+frequency for blast radius, and blast radius is what costs you.
+
+**Error budgets convert reliability from an argument into arithmetic.** An SLO of
+99.9% over 30 days permits:
+
+$$
+30 \times 24 \times 60 \times 0.001 = 43.2 \text{ minutes}
+$$
+
+| SLO | Permitted downtime / 30 days |
+|---|---:|
+| 99% | 7.2 hours |
+| 99.9% | 43 minutes |
+| 99.95% | 22 minutes |
+| 99.99% | 4.3 minutes |
+
+Each extra nine costs roughly ten times as much to achieve, and 99.99% is about
+four minutes a month — less than one careless deploy. The value of the framing is
+procedural: budget remaining means you can ship risky things; budget exhausted
+means the next sprint is reliability work. It is the most useful tool available for
+stopping "move fast" and "be reliable" being a values debate.
+
+**Availability multiplies through dependencies**, which is why microservices are
+harder than they look. With $n$ independent services each at availability $a$, a
+request touching all of them succeeds with probability $a^n$:
+
+| Per-service | 3 services | 10 services |
+|---:|---:|---:|
+| 99.9% | 99.7% | 99.0% |
+| 99.99% | 99.97% | 99.9% |
+
+Ten services at 99.9% each gives a 99% system — an order of magnitude worse than
+any component. Retries, timeouts, circuit breakers and graceful degradation exist
+to break that multiplication, by making a dependency's failure not automatically
+the caller's failure.
+
+## When NOT to use it
+
+**Do not run migrations that are only safe if the deploy succeeds.** The whole
+point of expand–contract. If your rollback plan requires the schema to move
+backwards, you do not have a rollback plan.
+
+**Do not rebuild per environment.** You then shipped something you did not test.
+
+**Do not put a database check in your liveness probe.** This is the one that turns
+a blip into an outage, and it is common enough to state as a rule:
+
+- **Liveness** — "is this process wedged?" Failing it means the orchestrator
+  **restarts** you.
+- **Readiness** — "can I serve traffic right now?" Failing it means the
+  orchestrator **stops routing to you** but leaves you alive.
+
+Put the database in liveness and a ten-second database blip restarts *every
+instance simultaneously*, converting a brief degradation into a full outage with
+cold starts — and the restarted instances then stampede the recovering database.
+Readiness is what keeps traffic off an instance whose dependency is down. Liveness
+should check almost nothing.
+
+**Do not alert on causes.** CPU at 80% with everything healthy is not an incident,
+and paging someone for it teaches them to ignore pages. Alert on symptoms users
+feel — error rate, p99 latency, queue depth growing, consumer lag.
+
+**Do not page for anything a human need not act on right now.** Everything else is
+a dashboard or a ticket. The reasoning is about human attention rather than
+technology: every unnecessary page reduces the response to the necessary ones.
+Alert fatigue is the failure mode, and it is caused by well-intentioned alerts on
+causes.
+
+**Do not report averages.** An average hides a bimodal distribution: a cache hit at
+5 ms and a miss at 800 ms average to a healthy-looking 90 ms while a tenth of your
+users have a bad time. p50 tells you what is typical; **p95 and p99 are the ones
+that generate support tickets**.
+
+**Do not keep long-lived branches.** The longer a branch lives, the larger and
+riskier its merge, and the more of its testing was done against a mainline that no
+longer exists. Git Flow made sense for versioned desktop releases; for a service
+that deploys continuously, feature flags do the job release branches used to.
+
+**Do not write logs to a file in a container.** The file dies with the container,
+fills the ephemeral disk, and is invisible to your log aggregator. Log to stdout
+and let the platform collect it.
+
+## Real-world usage
+
+**The three pillars of observability**, which are genuinely different tools:
+
+- **Logs** — discrete events with detail. Structured JSON, not string
+  concatenation, so they are queryable. A **correlation id** per request,
+  propagated to every log line *and to downstream calls*, so one user's journey is
+  one query.
+- **Metrics** — cheap numeric aggregates. **RED** for services (Rate, Errors,
+  Duration); **USE** for resources (Utilization, Saturation, Errors).
+- **Traces** — one request's path across services, with timing per span.
+  OpenTelemetry is the vendor-neutral standard, and this is the only tool that
+  answers "why is this endpoint slow" in a multi-service system, because the answer
+  is usually "one of eleven downstream calls".
+
+**Infrastructure as code**, and the point is not automation:
+
+> The point is that infrastructure is **reviewable in a pull request** and
+> **reproducible in a new environment**. A console-configured environment cannot be
+> diffed, cannot be reviewed, and cannot be recreated after an incident — and
+> nobody can tell you what changed last Tuesday.
+
+Two operational facts about Terraform specifically: state must live in remote
+storage with locking and versioning (local state means one person can apply, and a
+lost state file means Terraform no longer knows what it owns), and **state contains
+secrets in plaintext** for some resources, so that bucket needs locking down. The
+practical trap is **drift** — someone changes something in the console and the next
+`apply` reverts it or fails — and the answer is making the console read-only in
+production.
+
+**The twelve-factor points that earn their place:**
+
+- **Config in the environment** — one image, many environments.
+- **Backing services as attached resources** — the database is a URL in a variable,
+  so swapping a local Postgres for a managed one is a config change.
+- **Strict dev/prod parity** — same database engine and version locally as in
+  production. SQLite locally and Postgres in production is a bug generator.
+- **Logs as event streams to stdout.**
+- **Disposability** — fast startup, graceful shutdown, killable at any moment
+  without data loss. This is what makes autoscaling and rolling deploys safe.
+
+**Validate config at startup and crash immediately** if something is missing:
+
+```ts
+const env = z
+  .object({
+    DATABASE_URL: z.string().url(),
+    REDIS_URL: z.string().url(),
+    JWT_SECRET: z.string().min(32),
+  })
+  .parse(process.env);   // a missing variable kills the deploy, not a 3am request
+```
+
+A missing variable should fail the deploy, not surface at 3am on the first request
+that happens to touch that code path.
+
+**Secrets**: never in the repo, never in the image, never in a CI log. **Docker
+layers persist**, so a secret added in one layer and deleted in a later one is
+still extractable from the image. And the corollary that gets forgotten: **a secret
+committed once must be rotated, not just removed** — it is in the history and in
+every clone, forever.
+
+**Preview environments per PR** are the highest-value addition for a team that does
+not have them: every PR gets its own deployed URL and database, so reviewers click
+the change instead of reading the diff, e2e tests run against a real deployment,
+and the "who is using staging right now" bottleneck disappears entirely.
+
+And staging must be genuinely production-like or it teaches you nothing. **A
+staging environment with a thousand rows tells you nothing about a query that is
+slow at ten million.**
+
+## Failure modes
+
+**Symptom: every deploy produces a burst of 502s.** No `SIGTERM` handler, or one
+that closes the server before failing readiness. In-flight requests are severed
+when the process exits.
+
+**Symptom: a deploy succeeded, then rolling back made things worse.** A
+destructive migration. The code went back; the schema did not. This is why
+expand–contract exists, and why "we can always roll back" is false unless you
+designed for it.
+
+**Symptom: a brief database blip restarted the entire fleet.** A database check in
+the liveness probe. The restart storm then prevents the database from recovering.
+
+**Symptom: an alert fires constantly and everyone ignores it.** Alerting on a cause
+rather than a symptom, or a threshold set from a single observation. The alert now
+has negative value — it consumes attention and trains people to dismiss the
+channel.
+
+**Symptom: the dashboard is green and users are complaining.** Averages, or metrics
+that measure the system rather than the user. A 200 response served in 9 seconds is
+a success by every server-side metric.
+
+**Symptom: builds are slow and nobody knows why.** Usually Docker layer ordering —
+`COPY . .` before the dependency install, so every commit reinstalls everything.
+Sometimes a cache key on the branch name, which never hits.
+
+**Symptom: `terraform apply` wants to destroy production.** Drift, or a state file
+that has diverged from reality. This is why the plan output is reviewed and why the
+console is read-only.
+
+**Symptom: a secret is found in a public build log.** An `echo $VAR` added for
+debugging. Mask secrets explicitly in CI, use `gitleaks` or equivalent as a safety
+net, and rotate anything that has ever been exposed.
+
+## Practice problems
+
+**1. Plan the rename.** A column `email_address` must become `email`. The service
+runs 12 instances with rolling deploys. Write the sequence, and say what breaks if
+you do it in one step.
+
+<details>
+<summary>Solution</summary>
+
+In one step: the migration renames the column, and the 11 instances still running
+the old code immediately start throwing — they select `email_address`, which no
+longer exists. You have a full outage for the duration of the rollout, and
+**rolling back does not fix it**, because the old code needs a column the schema no
+longer has. The only way out is forward, under pressure.
+
+```text
+1. Migration: ADD COLUMN email (nullable).      Old code ignores it.
+2. Deploy: write both columns, read email_address.
+3. Backfill: UPDATE … SET email = email_address in batches.
+4. Deploy: read email, still write both.        ← now safely rollback-able to 2
+5. Deploy: stop writing email_address.
+6. Migration: DROP COLUMN email_address.
+```
+
+The property that makes it work: **at every step, the previous version of the code
+still functions against the current schema.** Step 4 is the real cutover, and it is
+reversible because both columns are still being written. Step 6 is the only
+irreversible one, and by then nothing reads the old column.
+
+The batching in step 3 matters separately — a single `UPDATE` over ten million rows
+holds locks and bloats the table, which is its own outage.
+
+</details>
+
+**2. Write the health checks** for a service that depends on Postgres and Redis,
+where Redis is used only for caching.
+
+<details>
+<summary>Solution</summary>
+
+```ts
+// Liveness: is this process wedged? Almost nothing belongs here. If it returns,
+// the event loop is turning, which is the only thing a restart would fix.
+app.get('/healthz', (_req, res) => res.sendStatus(200));
+
+// Readiness: can I serve traffic right now?
+app.get('/readyz', async (_req, res) => {
+  if (!healthState.ready) return res.sendStatus(503);   // shutting down
+
+  try {
+    await db.query('SELECT 1');   // hard dependency — cannot serve without it
+  } catch {
+    return res.sendStatus(503);
+  }
+
+  // Redis is NOT checked. It is a cache: if it is down we are slower, not
+  // broken, and failing readiness would remove every instance from the load
+  // balancer over a degradation the service is designed to absorb.
+  res.sendStatus(200);
+});
+```
+
+The two judgements worth defending:
+
+**Liveness checks nothing.** A restart fixes a wedged process and nothing else.
+Putting a dependency in liveness means a dependency outage becomes a restart storm.
+
+**Only hard dependencies go in readiness.** Redis is soft — the code
+[fails open](/cs-fundamentals/5-systems/caching/) — so including it would take the
+whole service out of rotation for a problem it was explicitly designed to survive.
+The question for each dependency is: *without this, can I serve a correct response
+at all?* If yes, it does not belong in readiness.
+
+</details>
+
+**3. Calculate the budget.** Your SLO is 99.9% availability over 30 days. An
+incident causes 100% failure for 12 minutes, and a bad deploy causes 5% failure for
+3 hours. How much budget is left?
+
+<details>
+<summary>Solution</summary>
+
+Total budget: 43,200 minutes × 0.001 = **43.2 minutes** of full-outage equivalent.
+
+- Incident: 12 minutes at 100% = **12.0 minutes**.
+- Bad deploy: 180 minutes at 5% = 180 × 0.05 = **9.0 minutes**.
+
+Consumed: 21 minutes, leaving **22.2 minutes** — about 51%.
+
+Two things worth drawing out.
+
+**The partial outage cost almost as much as the total one**, despite feeling far
+less dramatic. Nobody was paged, no incident channel opened, and it burned 9
+minutes of budget. Slow degradation is genuinely expensive and genuinely
+under-noticed, which is why the error budget is measured in failed *requests*
+rather than in incidents.
+
+**Half the budget is gone and the month is not over.** That is the signal the
+framework exists to produce: it is now an arithmetic fact rather than an opinion
+that the next risky change should wait, and nobody has to win an argument about
+whether the team is "moving too fast".
+
+</details>
+
+<Quiz
+  client:visible
+  id="delivery-liveness"
+  kind="concept"
+  question="Your liveness probe checks the database. The database is briefly unreachable for 10 seconds. What happens?"
+  options={[
+    { label: 'Every instance restarts at once, turning a blip into an outage', correct: true },
+    { label: 'Traffic stops being routed to the instances until the DB recovers' },
+    { label: 'Nothing — liveness failures are logged but not acted on' },
+    { label: 'Instances restart one at a time, so the impact is minimal' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Every instance fails liveness simultaneously, because they all share the
+        same database, so the orchestrator restarts all of them at once. A
+        ten-second degradation becomes a full outage plus cold starts — and the
+        restarted instances then open a burst of new connections to a database that
+        was already struggling.
+      </p>
+      <p>
+        Liveness answers "is this process wedged?", and the only remedy it triggers
+        is a restart. A restart cannot fix someone else's database, so a dependency
+        has no business being in there.
+      </p>
+      <p>
+        Readiness is the right place: it stops traffic being routed to an instance
+        that cannot serve, leaves the process alive, and recovers on its own when
+        the dependency comes back.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="delivery-batch-size"
+  kind="concept"
+  question="A team deploys fortnightly to reduce risk, batching about 100 changes per release. What does this actually trade?"
+  options={[
+    { label: 'Fewer deploys, but a much larger blast radius per deploy', correct: true },
+    { label: 'Lower risk overall, since there are fewer opportunities to break' },
+    { label: 'The same risk, spread over fewer events' },
+    { label: 'Lower risk, provided each change is individually tested' },
+  ]}
+  explanation={
+    <>
+      <p>
+        It trades frequency for blast radius, and blast radius is the expensive one.
+        When a fortnightly release breaks, there are 100 candidate changes to bisect,
+        the rollback reverts 99 innocent ones, and the person who wrote the offending
+        change did so two weeks ago and has forgotten the context.
+      </p>
+      <p>
+        With per-merge deploys there is one candidate. Diagnosis is immediate, the
+        rollback is precise, and the author still has the change in their head.
+      </p>
+      <p>
+        This is the counterintuitive finding behind continuous deployment: deploying
+        more often is safer. The instinct that says "fewer deploys, fewer chances to
+        break" is optimising the number of incidents rather than their cost.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Walk me through your deployment pipeline."**
+
+> Cheap checks first — lint, typecheck and unit tests in parallel, because
+> time-to-red on a broken commit is what everyone waits for. Then build, then
+> integration tests against an ephemeral Postgres, then build and scan the
+> container image and push it tagged with the git SHA.
+>
+> The key property is that I build the artifact once and promote the same image
+> through environments. If you rebuild per environment you tested something you did
+> not ship. Environment differences come from configuration injected at runtime,
+> never from a rebuild.
+
+**"How do you deploy without downtime?"** Lead with the overlap, because it is the
+insight the rest depends on:
+
+> The thing to design for is that during a rolling deploy, two versions of the code
+> are running at once against one database. So migrations have to be
+> backwards-compatible, which means expand–contract: add the new column, deploy
+> code that writes both, backfill in batches, deploy code that reads the new one,
+> stop writing the old, then drop it.
+>
+> Six deploys to rename a column, and that is the right number — each step is
+> independently safe and independently reversible. The failure mode I am avoiding
+> is a migration that is only correct if the deploy succeeds, because then a
+> rollback leaves the schema ahead of the code and there is no way back.
+>
+> Plus a `SIGTERM` handler that fails readiness first, waits for the load balancer
+> to notice, and then drains in-flight requests. Without that you sever live
+> requests on every single deploy.
+
+**"What would you monitor and alert on?"**
+
+> RED for services — rate, errors, duration — and USE for resources. Alerts on
+> symptoms users feel: error rate, p99 latency, queue depth growing, consumer lag.
+> Not on causes like CPU at 80%, because high CPU with everything healthy is not an
+> incident and paging for it teaches people to ignore pages.
+>
+> Percentiles rather than averages. An average hides a bimodal distribution — a
+> cache hit at 5 ms and a miss at 800 ms average to a healthy-looking 90 ms while a
+> tenth of users have a bad time.
+>
+> And I would page only for things a human must act on right now. Everything else
+> is a dashboard or a ticket.
+
+**The caveats worth voicing:**
+
+- Liveness and readiness are not interchangeable. A dependency check in liveness
+  turns a blip into a restart storm.
+- Deploying more often is safer, not riskier — it trades blast radius for
+  frequency, and blast radius is what costs you.
+- Availability multiplies through dependencies: ten services at 99.9% each is a
+  99% system. Timeouts, retries and graceful degradation exist to break that
+  multiplication.
+- A secret committed once must be rotated, not just removed. It is in the history
+  and in every clone.
+- Blameless postmortems, because the question is what in the system allowed the
+  mistake rather than who made it. That is practical rather than kind: if a human
+  error can take production down, the system is missing a guardrail — and blame
+  guarantees the next person hides the near-miss you needed to learn from.

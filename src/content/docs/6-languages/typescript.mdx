@@ -1,0 +1,696 @@
+---
+title: TypeScript's Type System
+description: >-
+  Making illegal states unrepresentable — discriminated unions, exhaustiveness
+  checking, branded types, and the limitation that a type annotation is not a
+  runtime check.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs: ['6-languages/javascript-semantics']
+tags: [typescript, types, unions, generics, narrowing, zod]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Most people meet TypeScript as autocomplete plus a way to catch typos. That is
+real, and it is the least interesting thing it does.
+
+The idea worth building everything else around is this: **a type is a set of
+values, and designing a type is choosing which values are allowed to exist.** Get
+that choice right and whole categories of bug stop being possible rather than
+merely being tested for.
+
+The canonical example is a shape everyone has written:
+
+```ts
+type Response<T> = { data?: T; error?: string };
+```
+
+That type has **four** inhabitants, and only two of them mean anything:
+
+| `data` | `error` | Meaning |
+|---|---|---|
+| present | absent | Success |
+| absent | present | Failure |
+| absent | absent | ??? |
+| present | present | ??? |
+
+Every consumer now has to handle two states that should not exist, and
+inevitably two consumers handle them differently. The alternative removes them
+from the type system entirely:
+
+```ts
+type Response<T> = { ok: true; value: T } | { ok: false; error: string };
+```
+
+Two inhabitants, both meaningful. Nothing to test, because nothing invalid can be
+constructed.
+
+> I would rather the compiler reject the invalid state than write a test for it.
+
+That is the whole discipline. The rest of this page is the machinery for doing it,
+and one honest limitation about where it stops working.
+
+## Mechanics
+
+### `interface` versus `type`
+
+For a plain object shape they are interchangeable. The real differences are two:
+
+**Interfaces merge declarations**, which is how you augment library types:
+
+```ts
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthUser; // adds req.user everywhere
+    }
+  }
+}
+```
+
+A `type` alias would error with "duplicate identifier".
+
+**`type` handles everything that is not an object shape:**
+
+```ts
+type Status = 'REQUESTED' | 'CONFIRMED'; // union — impossible with interface
+type Pair = [string, number]; // tuple
+type Keys = `on${Capitalize<'click' | 'focus'>}`; // 'onClick' | 'onFocus'
+type Nullable<T> = { [K in keyof T]: T[K] | null }; // mapped type
+```
+
+Sensible default: `interface` for object contracts — anything a class implements
+or that describes a public shape — and `type` for everything else. Not worth
+arguing about in review.
+
+### `any`, `unknown`, `never`
+
+The escape hatch, the top, and the bottom of the type system.
+
+**`any` disables checking, and it spreads silently.** This is the part that
+matters: anything derived from an `any` is also `any`, so one at a boundary erases
+safety across a whole call chain without a single error.
+
+```ts
+const data: any = JSON.parse(raw);
+const user = data.user; // any
+const name = user.profile.name; // any — compiles. Crashes if profile is undefined.
+```
+
+**`unknown` is the type-safe top type.** You can assign anything to it, but you can
+do nothing with it until you narrow — which is exactly right for `JSON.parse`
+results, `catch` bindings, and API responses.
+
+```ts
+const data: unknown = JSON.parse(raw);
+data.user; // ✗ error — good, you have not proved it has one
+
+if (typeof data === 'object' && data && 'user' in data) {
+  data.user; // ✓ narrowed
+}
+
+const parsed = AppointmentSchema.parse(data); // ✓ better: validates AND narrows
+```
+
+Under `strict`, `catch (e)` gives you `unknown` rather than `any` — which is
+correct, because JavaScript lets you `throw` literally anything, so `e.message` is
+not safe without a check.
+
+**`never` is the bottom type** — no possible values. Its best use is
+**exhaustiveness checking**:
+
+```ts
+type Shape = { kind: 'circle'; r: number } | { kind: 'square'; side: number };
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case 'circle':
+      return Math.PI * s.r ** 2;
+    case 'square':
+      return s.side ** 2;
+    default: {
+      // Inside `default`, TS has eliminated every handled case. If they are all
+      // handled, `s` is `never` and this assignment is fine.
+      const _exhaustive: never = s;
+      throw new Error(`unhandled: ${JSON.stringify(s)}`);
+    }
+  }
+}
+```
+
+Add a third variant to `Shape` and **that assignment fails to compile**, pointing
+at exactly the switch you forgot. This turns "find every place that handles this
+union" from a grep into a compiler error, and it is the single highest-value trick
+on this page.
+
+### Discriminated unions
+
+A union of object types sharing a common **literal** field; narrowing on that field
+narrows the whole object. This is the mechanism behind the intuition section.
+
+```ts
+type AsyncState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: Error };
+
+function render(state: AsyncState<User>) {
+  switch (state.status) {
+    case 'loading':
+      return <Spinner />;
+    case 'error':
+      return <Error message={state.error.message} />; // ✓ error exists here
+    case 'success':
+      return <Profile user={state.data} />; // ✓ and data exists here
+    case 'idle':
+      return null;
+  }
+}
+```
+
+This kills the classic React bug of rendering a spinner and an error at the same
+time — not by remembering to check, but because `{ loading: true, error: e }` is
+not a value the type permits.
+
+**The discriminant must be a literal type** (`'circle'`, `true`, `1`), not a
+widened `string` or `boolean`, or there is nothing to narrow on. That is why
+`as const` matters when constructing these objects.
+
+### Generics, and when they earn their place
+
+Use them when a function's output type depends on its input type, so callers keep
+their type information instead of getting `any`.
+
+```ts
+function first<T>(arr: T[]): T | undefined {
+  return arr[0];
+}
+first([1, 2, 3]); // number | undefined
+first(['a']); // string | undefined
+
+function pick<T, K extends keyof T>(obj: T, keys: K[]): Pick<T, K> {
+  return Object.fromEntries(keys.map((k) => [k, obj[k]])) as Pick<T, K>;
+}
+pick(user, ['id', 'email']); // { id: string; email: string } — and 'nope' is an error
+```
+
+Two points that come up:
+
+**`extends` in a generic is a constraint, not inheritance.** `<K extends keyof T>`
+means "K must be one of T's keys" — it narrows the set of allowed type arguments.
+This trips up people coming from Java.
+
+**Do not over-generify.** The test: a type parameter earns its place when it
+appears **at least twice** in the signature — linking an input to an output, or two
+inputs to each other.
+
+```ts
+function log<T>(x: T): void {} // ✗ T does nothing; `unknown` is honest and simpler
+```
+
+### Branded types, for when structural typing is too permissive
+
+TypeScript checks **shape, not name**. Mostly a gift, but it means two types with
+the same shape are the same type:
+
+```ts
+function book(doctorId: string, patientId: string) {}
+book(patientId, doctorId); // ✓ compiles. Wrong. Both are strings.
+```
+
+```ts
+type Brand<T, B> = T & { readonly __brand: B };
+type DoctorId = Brand<string, 'DoctorId'>;
+type PatientId = Brand<string, 'PatientId'>;
+
+const asDoctorId = (s: string) => s as DoctorId; // one blessed construction point
+
+function book(d: DoctorId, p: PatientId) {}
+book(patientId, doctorId); // ✗ now a compile error
+```
+
+The brand does not exist at runtime — it is a phantom property only the type system
+sees, so the cost is zero. This converts a category of mistake from *testable* to
+*impossible*, which is the same move as the discriminated union, applied to
+primitives.
+
+### Utility types, and deriving rather than duplicating
+
+```ts
+Partial<T>       // all optional — the classic PATCH body type
+Pick<T, K>       // keep only these keys
+Omit<T, K>       // drop these — Omit<User, 'passwordHash'> for a response type
+Record<K, V>     // Record<Status, Handler>
+ReturnType<F>    // the return type of a function type
+Awaited<T>       // unwraps a Promise, recursively
+NonNullable<T>   // removes null and undefined
+Extract<T, U> / Exclude<T, U>   // filter a union
+```
+
+The composition is the useful part:
+
+```ts
+type User = Awaited<ReturnType<typeof getUser>>; // derive the model from the function
+```
+
+**Derive types rather than duplicating them**, so there is one place to change.
+
+## Complexity
+
+**Making illegal states unrepresentable is a counting exercise**, and it is worth
+doing once explicitly. A type built from $n$ independent optional booleans or
+fields has $2^n$ inhabitants:
+
+| Fields | Inhabitants | Meaningful | Wasted |
+|---:|---:|---:|---:|
+| 2 (`data?`, `error?`) | 4 | 2 | 2 |
+| 3 (`data?`, `error?`, `loading?`) | 8 | 3 | 5 |
+| 4 | 16 | 4 | 12 |
+
+The invalid states grow as $2^n - n$ while the meaningful ones grow as $n$. At four
+flags, **75% of the states your type permits are nonsense** — and every one of them
+is a branch some consumer may hit and no one has thought about.
+
+A discriminated union with $n$ variants has exactly $n$ inhabitants. That is the
+entire argument, and it is why the flags-based shape gets worse faster than it
+feels like it should: adding one flag to an existing three doubles your invalid
+state space.
+
+**Exhaustiveness checking changes the cost of adding a variant.** Without it,
+adding a state to a union means finding every `switch` by hand — $O(\text{codebase})$
+of searching, with a miss rate that is not zero. With a `never` assignment in each
+default, the compiler enumerates them for you: the work is proportional to the
+number of places that genuinely need updating, and the miss rate is zero by
+construction.
+
+**Compile time is a real budget.** Type checking is not free, and a few patterns
+are superlinear: deeply recursive conditional types, large unions distributed
+across mapped types (a union of $n$ members through a mapped type is $O(n)$
+instantiations, and nesting two multiplies), and heavy use of intersections instead
+of `interface extends`. TypeScript caps recursion depth at 50 and instantiation
+count at 5 million precisely because it is possible to write a type that does not
+finish. If a build gets mysteriously slow, `--generateTrace` names the culprit.
+
+## When NOT to use it
+
+**Do not use `any` to make an error go away.** Each use should be deliberate and
+ideally commented. `unknown` plus narrowing is almost always what you actually
+meant, and it costs three lines.
+
+**Do not use a hand-written type guard at a real boundary.** This is the caveat
+most people miss:
+
+```ts
+function isUser(x: unknown): x is User {
+  return typeof x === 'object' && x !== null && 'id' in x;
+}
+```
+
+**A type guard is an unchecked assertion.** The compiler trusts the `is`
+annotation without verifying that the body proves it — so a sloppy guard is `any`
+with extra steps and a false sense of safety. The guard above returns `true` for
+`{ id: 42 }` and every consumer then treats `id` as a string.
+
+Prefer a schema parse at boundaries, where the validation and the narrowing come
+from one declaration and cannot disagree:
+
+```ts
+const User = z.object({ id: z.string(), email: z.string().email() });
+type User = z.infer<typeof User>; // the type is derived FROM the validator
+```
+
+**Do not use numeric enums.**
+
+```ts
+enum Status { Requested, Confirmed }   // Status.Requested === 0
+```
+
+They are reverse-mapped, produce values meaningless in a database column, and
+reorder disastrously if someone inserts a member in the middle. `const enum` is
+worse in a different way — it is inlined at compile time, which breaks with
+`isolatedModules` and any bundler that transpiles files independently.
+
+```ts
+// ✓ what actually crosses the wire, zero runtime cost, works with Zod
+type Status = 'REQUESTED' | 'CONFIRMED';
+
+// ✓ when you also need a runtime object
+const Status = { Requested: 'REQUESTED', Confirmed: 'CONFIRMED' } as const;
+type Status = (typeof Status)[keyof typeof Status];
+```
+
+**Do not over-generify**, per the two-appearances test above. A signature with four
+type parameters is usually a design problem being expressed as a typing problem.
+
+**Do not retrofit `noUncheckedIndexedAccess` to a large codebase casually.** It
+makes `arr[i]` return `T | undefined`, which is *correct* — there is no guarantee
+index `i` exists — and *annoying*, because you now handle it everywhere. Worth it
+on new code, painful to retrofit.
+
+**Do not treat a type annotation as a check.** The honest limitation, stated
+plainly:
+
+> TypeScript is compile-time only. The emitted JavaScript has no types in it. It
+> gives refactoring confidence and documents intent better than comments do, but it
+> guarantees nothing at runtime.
+
+So anything crossing a boundary still needs validation: request bodies, third-party
+responses, `JSON.parse`, environment variables, and anything from a database whose
+schema TypeScript has merely been *told* about.
+
+## Real-world usage
+
+**The settings that matter:**
+
+- **`strict: true`** — non-negotiable, an umbrella for about eight flags.
+- **`strictNullChecks`** — the one that actually prevents bugs. Without it, `null`
+  and `undefined` are assignable to every type, so `user.name.toUpperCase()`
+  compiles when `user` may be null, and you get the exact runtime error TypeScript
+  exists to prevent.
+- **`useUnknownInCatchVariables`** — as above.
+- **`exactOptionalPropertyTypes`** — distinguishes "absent" from "present and
+  `undefined`", which matters the moment you spread objects into a PATCH body.
+
+**`satisfies` (TS 4.9+)** validates against a type *without widening*:
+
+```ts
+const config = { port: 8080, host: 'localhost' } satisfies Config;
+config.port; // 8080 — the literal type survives for inference
+
+const other: Config = { port: 8080, host: 'localhost' };
+other.port; // number — the literal is lost
+```
+
+Use it for config objects and route maps where you want both the check and the
+precise inferred type.
+
+**Structural typing has a useful asymmetry** worth knowing:
+
+```ts
+interface Point { x: number; y: number }
+
+const p = { x: 1, y: 2, z: 3 };
+const q: Point = p;                     // ✓ fine — extra properties allowed
+const r: Point = { x: 1, y: 2, z: 3 };  // ✗ excess property check on a FRESH literal
+```
+
+Fresh object literals get an excess-property check, which catches typos in options
+objects; a variable assignment does not. This surprises people until they know it
+is deliberate.
+
+**Structural typing is also why "the consumer declares the interface it needs"
+works** without touching any implementation — the dependency-inversion idiom from
+[SOLID](/cs-fundamentals/6-languages/solid/) costs nothing in TypeScript because
+the implementation does not have to declare that it conforms.
+
+## Failure modes
+
+**Symptom: a runtime `TypeError` on a field the types said existed.** Almost always
+unvalidated external data. An `as User` on a `JSON.parse` result is a claim, not a
+check, and the compiler believes claims.
+
+**Symptom: types quietly degrade to `any` across a whole module.** One `any` at a
+boundary spreading. `noImplicitAny` catches the accidental ones; the deliberate
+ones need review discipline. `--noErrorTruncation` and hovering the intermediate
+values is how you find where it started.
+
+**Symptom: adding a state to a union compiles fine and breaks at runtime.** No
+exhaustiveness check. Every `switch` over a union should have a `never` assignment
+in its default, or the union is only as safe as the last person's grep.
+
+**Symptom: a type guard passes and the object is wrong.** The unchecked-assertion
+problem above. Reach for a schema instead.
+
+**Symptom: `arr[0]` is `undefined` at runtime but typed as `T`.** The default
+index signature lies. `noUncheckedIndexedAccess` fixes it and is annoying, which is
+the honest summary.
+
+**Symptom: the build takes four minutes and nobody knows why.** Usually a recursive
+conditional type or a large union through a mapped type. `tsc --generateTrace`
+produces a profile.
+
+**Symptom: two ids get swapped and everything compiles.** Structural typing on
+primitives. Brand them.
+
+## Practice problems
+
+**1. Make the illegal states unrepresentable.** This type permits an upload that is
+simultaneously complete and failed:
+
+```ts
+interface Upload {
+  isUploading: boolean;
+  progress?: number;
+  url?: string;
+  error?: string;
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+Four fields, so up to 16 combinations, of which four are meaningful. Consumers must
+answer questions like "what does `isUploading: true` with a `url` mean?" — and
+different consumers answer differently, which is where the bugs come from.
+
+```ts
+type Upload =
+  | { status: 'idle' }
+  | { status: 'uploading'; progress: number }
+  | { status: 'complete'; url: string }
+  | { status: 'failed'; error: string };
+```
+
+Four inhabitants, exactly the four that mean something. Note what else improved:
+`progress` is now **required** in the state where it exists and **inaccessible**
+everywhere else, so `upload.progress` in the complete branch is a compile error
+rather than a silent `undefined`.
+
+Add the exhaustiveness check so a fifth state cannot be added silently:
+
+```ts
+function render(u: Upload) {
+  switch (u.status) {
+    case 'idle': return null;
+    case 'uploading': return <Bar value={u.progress} />;
+    case 'complete': return <Link href={u.url} />;
+    case 'failed': return <Error text={u.error} />;
+    default: {
+      const _exhaustive: never = u;
+      throw new Error(`unhandled: ${JSON.stringify(u)}`);
+    }
+  }
+}
+```
+
+</details>
+
+**2. Why does this compile, and what breaks?**
+
+```ts
+function parseUser(raw: string): User {
+  return JSON.parse(raw) as User;
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+It compiles because `JSON.parse` returns `any`, and `as User` is an *assertion* —
+you telling the compiler you know better. No check is performed at either compile
+time or runtime.
+
+What breaks: everything downstream, at a distance. `parseUser('null')` returns
+`null` typed as `User`. `parseUser('{"id":42}')` returns an object whose `id` is a
+number typed as a string, so `user.id.toUpperCase()` throws — and it throws in some
+other module, in some other request, far from the line that lied.
+
+That distance is the real cost. The failure surfaces where the value is *used*, not
+where the incorrect claim was made, so debugging starts in the wrong file.
+
+```ts
+const User = z.object({
+  id: z.string(),
+  email: z.string().email(),
+});
+type User = z.infer<typeof User>; // derived — cannot drift from the validator
+
+function parseUser(raw: string): User {
+  return User.parse(JSON.parse(raw)); // throws HERE, with a path to the bad field
+}
+```
+
+The property that matters is not just that it validates — it is that the type and
+the validator come from **one declaration**, so they cannot disagree. A hand-written
+guard plus a hand-written interface can.
+
+</details>
+
+**3. Type this function** so that `get(user, 'email')` returns `string`,
+`get(user, 'age')` returns `number`, and `get(user, 'nope')` is a compile error.
+
+<details>
+<summary>Solution</summary>
+
+```ts
+function get<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+```
+
+Two type parameters, each earning its place. `K extends keyof T` constrains the key
+to one that actually exists — that constraint is what rejects `'nope'`. `T[K]` is an
+**indexed access type**: it looks up the type of that property, which is how the
+return type varies per call.
+
+The check that this is a good generic: both parameters appear more than once
+(`T` in the argument and inside `T[K]`; `K` in the constraint, the argument, and
+the return), so each is genuinely linking things together rather than decorating
+the signature.
+
+Worth knowing the sharp edge: with `noUncheckedIndexedAccess` this signature is
+still correct for object property access, but the same pattern over an *array* index
+would need `T[K] | undefined`, because an array index has no guarantee of existing.
+
+</details>
+
+<Quiz
+  client:visible
+  id="ts-never-exhaustive"
+  kind="output"
+  question="A third variant { kind: 'triangle'; base: number; h: number } is added to Shape. What happens to this function?"
+  snippet={`function area(s: Shape): number {
+  switch (s.kind) {
+    case 'circle': return Math.PI * s.r ** 2;
+    case 'square': return s.side ** 2;
+    default:
+      const _exhaustive: never = s;
+      throw new Error('unhandled');
+  }
+}`}
+  lang="typescript"
+  options={[
+    { label: 'Compile error on the _exhaustive assignment', correct: true },
+    { label: 'It compiles and throws at runtime for triangles' },
+    { label: 'Compile error on the switch statement' },
+    { label: 'It compiles and silently returns undefined for triangles' },
+  ]}
+  explanation={
+    <>
+      <p>
+        A compile error, which is the entire point. Inside <code>default</code>,
+        TypeScript narrows <code>s</code> by eliminating the handled cases. With
+        two variants handled out of three, <code>s</code> is now the triangle type —
+        and a triangle is not assignable to <code>never</code>.
+      </p>
+      <p>
+        Remove the <code>_exhaustive</code> line and option two becomes correct: it
+        compiles, and triangles throw at runtime, in production, some time after the
+        variant was added.
+      </p>
+      <p>
+        This is what makes it valuable — the compiler enumerates every switch that
+        needs updating, so adding a variant becomes a mechanical fix-the-errors task
+        rather than a grep you can get wrong.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="ts-guard-assertion"
+  kind="concept"
+  question="Why is a hand-written `x is User` type guard weaker than a schema parse at an API boundary?"
+  options={[
+    { label: 'The compiler trusts the `is` annotation without checking the body', correct: true },
+    { label: 'Type guards are erased at compile time and never run' },
+    { label: 'Type guards cannot narrow `unknown`, only `any`' },
+    { label: 'Type guards are slower at runtime than a schema parse' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Because <code>x is User</code> is an unchecked assertion. TypeScript takes
+        your word for it and never verifies that the function body actually proves
+        the claim, so a guard checking only <code>'id' in x</code> returns true for{' '}
+        <code>{'{ id: 42 }'}</code> and every consumer then treats a number as a
+        string.
+      </p>
+      <p>
+        There is a second, quieter failure: the guard and the{' '}
+        <code>User</code> interface are two separate declarations that must be kept
+        in sync by hand. Add a field to the interface and the guard silently stops
+        checking it.
+      </p>
+      <p>
+        A schema removes both problems — the type is <em>derived from</em> the
+        validator with <code>z.infer</code>, so they cannot disagree, and the parse
+        throws with the path to the offending field.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"`interface` or `type`?"** Interchangeable for plain object shapes. Interfaces
+merge, which is how you augment library types; `type` does everything that is not
+an object shape — unions, tuples, mapped and conditional types. Default to
+`interface` for object contracts and `type` for the rest, and do not argue about it
+in review.
+
+**"`unknown` versus `any`?"**
+
+> `any` disables checking and spreads — anything derived from an `any` is also
+> `any`, so one at a boundary erases safety across a whole call chain with no
+> error anywhere. `unknown` is the type-safe version: you can assign anything to it
+> but do nothing with it until you narrow. It is what I want for `JSON.parse`,
+> `catch` bindings and API responses.
+
+**"How do you model state in TypeScript?"** This is where to lead with the idea
+rather than the syntax:
+
+> Discriminated unions, so the illegal states are unrepresentable. The shape people
+> reach for first is `{ data?, error?, loading? }`, and that has eight inhabitants
+> of which three mean anything — so every consumer handles states that should not
+> exist, and different consumers handle them differently.
+>
+> A union of `{ status: 'loading' } | { status: 'success', data } | { status:
+> 'error', error }` has exactly three, and `data` is required in the state where it
+> exists and inaccessible everywhere else. I would rather the compiler reject the
+> invalid state than write a test for it.
+>
+> Then a `never` assignment in each switch's default, so adding a fourth state
+> becomes a compile error at every site that needs updating rather than a grep.
+
+**"What are the limits?"** The strongest thing to volunteer, because it shows the
+type system is a tool rather than a belief:
+
+> TypeScript is compile-time only. The emitted JavaScript has no types in it, so it
+> guarantees nothing at runtime. Anything crossing a boundary still needs validation:
+> request bodies, third-party responses, `JSON.parse`, environment variables, and
+> database rows whose schema TypeScript has only been told about.
+>
+> The mistake I look for in review is treating a type annotation as a check — an
+> `as User` on a parsed response is a claim, not a validation, and it fails far from
+> where the lie was told.
+
+**The caveats worth voicing:**
+
+- A hand-written type guard is an unchecked assertion; the compiler never verifies
+  the body. Prefer a schema, where the type is derived from the validator.
+- Avoid numeric enums — string literal unions are what actually crosses the wire
+  and cost nothing at runtime.
+- Brand your ids. Structural typing means two `string`s are interchangeable, and a
+  phantom brand makes swapping them a compile error at zero runtime cost.

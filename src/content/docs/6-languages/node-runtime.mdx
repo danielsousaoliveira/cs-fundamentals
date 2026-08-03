@@ -1,0 +1,657 @@
+---
+title: The Node Runtime
+description: >-
+  Modules, memory, and the security holes specific to Node — prototype
+  pollution, shell injection, SSRF — plus why in-memory state stops working the
+  moment you run two processes.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs: ['5-systems/event-loop', '6-languages/javascript-semantics']
+tags: [node, esm, commonjs, memory, leaks, security, npm]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+The [event loop](/cs-fundamentals/5-systems/event-loop/) explains how Node handles
+concurrency. This page is about everything else the runtime imposes, and almost all
+of it comes from one fact people internalise too slowly:
+
+> **A Node process is a single, long-lived, shared thing — and there will be more
+> than one of them.**
+
+Long-lived means state accumulates. A `Map` that grows on every request is not a
+cache, it is a leak with a friendly name, and unlike a request-scoped language
+nothing cleans it up between requests. The process runs for days.
+
+More than one means in-process state is invisible to your other instances. A
+rate-limit counter in a module-level variable counts one instance's traffic. An
+in-memory lock locks nothing. A WebSocket registry knows about a quarter of your
+connections. This single realisation is behind a large share of "it works locally
+and not in production" bugs, and the fix is always the same shape: **move shared
+state to something both processes can see.**
+
+The rest is modules — where Node's two systems meet awkwardly — and a set of
+security failures that are specifically worse in Node than elsewhere, because one
+process serves everyone.
+
+## Mechanics
+
+### CommonJS and ESM
+
+**CommonJS** (`require` / `module.exports`) is Node's original system. `require` is
+**synchronous and dynamic**: it runs when the statement executes, so you can
+require conditionally, require a computed path, and require inside a function.
+
+**ESM** (`import` / `export`) is the standard. `import` is **static and hoisted**:
+the whole dependency graph is known before any code runs. That is what enables
+tree-shaking — a bundler can prove `formatDate` is never used and drop it — and it
+is why `import` cannot be conditional. ESM also supports top-level `await`:
+
+```js
+const config = await loadConfig(); // ESM only
+export const db = connect(config);
+```
+
+**Interop is where it hurts.** ESM can import CJS — Node synthesises a default
+export. **CJS cannot `require` ESM**, because `require` is synchronous and ESM
+evaluation may await, so you need dynamic `import()`, which returns a promise.
+(Node 22+ has begun allowing `require()` of fully-synchronous ESM graphs, but that
+is not something to rely on across versions.)
+
+The practical consequences, which are what you actually hit:
+
+- **`"type": "module"` is a whole-project switch.** Set it deliberately, and use
+  `.cjs` / `.mjs` for exceptions.
+- **ESM has no `__dirname` or `__filename`.** Use `import.meta.dirname` (Node
+  20.11+), or `path.dirname(fileURLToPath(import.meta.url))`.
+- **ESM requires file extensions in relative imports** — and in TypeScript you
+  write `./foo.js` even though the source is `foo.ts`, which is genuinely confusing
+  the first time.
+- **`jest.mock` is CJS-shaped and hoisted.** ESM mocking needs
+  `jest.unstable_mockModule` or a different runner, which is one practical reason
+  projects move to Vitest.
+
+### Memory, and the four ways it leaks
+
+**The heap limit is roughly 1.5–4 GB by default** depending on version and
+platform; `--max-old-space-size=4096` raises it. Exceeding it is a **hard crash**
+(`FATAL ERROR: Reached heap limit`), not a slowdown.
+
+**In a container, set the V8 limit *below* the container's memory limit.**
+Otherwise the kernel OOM-kills the process with no JavaScript-level error, no
+stack, and nothing in your logs — where a V8 heap error at least tells you what
+happened.
+
+The four leak sources, in rough order of frequency:
+
+1. **Unbounded caches.** `const cache = new Map()` with no eviction and no TTL.
+   Fix: an LRU with a size cap, or Redis with a TTL.
+2. **Event listeners never removed.** Every `emitter.on()` without a matching
+   `off()` retains the handler *and everything its closure captures*. Node's
+   `MaxListenersExceededWarning` at 10 listeners is usually a leak report, not a
+   limit to raise.
+3. **Closures holding large objects.** A callback capturing a 50 MB buffer keeps it
+   alive as long as the callback is reachable — often far longer than intended,
+   inside a long-lived timer or a retained promise.
+4. **Module-level arrays that only grow.** A `requestLog.push(...)` added for
+   debugging that shipped.
+
+And timers: a `setInterval` never cleared keeps its closure alive forever and
+prevents graceful shutdown.
+
+**How to actually debug one**, because "I would look for leaks" is not an answer:
+
+> `--inspect` and take a heap snapshot in DevTools, put load on it, then take a
+> second snapshot and use the **comparison view**. The comparison is the key part —
+> an absolute snapshot is mostly noise, but the delta shows which constructor
+> gained objects, and the retainers path shows what is holding them.
+>
+> For a slow production leak, watch RSS and heap-used over time: a leak looks like
+> a sawtooth whose troughs never return to the old baseline. A steady sawtooth that
+> does return is just normal GC.
+
+`WeakMap` and `WeakRef` are worth naming for caches keyed on objects, since they do
+not prevent collection.
+
+### Graceful shutdown
+
+Every deploy sends `SIGTERM`. Without a handler, the platform kills you mid-request
+on **every single deploy**, so routine releases produce a burst of 502s and
+half-completed operations.
+
+```js
+process.on('SIGTERM', async () => {
+  // Fail readiness FIRST, then wait, so the load balancer stops routing to us
+  // before we stop accepting. Otherwise we reject requests already sent our way.
+  healthState.ready = false;
+  await sleep(5_000);
+
+  server.closeIdleConnections(); // keep-alive sockets would otherwise hold close() open
+  server.close();
+  await drainInFlight({ timeout: 10_000 });
+  await queue.close();
+  await db.close();
+  process.exit(0);
+});
+```
+
+Set the shutdown timeout **shorter than the platform's grace period** (30 seconds
+by default in Kubernetes), so you exit cleanly rather than being `SIGKILL`ed
+halfway through.
+
+### Dependency management
+
+- **`^1.2.3`** allows minor and patch (`<2.0.0`); **`~1.2.3`** allows patch only
+  (`<1.3.0`); **`1.2.3`** is exact.
+- **`npm ci` is what CI must use.** It installs exactly the lockfile, deletes
+  `node_modules` first, and fails if `package.json` and the lockfile disagree.
+  `npm install` may resolve new versions and silently rewrite the lockfile, so your
+  build stops being reproducible and CI diverges from local.
+- **`peerDependencies`** let a plugin declare "I need React 18, but the host app
+  supplies it", preventing two copies of React in one bundle — which breaks hooks.
+- **`engines` plus `.nvmrc`** so everyone and CI agree on a version.
+- **`exports`** to define public entry points and stop consumers deep-importing
+  your internals.
+- **Postinstall scripts run arbitrary code on install**, which is a real
+  supply-chain risk. `--ignore-scripts` where you can.
+
+## Complexity
+
+**Garbage collection is not free, and the generational hypothesis is why it is
+usually cheap.** V8 splits the heap into a small **new space** (a few MB) and a
+large **old space**. Most objects die young, so the new space is collected with
+Scavenge — a copying collector whose cost is proportional to the *surviving*
+objects, not to the space size:
+
+$$
+C_{\text{minor}} = O(\text{live objects in new space})
+$$
+
+That is why allocating a million short-lived objects is nearly free: almost nothing
+survives, so almost nothing is copied. The trap is the exception — an object that
+survives two scavenges is **promoted** to old space, and old-space collection is
+mark-sweep-compact, proportional to the whole heap:
+
+$$
+C_{\text{major}} = O(\text{total live heap})
+$$
+
+The practical consequence is counterintuitive: **holding onto objects is far more
+expensive than creating them.** A cache that retains a million objects does not
+just use memory, it makes every major GC scan them, forever. A request that
+allocates a million temporary objects costs almost nothing. This is the opposite of
+the usual "allocation is expensive" instinct from other runtimes.
+
+| Pattern | GC cost |
+|---|---|
+| 1M short-lived allocations | Near zero — nothing survives |
+| 1M objects retained in a `Map` | Every major GC scans all of them |
+| One 50 MB buffer held by a closure | Promoted; scanned and possibly copied |
+
+**Latency, not throughput, is what you feel.** Major GC pauses scale with heap
+size, so a 4 GB heap produces longer stop-the-world pauses than a 512 MB one — and
+during a pause the event loop is not turning, so it looks exactly like blocking
+code. A bigger `--max-old-space-size` is not free: it trades crash-avoidance for
+p99 latency.
+
+**Module resolution is $O(\text{depth})$ per import** — Node walks up
+`node_modules` directories from the importing file to the root. Cached after the
+first resolution, so it matters at startup rather than steadily, but it is a real
+contributor to cold-start time in a deeply nested dependency tree, and one of the
+reasons bundling server code for serverless is worth doing.
+
+## When NOT to use it
+
+**Do not keep shared state in process memory.** The central rule of this page.
+Caches, rate-limit counters, locks, session data, WebSocket registries — all of it
+is invisible to your other instances, so it is at best wrong and at worst a
+correctness bug that only appears when you scale past one replica.
+
+**Do not run `cluster` inside a container.** The orchestrator already has health
+checking, restarts, autoscaling and rolling deploys. `cluster` duplicates all of it
+badly: the platform sees one healthy container while three of its four internal
+workers are dead, and its CPU-based autoscaling is measuring a process it cannot
+control. `cluster` earns its place on a VM you manage yourself.
+
+**Do not use `exec` with user input.** `exec` spawns a shell, so a string
+containing `;` or `$()` becomes a command:
+
+```js
+exec(`convert ${filename} out.png`); // ✗ filename = "a.png; rm -rf /"
+execFile('convert', [filename, 'out.png']); // ✓ args array — no shell involved
+```
+
+**Do not deep-merge untrusted objects.** Prototype pollution sets `__proto__` on
+`Object.prototype` and changes behaviour for **every object in the process**:
+
+```js
+merge({}, JSON.parse('{"__proto__": {"isAdmin": true}}'));
+({}).isAdmin; // true — every object in the process is now admin
+```
+
+Defences: `Object.create(null)` for maps, reject those keys explicitly, use a
+vetted deep-merge, and validate with a schema that strips unknown keys *before*
+merging anything.
+
+**Do not fetch a user-supplied URL without an allowlist.** SSRF is worse in a cloud
+environment than it sounds: the user points you at `169.254.169.254`, the metadata
+endpoint, and reads your service-account credentials. Allowlist hosts, block
+private ranges, and do not follow redirects blindly — a permitted host can redirect
+to a forbidden one.
+
+**Do not raise the body-size limit casually.** `express.json({ limit: '100kb' })`
+defaults to 100 KB for a reason; raising it gives a trivial memory-exhaustion
+vector, and `JSON.parse` on a large body also blocks the loop.
+
+**Do not use `eval` or `new Function`** on anything derived from input.
+
+**Do not raise `--max-old-space-size` to fix a leak.** It buys time and makes the
+eventual pauses worse. Find what is being retained.
+
+## Real-world usage
+
+**The state-sharing rule shows up identically at every layer.** Four cluster
+workers, four containers, or four serverless instances — the lesson does not
+change:
+
+| In-memory | Why it breaks | Where it belongs |
+|---|---|---|
+| Rate-limit counter | Counts one instance's traffic | Redis, atomically |
+| Lock / mutex | Locks nothing across processes | A database constraint |
+| Session store | Only one instance can serve that user | Redis |
+| WebSocket registry | Sees a fraction of connections | Redis Pub/Sub backplane |
+| Cache | Each instance has a different one | Redis, or accept per-instance |
+
+The last row is the interesting exception: a per-instance cache is often
+*acceptable* — it is just less effective, not wrong — as long as staleness is
+bounded by a TTL. The others are correctness bugs.
+
+**`AsyncLocalStorage` is the one legitimate piece of per-request ambient state**,
+and it exists because there is no thread-local storage to use instead. It is how
+request-scoped context — a correlation id, the authenticated user — reaches deep
+into a call stack without being threaded through every signature:
+
+```js
+const context = new AsyncLocalStorage();
+
+app.use((req, res, next) => {
+  context.run({ requestId: req.id, user: req.user }, next);
+});
+
+// Anywhere downstream, including inside a promise chain:
+log.info({ requestId: context.getStore()?.requestId }, 'charging card');
+```
+
+**Streams are how you handle data larger than memory.** Reading a 2 GB file with
+`readFile` allocates 2 GB; piping it does not. The property worth understanding is
+**backpressure** — a slow consumer signals the producer to pause, so memory stays
+bounded:
+
+```js
+// Bounded memory regardless of file size, because pipeline propagates
+// backpressure and cleans up every stream on error.
+await pipeline(
+  createReadStream('huge.csv'),
+  parseCsv(),
+  transformRows(),
+  createWriteStream('out.json'),
+);
+```
+
+Use `pipeline` rather than `.pipe()` chains: `.pipe()` does not forward errors or
+destroy the remaining streams, which leaks file descriptors on failure.
+
+## Failure modes
+
+**Symptom: memory climbs steadily and the process eventually dies with `FATAL
+ERROR: Reached heap limit`.** One of the four leaks. Take two heap snapshots under
+load and compare.
+
+**Symptom: the container is killed with no error and no stack.** The kernel
+OOM-killer, because the V8 limit was above the container limit. Set
+`--max-old-space-size` below the container's memory limit.
+
+**Symptom: `MaxListenersExceededWarning`.** Listeners registered per request on a
+long-lived emitter. This is a leak report; raising `setMaxListeners` silences the
+smoke detector.
+
+**Symptom: rate limiting lets through roughly N times the configured limit.**
+In-memory counters across N instances.
+
+**Symptom: a WebSocket message reaches some users and not others.** In-memory
+socket registry, no Redis backplane. Instance A cannot reach a socket held by
+instance B.
+
+**Symptom: every deploy produces 502s.** No `SIGTERM` handler, or one that closes
+the server before failing readiness.
+
+**Symptom: p99 latency has periodic spikes with no corresponding traffic.** Major
+GC pauses. The event loop is not turning during them, so it looks identical to
+blocking code — which is why event loop lag and GC metrics belong on the same
+dashboard.
+
+**Symptom: `require is not defined` in a file you did not change.**
+`"type": "module"` was added to `package.json`, switching the whole project. Rename
+to `.cjs` or convert.
+
+**Symptom: CI passes and production has a different dependency version.**
+`npm install` in CI instead of `npm ci`.
+
+**Symptom: an unrelated feature starts behaving strangely for all users after one
+request.** Prototype pollution. The tell is that it is process-wide and persists
+after the request that caused it.
+
+## Practice problems
+
+**1. Find the leak.**
+
+```js
+const cache = new Map();
+
+app.get('/report/:id', async (req, res) => {
+  const key = `${req.params.id}:${JSON.stringify(req.query)}`;
+  if (!cache.has(key)) {
+    cache.set(key, await buildExpensiveReport(req.params.id, req.query));
+  }
+  res.json(cache.get(key));
+});
+```
+
+<details>
+<summary>Solution</summary>
+
+Three problems, and the second is what makes it fatal rather than merely
+unbounded.
+
+**No eviction and no TTL.** The `Map` only grows, and reports are large.
+
+**The key includes arbitrary query parameters**, so the key space is effectively
+infinite and *attacker-controlled*. `?x=1`, `?x=2`, `?x=3` each create a new
+entry. This is not a slow leak from legitimate traffic — it is a
+memory-exhaustion vector anyone can trigger from a browser.
+
+**A cache miss stampedes.** Concurrent requests for the same uncached key all
+start `buildExpensiveReport` before any of them finishes writing.
+
+```js
+import { LRUCache } from 'lru-cache';
+
+const cache = new LRUCache({ max: 500, ttl: 60_000 });
+const inflight = new Map(); // dedupe concurrent misses
+
+const QUERY_KEYS = ['from', 'to', 'granularity']; // allowlist — bounds the key space
+
+app.get('/report/:id', async (req, res, next) => {
+  const key = `${req.params.id}:${QUERY_KEYS.map((k) => req.query[k] ?? '').join('|')}`;
+
+  const hit = cache.get(key);
+  if (hit) return res.json(hit);
+
+  // One build per key, however many requests arrive during it.
+  let pending = inflight.get(key);
+  if (!pending) {
+    pending = buildExpensiveReport(req.params.id, req.query)
+      .then((r) => {
+        cache.set(key, r);
+        return r;
+      })
+      .finally(() => inflight.delete(key));
+    inflight.set(key, pending);
+  }
+
+  try {
+    res.json(await pending);
+  } catch (err) {
+    next(err);
+  }
+});
+```
+
+The allowlist is the fix that matters most: a bounded cache with an unbounded key
+space still evicts constantly and never hits.
+
+</details>
+
+**2. Why does this rate limiter fail in production?**
+
+```js
+const hits = new Map();
+
+app.use((req, res, next) => {
+  const n = (hits.get(req.ip) ?? 0) + 1;
+  hits.set(req.ip, n);
+  if (n > 100) return res.sendStatus(429);
+  next();
+});
+```
+
+<details>
+<summary>Solution</summary>
+
+**It counts one instance's traffic.** With 10 instances behind a load balancer, a
+user gets roughly 1,000 requests through, not 100 — and the effective limit varies
+with how many instances happen to be running, so autoscaling silently changes your
+security policy.
+
+**It never resets.** There is no window, so once a user hits 100 they are blocked
+until the process restarts. That is not a rate limit, it is a permanent ban with a
+misleading name.
+
+**It leaks.** One entry per IP, forever, never evicted.
+
+**It trusts `req.ip`.** Behind a proxy, that is the proxy's address unless
+`trust proxy` is configured — so either everyone shares one bucket, or a spoofed
+`X-Forwarded-For` defeats it entirely.
+
+The fix is to move the counter somewhere all instances share, and make the
+check-and-increment atomic:
+
+```js
+const script = `
+  local n = redis.call('INCR', KEYS[1])
+  if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+  return n
+`;
+
+app.use(async (req, res, next) => {
+  const n = await redis.eval(script, 1, `rate:${req.ip}`, 60);
+  if (n > 100) return res.sendStatus(429);
+  next();
+});
+```
+
+The Lua script matters for the reason covered on the
+[caching page](/cs-fundamentals/5-systems/caching/): `INCR` then `EXPIRE` as two
+commands can leave a key with no TTL if the process dies between them, producing an
+immortal counter that blocks that user permanently.
+
+</details>
+
+**3. Explain what breaks, and fix it.**
+
+```js
+async function processUpload(path) {
+  const data = await fs.promises.readFile(path);
+  const rows = JSON.parse(data);
+  return rows.map(transform);
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+It works fine until someone uploads a large file, and then it fails in three ways
+at once.
+
+**`readFile` allocates the whole file.** A 2 GB upload needs 2 GB of heap, which
+exceeds the default limit and crashes the process — taking every concurrent
+request with it.
+
+**`JSON.parse` is synchronous and $O(\text{size})$.** Parsing a 500 MB string
+blocks the event loop for seconds. Every other request in the process stalls,
+including the health check, so the orchestrator may kill you mid-parse.
+
+**`.map` over a huge array is another synchronous pass**, and it allocates a second
+array of the same size.
+
+```js
+import { pipeline } from 'node:stream/promises';
+import { parser } from 'stream-json';
+import { streamArray } from 'stream-json/streamers/StreamArray';
+
+async function processUpload(path, onRow) {
+  // Bounded memory regardless of file size: pipeline propagates backpressure,
+  // so the reader pauses when the consumer falls behind, and it destroys every
+  // stream on error rather than leaking descriptors.
+  await pipeline(
+    createReadStream(path),
+    parser(),
+    streamArray(),
+    async function* (rows) {
+      for await (const { value } of rows) {
+        yield transform(value);
+        // Each iteration is a separate turn, so the loop stays responsive
+        // instead of monopolising the thread for the whole file.
+      }
+    },
+    createWriteStream('out.ndjson'),
+  );
+}
+```
+
+The property to name: streaming converts memory usage from $O(\text{file})$ to
+$O(\text{chunk})$ **and** breaks the work into many short turns instead of one long
+block. Both matter, and only the first is obvious.
+
+</details>
+
+<Quiz
+  client:visible
+  id="node-in-memory-state"
+  kind="concept"
+  question="An in-memory rate limiter allowing 100 requests/minute is deployed to 10 instances behind a load balancer. What is the effective limit?"
+  options={[
+    { label: 'About 1,000/minute, and it changes when the fleet autoscales', correct: true },
+    { label: 'Still 100/minute — the load balancer distributes evenly' },
+    { label: 'About 10/minute, since each instance sees a tenth of the traffic' },
+    { label: '100/minute per instance, which is the intended behaviour' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Roughly 1,000, because each instance keeps its own counter and knows nothing
+        about the other nine. Round-robin balancing spreads a user's requests across
+        all of them, so each instance sees about a tenth of that user's traffic and
+        allows 100 of them.
+      </p>
+      <p>
+        The part that makes it more than a bug is that the number is not fixed. Scale
+        to 20 instances and the effective limit doubles — autoscaling silently
+        changes a security control, and nothing in the code or config records that it
+        happened.
+      </p>
+      <p>
+        This is the general rule for a Node process: anything in memory is invisible
+        to your other instances. Counters, locks, sessions and socket registries all
+        have to move somewhere shared.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="node-gc-cost"
+  kind="concept"
+  question="Which costs V8's garbage collector more: allocating a million short-lived objects, or retaining a million objects in a Map?"
+  options={[
+    { label: 'Retaining them — every major GC must scan the live set', correct: true },
+    { label: 'Allocating them — allocation is the expensive operation' },
+    { label: 'Roughly the same; both are O(n) in the number of objects' },
+    { label: 'Retaining is cheaper, since retained objects are never re-scanned' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Retaining, by a wide margin. V8's minor collector is a copying collector
+        whose cost is proportional to the objects that <em>survive</em>, not to how
+        many were allocated — so a million objects that all die cost almost nothing,
+        because almost nothing is copied.
+      </p>
+      <p>
+        A million retained objects are promoted to old space, where collection is
+        mark-sweep-compact and proportional to the whole live heap. They are scanned
+        on every major GC, for the lifetime of the process.
+      </p>
+      <p>
+        This inverts the instinct carried over from other runtimes that allocation is
+        the thing to avoid. In V8 the expensive decision is what you <em>keep</em>,
+        which is also why an unbounded cache costs you steadily rising p99 latency
+        long before it costs you a crash.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"CommonJS or ESM?"**
+
+> ESM is the standard and what I would start a new project with. The meaningful
+> difference is that `import` is static and hoisted, so the dependency graph is
+> known before any code runs — that is what makes tree-shaking possible, and why
+> imports cannot be conditional. `require` is synchronous and dynamic, so it can be.
+>
+> The friction is interop: ESM can import CJS, but CJS cannot `require` ESM,
+> because `require` is synchronous and ESM evaluation may await. From CJS you need
+> a dynamic `import()`. And `"type": "module"` is a whole-project switch, so it is
+> a deliberate decision rather than a per-file one.
+
+**"How would you debug a memory leak?"** The method is the answer:
+
+> Two heap snapshots with `--inspect`, one before load and one after, and then the
+> comparison view — the delta is the useful part, because an absolute snapshot is
+> mostly noise. It tells me which constructor gained objects, and the retainers
+> path tells me what is holding them.
+>
+> In production I would watch RSS and heap-used over time first: a leak looks like
+> a sawtooth whose troughs never come back to the old baseline, which distinguishes
+> it from normal GC.
+>
+> The usual culprits are an unbounded `Map` used as a cache, listeners registered
+> per request on a long-lived emitter, and closures capturing large buffers.
+
+**"How do you scale a Node service?"**
+
+> One process uses one core for JavaScript, so you need more processes. In a
+> container I would run one process per container and let the platform multiply
+> them, rather than using `cluster` inside the container — the orchestrator already
+> owns health checking, restarts and autoscaling, and `cluster` hides dead workers
+> from it.
+>
+> Either way the important part is the same: in-memory state stops working. Caches,
+> rate limits, locks, sessions and WebSocket registries all have to move to Redis or
+> the database, because no instance can see another's memory.
+
+**The caveats worth voicing:**
+
+- In a container, set `--max-old-space-size` below the container's memory limit,
+  so V8 fails with a heap error rather than being OOM-killed with no stack and
+  nothing in the logs.
+- `npm ci` in CI, never `npm install` — `install` can resolve new versions and
+  rewrite the lockfile, so the build stops being reproducible.
+- The Node-specific security list I actually check: `execFile` rather than `exec`,
+  no deep-merging untrusted objects because of prototype pollution, an allowlist
+  before fetching any user-supplied URL because of SSRF and the cloud metadata
+  endpoint, and a body-size limit.
+- Prototype pollution is worth calling out specifically because the blast radius
+  is the whole process — it changes `Object.prototype` for every object, so an
+  unrelated feature starts misbehaving for every user after one request.

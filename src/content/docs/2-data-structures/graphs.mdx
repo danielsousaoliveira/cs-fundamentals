@@ -1,178 +1,133 @@
 ---
 title: Graphs
 description: >-
-  TODO: one sentence a stranger could read cold and know whether this page is
-  for them.
+  BFS and DFS differ by one line — queue or stack — and that one line decides
+  whether you get shortest paths or a stack overflow.
 sidebar:
-  order: 8
-difficulty: core
-status: stub
-prereqs: []
-tags: []
-languages: [python]
+  order: 7
+difficulty: advanced
+status: complete
+prereqs: ['2-data-structures/binary-trees', '2-data-structures/stacks-queues']
+tags: [graph, bfs, dfs, dijkstra, adjacency]
+languages: [python, typescript]
+complexity:
+  traversal: O(V + E)
+  dijkstra: O(E log V)
 sources:
   - notebooks/2-data-structures/graphs.ipynb
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { BfsDfsCompare } from '../../../components/viz/widgets/BfsDfsCompare.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
-{/* Converted mechanically from the notebook. Everything below the original
-    material still needs the rewrite-to-depth pass. */}
+## Intuition
 
-## Introduction to Graphs
+A graph is the structure you get when you stop imposing rules on how things
+connect. A linked list says each node has one successor. A tree says each node has
+one parent and no cycles. **A graph says nothing at all** — any node may connect to
+any other, in any number, in either direction, including back to itself.
 
-Graphs are mathematical structures used to model pairwise relationships between objects. They are represented as a set of vertices (or nodes) connected by edges.
+That is why graphs model so much: roads, social networks, package dependencies,
+web links, state machines, build targets. Anything with "these things are related
+to those things" is a graph, and the moment you notice that, decades of algorithms
+become available.
 
-### Key Concepts
+The vocabulary is small and worth being exact about:
 
-#### Types of Graphs:
-1. **Directed Graphs (Digraphs):** Edges have a direction.
-   - Example: A one-way street map.
-2. **Undirected Graphs:** Edges have no direction.
-   - Example: A friendship network.
-3. **Weighted Graphs:** Edges have weights (costs, distances, etc.).
-   - Example: A road map with distances.
-4. **Unweighted Graphs:** All edges are of equal weight.
-   - Example: A simple social network.
-5. **Cyclic Graphs:** Graphs containing at least one cycle.
-6. **Acyclic Graphs:** Graphs without any cycles.
-   - Example: Trees (a special case of acyclic graphs).
+- **Vertex** (node) and **edge** (connection). Sizes written $V$ and $E$.
+- **Directed** — edges have a direction (Twitter follows). **Undirected** — they do
+  not (Facebook friends).
+- **Weighted** — edges carry a cost (distance, latency, price).
+- **Cyclic** — you can return to where you started. **Acyclic** — you cannot. A
+  **DAG** (directed acyclic graph) is the shape of any dependency system.
+- **Dense** ($E \approx V^2$) versus **sparse** ($E \approx V$). This one decides
+  your representation.
 
-#### Representation of Graphs:
-1. **Adjacency Matrix:** A 2D array where `matrix[i][j]` indicates the presence (and possibly weight) of an edge between vertex `i` and `j`.
-   - Space Complexity: O(V^2), where V is the number of vertices.
-2. **Adjacency List:** A list of lists where each list contains the neighbors of a vertex.
-   - Space Complexity: O(V + E), where E is the number of edges.
+Almost everything else on this page follows from one question: **what order do you
+explore in?**
 
-#### Graph Terminologies:
-1. **Path:** A sequence of vertices connected by edges.
-2. **Cycle:** A path that starts and ends at the same vertex without repeating any edge.
-3. **Degree:**
-   - **In-degree:** Number of edges coming into a vertex.
-   - **Out-degree:** Number of edges going out of a vertex.
-   - **Degree (Undirected):** Total edges connected to a vertex.
-4. **Connected Graph:** There is a path between any two vertices.
-5. **Disconnected Graph:** At least one pair of vertices is not connected.
-6. **Complete Graph:** Every vertex is connected to every other vertex.
+## Visual
 
-#### Example 1: Representing a Graph
+Two panes, one graph, one shared timeline. The code is identical except for one
+line — whether the frontier is a queue or a stack — and the frontier strips
+underneath each pane show what that line does.
 
-##### Adjacency Matrix
-Representing a graph using an adjacency matrix
-Graph: A -> B -> C, A -> C
+<BfsDfsCompare client:visible />
 
-<Tabs syncKey="lang">
-<TabItem label="Python">
+BFS expands in rings: everything one hop away, then everything two hops away. DFS
+commits to a branch and plunges. Neither is smarter; they answer different
+questions, and the difference is entirely in the container.
 
-```python
-graph_matrix = [
-    [0, 1, 1],  # A
-    [0, 0, 1],  # B
-    [0, 0, 0]   # C
-]
+## Mechanics
 
-print("Edge from A to B:", graph_matrix[0][1])  
-print("Edge from B to A:", graph_matrix[1][0])
-```
+### Representation comes first
 
-</TabItem>
-<TabItem label="TypeScript">
-
-```ts
-// TODO: port from the Python above.
-```
-
-</TabItem>
-</Tabs>
-
-```text title="recorded output"
-Edge from A to B: 1
-Edge from B to A: 0
-```
-
-##### Adjacency List
-Representing a graph using an adjacency list
-Graph: A -> B -> C, A -> C
+The choice matters more than any algorithm on this page, because it fixes what
+everything costs afterwards.
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```python
-graph_list = {
-    'A': ['B', 'C'],
-    'B': ['C'],
-    'C': []
-}
-
-print("Neighbors of A:", graph_list['A'])
-```
-
-</TabItem>
-<TabItem label="TypeScript">
-
-```ts
-// TODO: port from the Python above.
-```
-
-</TabItem>
-</Tabs>
-
-```text title="recorded output"
-Neighbors of A: ['B', 'C']
-```
-
-#### Example 2: Depth-First Search (DFS)
-DFS explores as far as possible along each branch before backtracking.
-
-<Tabs syncKey="lang">
-<TabItem label="Python">
-
-```python
-def dfs(graph, start, visited=None):
-    if visited is None:
-        visited = set()
-    visited.add(start)
-    print(start, end=" ")  # Print the node during the visit
-
-    for neighbor in graph[start]:
-        if neighbor not in visited:
-            dfs(graph, neighbor, visited)
-
+# Adjacency list — a dict of neighbour lists. O(V + E) space.
 graph = {
-    'A': ['B', 'C'],
-    'B': ['D', 'E'],
-    'C': ['F'],
-    'D': [],
-    'E': ['F'],
-    'F': []
+    'A': ['B', 'D'],
+    'B': ['A', 'C', 'E'],
+    'C': ['B', 'F'],
+    'D': ['A', 'E'],
 }
 
-dfs(graph, 'A')
+# Adjacency matrix — a V×V grid. O(V²) space, O(1) edge lookup.
+matrix = [
+    [0, 1, 0, 1],
+    [1, 0, 1, 0],
+    [0, 1, 0, 0],
+    [1, 0, 0, 0],
+]
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```ts
-// TODO: port from the Python above.
+// Adjacency list — a Map of neighbour arrays. O(V + E) space.
+const graph = new Map<string, string[]>([
+  ['A', ['B', 'D']],
+  ['B', ['A', 'C', 'E']],
+  ['C', ['B', 'F']],
+  ['D', ['A', 'E']],
+]);
+
+// Adjacency matrix — a V×V grid. O(V²) space, O(1) edge lookup.
+const matrix = [
+  [0, 1, 0, 1],
+  [1, 0, 1, 0],
+  [0, 1, 0, 0],
+  [1, 0, 0, 0],
+];
 ```
 
 </TabItem>
 </Tabs>
 
-```text title="recorded output"
-A B D E F C
-```
+| | Adjacency list | Adjacency matrix |
+|---|---|---|
+| Space | $O(V + E)$ | $O(V^2)$ |
+| "Is there an edge u→v?" | $O(\deg u)$ | $O(1)$ |
+| Iterate u's neighbours | $O(\deg u)$ | $O(V)$ |
+| Add an edge | $O(1)$ | $O(1)$ |
 
-#### Time Complexity:
-- For adjacency list: **O(V + E)**
-- For adjacency matrix: **O(V^2)**
+**Use a list unless the graph is dense.** Real graphs almost always are sparse — a
+social network with a billion users has average degree in the hundreds, not the
+billions — and a matrix for a million vertices needs $10^{12}$ cells. Matrices win
+for small dense graphs and for algorithms like Floyd–Warshall that are naturally
+matrix-shaped.
 
-#### Space Complexity:
-- Depends on representation (adjacency list or matrix).
+### BFS and DFS are the same algorithm
 
-#### Example 3: Breadth-First Search (BFS)
-BFS explores all neighbors at the current depth before moving deeper.
+Put them side by side and the only difference is which end of the frontier you take
+from:
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
@@ -181,148 +136,333 @@ BFS explores all neighbors at the current depth before moving deeper.
 from collections import deque
 
 def bfs(graph, start):
+    visited = {start}
+    frontier = deque([start])
+    order = []
+    while frontier:
+        node = frontier.popleft()        # ← FIFO: the only difference
+        order.append(node)
+        for neighbour in graph[node]:
+            if neighbour not in visited:
+                visited.add(neighbour)   # mark on ENQUEUE
+                frontier.append(neighbour)
+    return order
+
+def dfs(graph, start):
     visited = set()
-    queue = deque([start])
-    visited.add(start)
-
-    while queue:
-        vertex = queue.popleft()
-        print(vertex, end=" ")
-
-        for neighbor in graph[vertex]:
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append(neighbor)
-
-graph = {
-    'A': ['B', 'C'],
-    'B': ['D', 'E'],
-    'C': ['F'],
-    'D': [],
-    'E': ['F'],
-    'F': []
-}
-
-bfs(graph, 'A')
+    frontier = [start]
+    order = []
+    while frontier:
+        node = frontier.pop()            # ← LIFO: the only difference
+        if node in visited:
+            continue
+        visited.add(node)                # mark on POP
+        order.append(node)
+        frontier.extend(graph[node])
+    return order
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```ts
-// TODO: port from the Python above.
+function bfs(graph: Map<string, string[]>, start: string): string[] {
+  const visited = new Set([start]);
+  const frontier = [start];
+  const order: string[] = [];
+  while (frontier.length) {
+    const node = frontier.shift()!;        // ← FIFO: the only difference
+    order.push(node);
+    for (const n of graph.get(node)!) {
+      if (!visited.has(n)) {
+        visited.add(n);                    // mark on ENQUEUE
+        frontier.push(n);
+      }
+    }
+  }
+  return order;
+}
+
+function dfs(graph: Map<string, string[]>, start: string): string[] {
+  const visited = new Set<string>();
+  const frontier = [start];
+  const order: string[] = [];
+  while (frontier.length) {
+    const node = frontier.pop()!;          // ← LIFO: the only difference
+    if (visited.has(node)) continue;
+    visited.add(node);                     // mark on POP
+    order.push(node);
+    frontier.push(...graph.get(node)!);
+  }
+  return order;
+}
 ```
 
 </TabItem>
 </Tabs>
 
-```text title="recorded output"
-A B C D E F
-```
+**The `visited` timing is not a stylistic difference.** BFS marks on enqueue,
+because otherwise a node reachable from two nodes in the same level gets queued
+twice and the queue grows quadratically. DFS marks on pop, because a node can
+legitimately be pushed several times before it is first popped, and rejecting it at
+push time would need a separate "in frontier" check. Getting this backwards is the
+most common bug in hand-written traversals — it does not produce a wrong answer,
+it produces a memory blow-up on large graphs.
 
-#### Time Complexity:
-- For adjacency list: **O(V + E)**
-- For adjacency matrix: **O(V^2)**
+## Complexity
 
-#### Space Complexity:
-- Space for queue: **O(V)**.
+| Algorithm | Time | Space | Needs |
+|---|---|---|---|
+| BFS / DFS | $O(V + E)$ | $O(V)$ | — |
+| Shortest path, unweighted | $O(V + E)$ | $O(V)$ | BFS |
+| Dijkstra | $O((V + E)\log V)$ | $O(V)$ | Non-negative weights |
+| Bellman–Ford | $O(VE)$ | $O(V)$ | Handles negative weights |
+| Topological sort | $O(V + E)$ | $O(V)$ | DAG only |
+| Floyd–Warshall (all pairs) | $O(V^3)$ | $O(V^2)$ | — |
 
-#### Example 4: Shortest Path - Dijkstra's Algorithm
-Find the shortest path in a weighted graph with non-negative weights.
+### Why traversal is $O(V + E)$ and not $O(V \cdot E)$
+
+Each vertex is dequeued exactly once — the `visited` set guarantees it — so the
+outer loop runs $V$ times. Inside, each vertex's neighbour list is walked once, and
+the sum of all neighbour-list lengths is exactly $2E$ for an undirected graph
+(every edge appears in two lists). So:
+
+$$
+O(\underbrace{V}_{\text{one visit each}} + \underbrace{2E}_{\text{one look per edge end}}) = O(V + E)
+$$
+
+The two terms add rather than multiply because they count different things. On a
+sparse graph this is effectively linear; on a dense one, $E$ dominates and it is
+$O(V^2)$ — which is the matrix's cost anyway.
+
+### Why Dijkstra has a log in it
+
+Dijkstra is BFS with a **priority queue** instead of a plain queue: always expand
+the cheapest-so-far vertex rather than the nearest-in-hops. Each of the $E$ edge
+relaxations may push to the heap, and each heap operation is $O(\log V)$ — so
+$O(E \log V)$, plus $O(V \log V)$ for the extractions.
+
+That heap is the one from the [heaps page](/cs-fundamentals/2-data-structures/heaps/),
+and this is exactly the decrease-key problem described there. The standard
+workaround is lazy deletion — push a duplicate entry with the better distance and
+skip stale ones on pop — which is why the heap can hold $O(E)$ entries rather than
+$O(V)$.
+
+<Quiz
+  client:visible
+  id="graphs-shortest-path"
+  kind="concept"
+  question="You need the fewest-hops route between two people in a social graph. Which algorithm?"
+  options={[
+    { label: 'DFS — it explores deeply and finds a path fast' },
+    { label: 'BFS', correct: true },
+    { label: "Dijkstra's algorithm" },
+    { label: 'Either BFS or DFS — both find a path' },
+  ]}
+  explanation={
+    <>
+      <p>
+        <strong>BFS.</strong> It visits nodes in non-decreasing hop distance, so the
+        first time it reaches the target, it has arrived by a shortest route. DFS
+        finds <em>a</em> path — often an absurd one — because it commits to a branch
+        before considering alternatives.
+      </p>
+      <p>
+        Dijkstra also works but is strictly more machinery than the problem needs:
+        with every edge weighing 1, its priority queue degenerates into a plain
+        queue and it <em>is</em> BFS, with an O(log V) factor bolted on for nothing.{' '}
+        <strong>Unweighted shortest path is BFS; weighted is Dijkstra.</strong>
+      </p>
+    </>
+  }
+/>
+
+## When NOT to use it
+
+**When BFS's memory does not fit.** BFS holds an entire level in the queue. On a
+wide graph — a social network, where one hop reaches thousands and two hops reach
+millions — that queue is the dominant memory cost, and it is the reason friend-of-a-friend
+queries are run with hop limits. DFS holds only a path, so its frontier is
+$O(\text{depth})$.
+
+**When DFS's depth does not fit.** The mirror problem. Recursive DFS on a graph
+with a long path overflows the stack — Python at ~1000 frames, Node at a few
+thousand. On a million-node linked-list-shaped graph, recursive DFS simply cannot
+run. Use the explicit-stack version above.
+
+**When you need shortest paths and reach for DFS.** DFS finds a path, not the
+shortest one, and the difference is unbounded. This is a correctness bug, not a
+performance one, and it survives testing on small graphs where any path is short.
+
+**When the graph is dense and you chose a list.** At $E \approx V^2$, the adjacency
+list's pointer overhead and scattered memory lose to a flat matrix that a CPU can
+scan linearly. Same complexity class, an order of magnitude apart — the cache
+argument from the [linked lists](/cs-fundamentals/2-data-structures/linked-lists/)
+page, again.
+
+**When negative edge weights exist.** Dijkstra is *wrong*, not slow, on negative
+edges: it finalises a vertex the moment it is popped, and a later negative edge can
+invalidate that. It returns a plausible wrong answer with no error. Bellman–Ford
+handles it at $O(VE)$.
+
+**When the graph does not fit in memory at all.** Web-scale graphs need external or
+distributed algorithms — Pregel-style vertex-centric computation — where the whole
+model of "the graph is a dict in RAM" no longer applies.
+
+## Real-world usage
+
+**Routing and maps.** Dijkstra and A\* on a weighted road graph. Production
+routers use contraction hierarchies because plain Dijkstra over a continent is too
+slow, but the underlying model is unchanged.
+
+**Package managers and build systems.** `npm`, `pip`, `cargo`, Make, and Bazel all
+topologically sort a DAG of dependencies. "Circular dependency detected" is
+literally cycle detection failing the DAG precondition.
+
+**Social networks.** Friend suggestions are two-hop BFS; "degrees of separation" is
+BFS distance; PageRank is an eigenvector computation over the link graph.
+
+**Compilers.** Control-flow graphs, call graphs, and register allocation as graph
+colouring. Dead-code elimination is reachability — a traversal.
+
+**Schedulers and spreadsheets.** Task ordering, and recalculating a spreadsheet in
+dependency order, are both topological sorts.
+
+**Garbage collection.** Mark-and-sweep is a graph traversal from the roots; anything
+unreached is garbage.
+
+## Failure modes
+
+**No visited set on a cyclic graph.** An infinite loop, not an exception. The
+process hangs with a pegged CPU and no stack trace. Tree code ported to graphs is
+the usual origin, since trees need no visited set — which is exactly what makes the
+omission easy to miss.
+
+**Marking visited at the wrong moment in BFS.** Marking on dequeue rather than
+enqueue lets the same node be queued once per incoming edge. On a graph where a
+node has 10,000 in-edges, the queue holds 10,000 copies. The result is still
+correct, so tests pass — it just uses $O(E)$ memory instead of $O(V)$, and falls
+over on the graph size where it matters.
+
+**Recursive DFS overflowing the stack.** As above. The tell is that it works
+locally on a 100-node sample and dies on the real graph.
+
+**Dijkstra with negative weights.** Silently wrong. This is worth stating plainly
+because "it ran and gave me a number" is exactly how it gets shipped. If weights
+can be negative — refunds, elevation changes, arbitrage — you need Bellman–Ford,
+which additionally *detects* negative cycles rather than looping forever in them.
+
+**Confusing directed with undirected.** Adding only `graph[u].append(v)` for an
+undirected graph makes half the edges invisible, so the traversal quietly reports a
+disconnected graph. Adding both directions for a *directed* graph makes it possible
+to walk backwards up a dependency chain, which turns a valid DAG into something
+with cycles.
+
+**Assuming connectivity.** BFS or DFS from one start vertex only reaches that
+vertex's component. "Find all cycles" or "count components" needs a loop over every
+unvisited vertex as a fresh start. Forgetting it means silently ignoring part of
+the graph.
+
+**Non-deterministic neighbour order.** Iterating a `set` of neighbours gives an
+order that can vary between runs, so the traversal output changes even though the
+graph did not. Tests that assert an exact order then fail intermittently. Sort the
+neighbours, or assert on a set.
+
+## Practice problems
+
+### 1. Count connected components
+
+Loop over vertices; each time you find an unvisited one, run a traversal from it
+and increment the count. $O(V + E)$ — the loop does not multiply the cost, because
+the visited set means each vertex is traversed exactly once overall.
+
+### 2. Detect a cycle in a directed graph
+
+Not the same as the undirected case. You need three colours, because revisiting a
+*finished* vertex is fine and revisiting one still *on the current path* is a cycle:
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```python
-import heapq
+WHITE, GREY, BLACK = 0, 1, 2   # unseen, on the current path, finished
 
-def dijkstra(graph, start):
-    distances = {vertex: float('infinity') for vertex in graph}
-    distances[start] = 0
-    priority_queue = [(0, start)]
+def has_cycle(graph):
+    colour = {node: WHITE for node in graph}
 
-    while priority_queue:
-        current_distance, current_vertex = heapq.heappop(priority_queue)
+    def visit(node):
+        colour[node] = GREY
+        for neighbour in graph[node]:
+            if colour[neighbour] == GREY:      # back edge → cycle
+                return True
+            if colour[neighbour] == WHITE and visit(neighbour):
+                return True
+        colour[node] = BLACK
+        return False
 
-        if current_distance > distances[current_vertex]:
-            continue
-
-        for neighbor, weight in graph[current_vertex].items():
-            distance = current_distance + weight
-
-            if distance < distances[neighbor]:
-                distances[neighbor] = distance
-                heapq.heappush(priority_queue, (distance, neighbor))
-
-    return distances
-
-graph = {
-    'A': {'B': 1, 'C': 4},
-    'B': {'C': 2, 'D': 6},
-    'C': {'D': 3},
-    'D': {}
-}
-
-print(dijkstra(graph, 'A'))
+    return any(visit(n) for n in graph if colour[n] == WHITE)
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```ts
-// TODO: port from the Python above.
+const WHITE = 0, GREY = 1, BLACK = 2;  // unseen, on current path, finished
+
+function hasCycle(graph: Map<string, string[]>): boolean {
+  const colour = new Map([...graph.keys()].map((k) => [k, WHITE]));
+
+  const visit = (node: string): boolean => {
+    colour.set(node, GREY);
+    for (const n of graph.get(node) ?? []) {
+      if (colour.get(n) === GREY) return true;             // back edge → cycle
+      if (colour.get(n) === WHITE && visit(n)) return true;
+    }
+    colour.set(node, BLACK);
+    return false;
+  };
+
+  return [...graph.keys()].some((n) => colour.get(n) === WHITE && visit(n));
+}
 ```
 
 </TabItem>
 </Tabs>
 
-```text title="recorded output"
-{'A': 0, 'B': 1, 'C': 3, 'D': 6}
-```
+A two-state visited set reports a cycle for any diamond shape — A→B, A→C, B→D,
+C→D — which has no cycle at all. That false positive is the bug this problem exists
+to teach.
 
-#### Time Complexity:
-- **O((V + E) log V)** with a priority queue.
+### 3. Topological sort
 
-#### Space Complexity:
-- Space for the distances and priority queue: **O(V + E)**.
-
-### Real-World Applications
-1. **Social Networks:** Representing and analyzing connections.
-2. **Navigation Systems:** Finding shortest paths.
-3. **Web Crawling:** Exploring connected web pages.
-4. **Network Routing:** Determining efficient data routes.
-5. **Scheduling:** Topological sorting in Directed Acyclic Graphs (DAGs).
-
----
-
-## Intuition
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## Mechanics
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## Complexity
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## When NOT to use it
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## Real-world usage
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## Failure modes
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
-
-## Practice problems
-
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
+Kahn's algorithm: repeatedly take a vertex with in-degree 0, remove it, decrement
+its neighbours. If vertices remain when none has in-degree 0, the graph has a cycle
+— so the algorithm detects the failure it depends on, which is why package managers
+can tell you *which* dependencies are circular.
 
 ## Interview answers
 
-{/* TODO: see src/content/_template.mdx for what belongs here. */}
+**"BFS or DFS?"**
+
+> They're the same algorithm with a different container — a queue versus a stack.
+> BFS for anything about shortest paths or levels, since it visits in
+> non-decreasing hop distance. DFS for anything about structure: cycle detection,
+> topological sort, connected components. Both are O(V + E).
+
+**"How would you find the shortest route?"**
+
+> Unweighted, BFS. Weighted with non-negative weights, Dijkstra — BFS with a
+> priority queue, O(E log V). If weights can be negative, Dijkstra is *wrong*, not
+> just slow, so Bellman–Ford at O(VE).
+
+**The caveat that signals production experience:**
+
+> "Two things I'd flag. First, the memory profile differs a lot even though both
+> are O(V) in the worst case: BFS holds an entire level, so on a wide graph like a
+> social network the queue is your bottleneck, while DFS holds a path and blows the
+> call stack instead if you wrote it recursively. Which one bites you depends on
+> the graph's shape, not on the algorithm. Second, the classic bug in a hand-written
+> BFS is marking visited on dequeue rather than enqueue — it still gives the right
+> answer, so it passes tests, and it quietly queues a node once per in-edge, so
+> memory goes from O(V) to O(E) and it falls over at exactly the scale where you
+> needed it to work."

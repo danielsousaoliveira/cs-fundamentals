@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VizStep } from './types.ts';
 
-export interface StepPlayer {
-  step: VizStep | undefined;
+/**
+ * Generic over the step type so widgets that extend `VizStep` — the hash table's
+ * `buckets`, say — keep their own fields on `player.step` instead of having them
+ * widened away. Everything else about playback is identical, which is the point:
+ * a richer step shape should not mean a separate player.
+ */
+export interface StepPlayer<T extends VizStep = VizStep> {
+  step: T | undefined;
   index: number;
   total: number;
   playing: boolean;
@@ -31,10 +37,10 @@ export interface StepPlayerOptions {
  * Playback stops at the last step rather than looping: an algorithm that has
  * finished should look finished.
  */
-export function useStepPlayer(
-  steps: VizStep[],
+export function useStepPlayer<T extends VizStep>(
+  steps: T[],
   { autoplay = false, interval = 900 }: StepPlayerOptions = {},
-): StepPlayer {
+): StepPlayer<T> {
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(autoplay);
   const [speed, setSpeed] = useState(1);

@@ -1,0 +1,614 @@
+---
+title: Caching and Redis
+description: >-
+  Why a cache is a hash table with a memory budget, why invalidation is the hard
+  part, and why a cache without a TTL becomes a second database with no
+  consistency story.
+sidebar:
+  order: 4
+difficulty: core
+status: complete
+prereqs: ['2-data-structures/hash-tables', '5-systems/databases']
+tags: [cache, redis, ttl, invalidation, stampede, rate-limiting]
+languages: [typescript]
+complexity:
+  get: O(1)
+  zset-insert: O(log n)
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A cache is a [hash table](/cs-fundamentals/2-data-structures/hash-tables/) with
+two additions: it lives somewhere faster than the thing it fronts, and it is
+allowed to forget.
+
+The second part is what makes it a cache rather than a database, and it is the
+part that carries all the difficulty. A cache is *allowed to be wrong* — that is
+the trade you accepted in exchange for speed. The engineering is entirely about
+bounding how wrong, for how long.
+
+The numbers are what justify the whole idea:
+
+| | Typical latency | Relative |
+|---|---:|---:|
+| L1 CPU cache | 1 ns | 1× |
+| Main memory | 100 ns | 100× |
+| Redis, same datacentre | 0.5 ms | 500,000× |
+| Postgres, indexed query | 1–5 ms | ~5,000,000× |
+| Postgres, unindexed on a big table | 500 ms+ | — |
+| Cross-region HTTP call | 100 ms | — |
+
+Redis is roughly 5,000× slower than local memory and roughly 5× faster than a
+well-indexed database query. Both halves matter. **A cache in front of an already
+fast query is often not worth its complexity** — you are trading a correctness
+guarantee for a 4 ms saving. A cache in front of a 500 ms aggregate, or a
+third-party API call, obviously is.
+
+So the first question is never "should we add Redis?" It is "what is slow, and how
+stale is that data allowed to be?"
+
+## Mechanics
+
+### Cache-aside, the default pattern
+
+```ts
+async function getUser(id: string): Promise<User> {
+  const hit = await redis.get(`user:${id}`);
+  if (hit) return JSON.parse(hit);
+
+  const value = await db.users.findById(id);
+  await redis.set(`user:${id}`, JSON.stringify(value), 'EX', 300); // ← always a TTL
+  return value;
+}
+```
+
+The application owns the logic: read the cache, miss, read the database, populate.
+The alternatives are worth knowing because they move the trade around rather than
+removing it:
+
+| Pattern | Write path | Trade |
+|---|---|---|
+| **Cache-aside** | Write DB, delete the key | Simple; a stale read is possible in the window between |
+| **Write-through** | Write cache and DB together | Consistent; every write is slower |
+| **Write-behind** | Write cache, flush to DB later | Fastest writes; you can lose data on a crash |
+
+**Always set a TTL.** This is the single most valuable rule on the page:
+
+> A cache without expiry becomes a second database with no consistency story.
+
+A key written once by a code path with a bug in its invalidation stays wrong
+*forever*, and nobody can tell which keys are stale. A TTL makes every such bug
+self-healing within a bounded, known time. Even when you invalidate explicitly,
+keep a TTL as a backstop — it turns a missed invalidation from a permanent
+corruption into a five-minute annoyance.
+
+### Redis is single-threaded, and that explains everything
+
+Command execution is serialised on one thread. Two consequences follow, and they
+pull in opposite directions:
+
+**Every individual command is atomic.** No locks needed. `INCR` cannot lose an
+increment; there are no data races between clients. This is the same
+run-to-completion property that makes [JavaScript
+safe](/cs-fundamentals/5-systems/event-loop/) from torn writes, used deliberately
+as a feature.
+
+**One slow command blocks every client.** A `KEYS *` against a million-key
+database, or a `FLUSHALL`, stalls everyone. This is why `SCAN` — cursor-based and
+incremental — exists, and why `KEYS` is a production hazard rather than a
+debugging convenience.
+
+(Modern Redis uses threads for I/O and background deletion, but command execution
+is still serialised.)
+
+### The data types worth understanding, not just listing
+
+| Type | Use |
+|---|---|
+| String | Cache entries, counters, flags, locks |
+| Hash | Objects — update one field without rewriting the whole value |
+| List | Simple queues (`LPUSH` + `BRPOP`), recent-items lists |
+| Set | Membership, unique visitors, tags, plus set algebra |
+| **Sorted set (ZSET)** | Leaderboards, priority queues, delayed jobs, sliding windows |
+| Bitmap | One bit per user — a year of daily activity for a million users in a few MB |
+| HyperLogLog | Approximate unique counts in ~12 KB regardless of cardinality |
+| **Stream** | Append-only log with consumer groups, acks, and replay |
+
+**The ZSET is the versatile one.** Members with numeric scores, kept in score
+order, $O(\log n)$ to insert and to query by rank. "Ordered by a number" covers a
+surprising amount:
+
+<Tabs syncKey="lang">
+<TabItem label="Delayed jobs">
+
+```ts
+// score = the timestamp the job should run at
+await redis.zadd('jobs', runAt, JSON.stringify(job));
+
+// claim everything now due — a scheduler in two commands
+const due = await redis.zrangebyscore('jobs', 0, Date.now());
+```
+
+</TabItem>
+<TabItem label="Sliding-window rate limit">
+
+```ts
+// score = request timestamp. Unlike a fixed window, this cannot be gamed by
+// firing at the boundary of two adjacent buckets.
+const now = Date.now();
+const key = `rate:${userId}`;
+
+await redis.zremrangebyscore(key, 0, now - 60_000); // drop what left the window
+const count = await redis.zcard(key);
+if (count >= 100) throw new TooManyRequests();
+
+await redis.zadd(key, now, `${now}-${Math.random()}`);
+await redis.expire(key, 60);                         // so idle users cost nothing
+```
+
+</TabItem>
+<TabItem label="Leaderboard">
+
+```ts
+await redis.zincrby('leaderboard', points, userId);
+
+// rank and neighbours, both O(log n)
+const rank = await redis.zrevrank('leaderboard', userId);
+const top = await redis.zrevrange('leaderboard', 0, 9, 'WITHSCORES');
+```
+
+</TabItem>
+</Tabs>
+
+**Streams versus Pub/Sub** is the other distinction that matters. **Pub/Sub is
+fire-and-forget with no persistence**: a subscriber that is disconnected when a
+message is published never sees it — no ack, no retry, no history. **Streams
+persist**, support consumer groups with acks and a pending-entries list, and allow
+replay from any id.
+
+So: Pub/Sub for "broadcast to whoever is listening right now", such as a WebSocket
+backplane across instances. Streams when losing a message matters.
+
+### Atomicity where two commands are not enough
+
+```ts
+// Broken. If the process dies between these, the key has no TTL and becomes an
+// immortal counter that permanently blocks that user.
+await redis.incr(key);
+await redis.expire(key, 60);
+```
+
+Redis runs a Lua script atomically, which is the clean fix:
+
+```ts
+const script = `
+  local n = redis.call('INCR', KEYS[1])
+  if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+  return n
+`;
+const count = await redis.eval(script, 1, key, 60);
+```
+
+## Complexity
+
+**The only number that matters is the hit rate**, and it matters more than
+intuition suggests. With hit rate $h$, cache latency $C$, and backing-store
+latency $D$, mean latency is:
+
+$$
+L = h \cdot C + (1 - h) \cdot (C + D)= C + (1 - h) \cdot D
+$$
+
+The cache latency is paid *always* — a miss costs a Redis round trip *and* the
+database query. So the saving is entirely in $(1 - h) \cdot D$. With $C = 0.5$ ms
+and $D = 50$ ms:
+
+| Hit rate | Mean latency | Speedup |
+|---:|---:|---:|
+| 0% | 50.5 ms | 0.99× (slower!) |
+| 50% | 25.5 ms | 2.0× |
+| 90% | 5.5 ms | 9.1× |
+| 99% | 1.0 ms | 50× |
+| 99.9% | 0.55 ms | 91× |
+
+Two things fall out that are worth internalising.
+
+**A low hit rate makes things worse, not neutral.** At 0% you have added a network
+round trip to every request and improved nothing. There is no "the cache didn't
+help" outcome — there is only helped or hurt.
+
+**The returns are wildly non-linear at the top.** Going from 90% to 99% is a 5.5×
+improvement; going from 50% to 90% is only 4.6×. This is why effort spent raising
+an already-good hit rate pays better than it feels like it should, and why a
+change that quietly drops the hit rate from 99% to 90% shows up as a five-fold
+latency regression that looks like it must be something else.
+
+**What sets the hit rate** is the relationship between TTL and access frequency.
+A key accessed every $t$ seconds with a TTL of $T$ has a hit rate of roughly
+$1 - t/T$ while $t < T$. So doubling the TTL halves the miss rate — and doubles
+the worst-case staleness. That is the dial, and it is the only dial.
+
+## When NOT to use it
+
+**When the query is already fast.** Fronting a 2 ms indexed lookup with a 0.5 ms
+cache saves 1.5 ms and costs you a consistency story, an eviction policy, and a
+new failure mode. Fix the query first; a missing index beats a cache almost every
+time, and it has no staleness.
+
+**When the data must not be stale.** Account balances, permission checks,
+inventory counts at the point of sale. If the answer being four seconds old is a
+correctness problem rather than a cosmetic one, do not cache it — or cache it and
+verify at the point of decision, which is usually the same amount of work.
+
+**When you cannot state the staleness budget.** If nobody can say how out of date
+this is allowed to be, you do not yet understand the requirement, and any TTL you
+pick is a guess someone will later treat as a promise.
+
+**When the data must survive.** Redis's default configuration can lose data.
+Persistence is opt-in and comes in two forms — **RDB** (periodic snapshots:
+compact, fast to restore, loses everything since the last one) and **AOF** (an
+append-only log replayed on restart: much less loss, larger files, slower
+restart). Treat Redis as a cache unless you have deliberately configured otherwise,
+and for anything that genuinely must not be lost, put it in Postgres.
+
+**When a distributed lock is being used for correctness.** `SET key val NX PX
+30000` is a fine way to reduce contention and a bad way to guarantee an invariant.
+The TTL is the whole problem: if your process pauses — garbage collection, a slow
+query, the VM being descheduled — the lock expires while you still believe you
+hold it, and a second holder appears with no way for either to detect the overlap.
+
+> A Redis lock reduces contention. It does not provide mutual exclusion.
+
+Put the guarantee in a database constraint. (Redlock is the multi-node version and
+is academically contested for exactly this reason.)
+
+**When the cached value is enormous.** A single 100 MB value makes every operation
+on it slow, and deleting it blocks the server — `UNLINK` deletes asynchronously
+where `DEL` does not.
+
+## Real-world usage
+
+**Session stores** are the pattern that makes stateful sessions survive horizontal
+scaling. Any instance can look up any session, so you get the revocability of
+server-side sessions with the scalability of stateless tokens, at the cost of one
+~0.5 ms round trip per request. This is usually the right trade against JWTs,
+whose central weakness is that you cannot revoke one before it expires.
+
+**Rate limiting**, as above — and note the choice of algorithm is visible to
+users. A fixed window lets someone send 100 requests at 11:59:59 and 100 more at
+12:00:00; the sliding window built on a ZSET does not.
+
+**Job queues.** BullMQ is built on Redis and provides retries, exponential
+backoff, delayed jobs, repeatable cron jobs, priorities, concurrency limits and a
+dashboard. For background jobs — as opposed to event streaming — this is the right
+first reach, well before Kafka.
+
+**Pub/Sub as a WebSocket backplane.** With multiple instances, a message arriving
+at instance A must reach a socket held by instance B. Publishing to Redis and
+having every instance subscribe is the standard solution, and the absence of
+persistence is acceptable precisely because a client that was disconnected had
+nowhere to receive it anyway.
+
+**HTTP caching is the same idea one layer out.** `Cache-Control: max-age` is a
+TTL; `ETag` plus `If-None-Match` is a conditional read that returns 304 and no
+body; a CDN is a cache-aside sitting in the network. The concepts transfer exactly,
+and the invalidation problem transfers with them — which is why CDN purges exist
+and why they are slow.
+
+## Failure modes
+
+**Symptom: a popular page gets slow, then the database falls over, all at once,
+with no deploy.** Cache stampede — a hot key expires and a thousand concurrent
+requests all miss simultaneously and all hit the database. The cache did not
+degrade; it went from absorbing 100% of that traffic to absorbing 0% in one
+instant.
+
+Three mitigations, usually combined:
+
+```ts
+// 1. Jittered TTL — keys populated together no longer expire together.
+const ttl = 300 + Math.floor(Math.random() * 60);
+
+// 2. Stale-while-revalidate — serve the expired value, refresh in the background.
+const { value, expiresAt } = await readWithMeta(key);
+if (value && expiresAt < Date.now()) {
+  void refresh(key);        // deliberately not awaited
+  return value;             // one stale response beats a thundering herd
+}
+
+// 3. A short per-key lock, so exactly one request does the refill.
+const gotLock = await redis.set(`lock:${key}`, '1', 'NX', 'PX', 5000);
+```
+
+Jitter is the cheapest and catches the most common case, which is a batch of keys
+all populated by the same deploy or the same cron run.
+
+**Symptom: memory pressure, and jobs silently disappear.** The eviction policy.
+`maxmemory-policy` should be `allkeys-lru` for a cache — shedding load gracefully
+is correct behaviour for a cache — and `noeviction` for a queue or session store,
+so writes are *rejected* rather than data silently dropped.
+
+**Getting this wrong is silent.** A BullMQ queue on `allkeys-lru` will quietly
+evict pending jobs under memory pressure. Nothing errors, nothing logs, and the
+work simply never happens. This is one of the highest-consequence one-line
+misconfigurations available in a typical stack.
+
+**Symptom: one key is hot and adding shards does not help.** Because Redis is
+single-threaded per shard, a hot key cannot be spread by adding capacity — all
+requests for that key hit the same thread. Mitigations are client-side local
+caching for a few seconds, or splitting the key into N variants and picking one at
+random.
+
+**Symptom: a user is permanently rate-limited and nobody can work out why.** The
+`INCR`-without-`EXPIRE` race above. The counter has no TTL, so it never resets.
+
+**Symptom: cache and database disagree, permanently.** Invalidation was attempted
+and missed a path. Three strategies, honestly ranked:
+
+- **TTL** — simplest, bounded staleness, defensible for almost everything.
+- **Explicit delete on write** — correct when the mapping from a write to its
+  affected keys is *simple*. It stops being simple quickly: one appointment write
+  invalidates the doctor's availability, the patient's list, and a dashboard
+  aggregate, and the day someone adds a fourth is the day it breaks.
+- **Event-driven invalidation** — publish a change event, let subscribers
+  invalidate. Scales better; adds a system.
+
+The defensible position: prefer a TTL you can justify over an invalidation graph
+you cannot reason about, and where you do invalidate explicitly, keep the TTL as a
+backstop.
+
+**Symptom: Redis goes down and the whole site returns 500.** The cache became a
+hard dependency. A cache should fail *open* — a miss on a cache error, so the
+request is slow rather than broken:
+
+```ts
+async function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  try {
+    const hit = await redis.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (err) {
+    log.warn({ err }, 'cache read failed, falling through');
+  }
+  return load();
+}
+```
+
+The caveat: this is only safe if the backing store can survive the load. Failing
+open at a 99% hit rate means the database suddenly receives 100× its normal
+traffic, which is the stampede again at maximum scale. That is what circuit
+breakers and load shedding are for.
+
+## Practice problems
+
+**1. Fix this cache.** Name every problem:
+
+```ts
+async function getProfile(id: string) {
+  const key = `profile:${id}`;
+  const hit = await redis.get(key);
+  if (hit) return JSON.parse(hit);
+  const profile = await db.profiles.findById(id);
+  await redis.set(key, JSON.stringify(profile));
+  return profile;
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+Four problems.
+
+**No TTL.** The key lives forever. Any bug in the invalidation path produces a
+permanently wrong value, and there is no way to find out which keys are affected.
+
+**Negative results are cached as `"null"` — or worse.** If `findById` returns
+`null`, `JSON.stringify(null)` is the string `"null"`, which is truthy, so every
+future request returns `null` from cache without ever checking the database again.
+If instead you skip caching misses entirely, a non-existent id becomes an
+uncacheable request that hits the database every time — a cheap denial of service.
+Cache misses deliberately, with a short TTL.
+
+**No stampede protection.** All expiries of keys populated together land together.
+
+**Redis is a hard dependency.** A `redis.get` that throws takes down an endpoint
+that could have served correctly, just slower.
+
+```ts
+async function getProfile(id: string) {
+  const key = `profile:${id}`;
+
+  try {
+    const hit = await redis.get(key);
+    if (hit !== null) {
+      const parsed = JSON.parse(hit);
+      return parsed === MISS ? null : parsed;
+    }
+  } catch (err) {
+    log.warn({ err }, 'cache read failed');   // fail open
+  }
+
+  const profile = await db.profiles.findById(id);
+  const ttl = (profile ? 300 : 30) + Math.floor(Math.random() * 60); // jitter
+  await redis
+    .set(key, JSON.stringify(profile ?? MISS), 'EX', ttl)
+    .catch(() => {});                          // a failed write is not an error
+  return profile;
+}
+```
+
+</details>
+
+**2. Design a rate limiter** allowing 100 requests per user per minute, that cannot
+be gamed at the window boundary, and where an idle user costs no memory.
+
+<details>
+<summary>Solution</summary>
+
+A fixed window fails the second requirement: a user sends 100 at 11:59:59 and 100
+at 12:00:00 — 200 requests in one second, both windows technically legal. A
+sliding window over a ZSET fixes it.
+
+```lua
+-- One script so the whole check-and-record is atomic. Two round trips would
+-- let concurrent requests both pass the check.
+local now    = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit  = tonumber(ARGV[3])
+
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - window)
+local count = redis.call('ZCARD', KEYS[1])
+if count >= limit then return 0 end
+
+redis.call('ZADD', KEYS[1], now, ARGV[4])
+redis.call('PEXPIRE', KEYS[1], window)   -- idle users cost nothing
+return 1
+```
+
+The `PEXPIRE` on every call is what satisfies the third requirement: the key is
+dropped a window after the user's last request, so memory is proportional to
+*active* users rather than total users.
+
+The cost worth naming: this stores one entry per request, so a limit of 100 means
+up to 100 members per active user. For very high limits, a token bucket — two
+numbers, `tokens` and `lastRefill`, in a hash — is $O(1)$ in space and gives up
+the exact-count property.
+
+</details>
+
+**3. Derive the break-even.** A query takes 40 ms. Redis takes 0.5 ms. Below what
+hit rate is the cache actively harmful?
+
+<details>
+<summary>Solution</summary>
+
+Cached mean latency is $C + (1-h)D$; uncached is $D$. The cache is harmful when:
+
+$$
+C + (1 - h)D > D \quad\Longrightarrow\quad C > hD \quad\Longrightarrow\quad h < \frac{C}{D}
+$$
+
+Here $0.5 / 40 = 0.0125$, so below a **1.25% hit rate** the cache makes things
+strictly worse. That threshold is reassuringly low — almost any real access
+pattern clears it.
+
+But the useful reading is the other direction. The break-even is low, so the
+question is never "will this help at all", it is "will it help *enough to be worth
+the staleness*". At a 50% hit rate you have halved latency and acquired a
+consistency problem; at 99% you have a 40× win and the same consistency problem.
+Only the second is obviously worth it — which is why measuring the hit rate is the
+first thing to do after shipping a cache, and why a cache nobody has measured is
+usually not earning its complexity.
+
+</details>
+
+<Quiz
+  client:visible
+  id="cache-no-ttl"
+  kind="concept"
+  question="Why is a cache entry with no TTL dangerous even when you delete the key on every write?"
+  options={[
+    {
+      label: 'A single missed invalidation path is wrong forever, undetectably',
+      correct: true,
+    },
+    { label: 'Redis refuses to evict keys without a TTL' },
+    { label: 'It uses more memory than an equivalent key with a TTL' },
+    { label: 'Reads of a key with no TTL are slower' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Because invalidation is code, and code has bugs. The day someone adds a
+        second write path — an admin tool, a migration, a background job — and
+        forgets the delete, that key is permanently wrong. Nothing errors, nothing
+        logs, and there is no way to tell which keys are affected short of flushing
+        everything.
+      </p>
+      <p>
+        A TTL bounds the damage without requiring you to be right. It converts
+        "wrong forever, silently" into "wrong for five minutes" — which is why it
+        is worth keeping even when you also invalidate explicitly.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="cache-eviction"
+  kind="concept"
+  question="A BullMQ job queue shares a Redis instance configured with maxmemory-policy allkeys-lru. What happens under memory pressure?"
+  options={[
+    { label: 'Pending jobs are silently evicted and never run', correct: true },
+    { label: 'New jobs are rejected with an out-of-memory error' },
+    { label: 'Redis spills the least-recently-used jobs to disk' },
+    { label: 'Nothing — LRU only evicts keys that have a TTL set' },
+  ]}
+  explanation={
+    <>
+      <p>
+        The jobs are evicted. <code>allkeys-lru</code> means <em>any</em> key is a
+        candidate, TTL or not, so pending job data is discarded exactly like a
+        stale cache entry — because to Redis it is indistinguishable from one.
+      </p>
+      <p>
+        What makes this one of the worst misconfigurations available is that it is
+        completely silent. No error, no log, no failed job. The work simply never
+        happens, and you find out from a user asking why they never got the email.
+      </p>
+      <p>
+        A queue or session store wants <code>noeviction</code>, so writes fail
+        loudly when memory runs out. If cache and queue must share an instance, use
+        separate databases with separate policies — or, better, separate instances.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"When would you add a cache?"** The answer that signals judgement leads with
+what you would do *first*:
+
+> After I had fixed the query. A missing index or an N+1 usually gives a bigger
+> win than a cache and does not introduce staleness, so caching a slow query
+> often means caching a bug.
+>
+> Once the query is genuinely as fast as it can be and still too slow — or it is a
+> third-party call I do not control — then a cache, cache-aside, always with a
+> TTL. The TTL is not an optimisation, it is the safety net: a cache without one
+> is a second database with no consistency story, because one missed invalidation
+> is wrong forever and you cannot tell which keys are affected.
+>
+> And I would instrument the hit rate immediately, because below a certain hit
+> rate the cache is a net negative — you are paying a round trip on every request
+> and saving on very few.
+
+**"How do you invalidate?"**
+
+> TTL by default, because invalidation is the hard part and I would rather choose a
+> staleness budget I can defend than build an invalidation graph I cannot reason
+> about. Where I do delete explicitly on write, I still set a TTL as a backstop, so
+> a missed invalidation is a five-minute problem rather than a permanent one.
+
+**"What would you watch?"** Hit rate, p99 latency, memory usage against
+`maxmemory`, and eviction count. A rising eviction count is the leading indicator —
+it means the working set no longer fits, and the hit rate is about to fall.
+
+**The caveats worth voicing:**
+
+- Redis is single-threaded for command execution. That is why every command is
+  atomic and why one `KEYS *` stalls every client.
+- A Redis distributed lock reduces contention but does not guarantee mutual
+  exclusion, because the TTL can expire during a garbage-collection pause while you
+  still believe you hold it. Correctness invariants belong in a database
+  constraint.
+- Get `maxmemory-policy` right per workload: `allkeys-lru` for a cache,
+  `noeviction` for a queue. The wrong one silently drops jobs.
+- A cache should fail open — but only if the backing store can survive the load,
+  because failing open at a 99% hit rate is a stampede at full scale.

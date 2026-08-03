@@ -1,0 +1,660 @@
+---
+title: Design Patterns
+description: >-
+  A pattern is a name for a recurring shape, and its value is mostly
+  communication — the five worth writing from memory, the one that needs a
+  caveat, and the anti-patterns worth naming.
+sidebar:
+  order: 6
+difficulty: core
+status: complete
+prereqs: ['6-languages/oop', '6-languages/solid']
+tags: [patterns, strategy, repository, adapter, decorator, anti-patterns]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+The most common misunderstanding about design patterns is that they are things you
+*apply*. They are not. A pattern is **a name for a shape that keeps recurring**,
+and its value is mostly communication:
+
+> Saying "this is a Strategy" saves a paragraph in code review.
+
+That framing has two consequences worth taking seriously.
+
+**A pattern applied where the shape is not present is pure ceremony.** A factory
+with one product, an interface with one implementation, an observer with one
+observer — each adds a hop for a flexibility nobody asked for. The pattern did not
+make it better; it made it longer.
+
+**You have already been using most of them.** Express middleware is Chain of
+Responsibility. `EventEmitter` is Observer. An array `sort` comparator is Strategy.
+A module-level database pool is a Singleton, whether or not anyone wrote the word.
+Learning patterns is mostly learning the names for things you do already — which is
+exactly why the value is communication.
+
+The useful skill is recognition: seeing a growing `switch` and thinking "that wants
+to be a Strategy", or seeing a third-party SDK type spreading through your imports
+and thinking "that wants an Adapter".
+
+## Mechanics
+
+### The map
+
+| Pattern | One line | Where you have seen it |
+|---|---|---|
+| **Strategy** | Swap an algorithm at runtime behind one interface | Payment providers, auth strategies, sort comparators |
+| **Factory** | Centralise object creation | Building the right client per environment |
+| **Repository** | Abstract data access behind a domain interface | Keeping SQL out of business logic |
+| **Adapter** | Make an incompatible interface fit yours | Wrapping a third-party SDK |
+| **Decorator** | Add behaviour without changing the object | Middleware, a caching wrapper |
+| **Observer / Pub-Sub** | One-to-many notification | `EventEmitter`, message queues, webhooks |
+| **Singleton** | One shared instance | Connection pool, config — *with a caveat* |
+| **Facade** | Simple interface over a complex subsystem | One service orchestrating three clients |
+| **Builder** | Step-by-step construction | Query builders, test-data builders |
+| **Chain of Responsibility** | Pass a request along handlers until one handles it | The Express middleware chain |
+| **Command** | Encapsulate a request as an object | Job-queue payloads, undo stacks |
+| **Template Method** | Base defines the skeleton, subclasses fill steps | An abstract handler with hooks |
+
+### The five worth writing from memory
+
+**Strategy** — one interface, many interchangeable implementations, chosen at
+runtime.
+
+```ts
+interface PricingStrategy {
+  price(booking: Booking): number;
+}
+
+class StandardPricing implements PricingStrategy {
+  price(b: Booking) { return b.minutes * 1.5; }
+}
+class PeakPricing implements PricingStrategy {
+  price(b: Booking) { return b.minutes * 2.5; }
+}
+
+class Checkout {
+  constructor(private strategy: PricingStrategy) {} // injected, swappable, testable
+  total(b: Booking) { return this.strategy.price(b); }
+}
+```
+
+*When to reach for it:* whenever branching on a type or mode keeps growing. That is
+the same trigger as Open/Closed — **Strategy is how you implement Open/Closed.**
+
+**Repository** — a domain-shaped interface over storage. The key discipline is that
+the interface speaks the *domain's* language, not the database's.
+
+```ts
+interface AppointmentRepository {
+  findConflicting(doctorId: string, range: TimeRange): Promise<Appointment[]>;
+  save(a: Appointment): Promise<void>;
+}
+```
+
+Note `findConflicting`, **not `query(filter)`**. A repository that exposes a
+generic query object has leaked the database into the domain and bought you
+nothing — and that is the most common way people implement this pattern and get
+none of the benefit.
+
+**Adapter** — wrap someone else's interface in yours.
+
+```ts
+// Their SDK: sgMail.send({ to, subject, html })
+interface Mailer {
+  send(to: string, subject: string, body: string): Promise<void>;
+}
+
+class SendGridMailer implements Mailer {
+  async send(to: string, subject: string, body: string) {
+    await sgMail.send({ to, subject, html: body });
+  }
+}
+```
+
+Two payoffs. The vendor's shape stops spreading through your codebase, so switching
+provider is one file. And your tests fake `Mailer` — a two-line object — instead of
+mocking an entire SDK. **"Every third-party SDK gets an adapter" is a defensible
+blanket rule.**
+
+**Decorator** — same interface, added behaviour, by wrapping.
+
+```ts
+class CachedDoctorRepo implements DoctorRepository {
+  constructor(
+    private inner: DoctorRepository,
+    private redis: Redis,
+  ) {}
+
+  async findById(id: string) {
+    const hit = await this.redis.get(`doctor:${id}`);
+    if (hit) return JSON.parse(hit);
+
+    const doc = await this.inner.findById(id);
+    await this.redis.set(`doctor:${id}`, JSON.stringify(doc), 'EX', 300);
+    return doc;
+  }
+}
+```
+
+The caller cannot tell the difference, which is the whole point — caching was added
+with **zero changes** to the interface or to any consumer. The same shape gives you
+retry, logging, metrics and circuit breaking, **and they compose**:
+
+```ts
+new Logged(new Retrying(new Cached(new MongoRepo())));
+```
+
+That composability is the strongest argument for the pattern, and it is what people
+miss when they think of it as "a wrapper class".
+
+**Observer / Pub-Sub** — one-to-many notification, producer unaware of consumers.
+
+```js
+service.on('appointment.confirmed', (a) => metrics.increment('confirmed'));
+service.on('appointment.confirmed', (a) => mailer.send(a));
+```
+
+Know the distinction: **Observer** is usually in-process, with the subject holding
+direct references to observers. **Pub-Sub** puts a broker in between, so neither
+side knows the other exists.
+
+And know the caveat: in-process events give you **no durability**. If a listener
+throws or the process dies, the event is gone with no record it existed. Anything
+that must survive belongs in a
+[message broker](/cs-fundamentals/5-systems/message-brokers/) or an outbox table.
+
+### Singleton, and always the caveat
+
+```ts
+export const db = new Pool({
+  /* … */
+}); // module-level = a singleton, no pattern required
+```
+
+In Node, ES modules are cached after first evaluation, so a module-level instance
+*is* a singleton. It is legitimate for a connection pool or parsed config — you
+genuinely want one pool, not one per request.
+
+> It hurts testability and hides global state. A module that imports it has an
+> invisible dependency you cannot substitute, and tests leak state into each other
+> through it.
+
+The better shape is registering a single instance in a container: one shared object,
+still injectable, so you get the benefit without the coupling.
+
+## Complexity
+
+**A pattern's value is an expected-value calculation**, and doing it explicitly
+explains why the same pattern is right in one codebase and wrong in another.
+
+Let $c$ be the one-off cost of introducing the indirection, $r$ the extra cost of
+*reading* through it, paid on every future read, and $s$ the saving when a change
+arrives. The pattern is worth it when:
+
+$$
+p \cdot n \cdot s \;>\; c + R \cdot r
+$$
+
+where $p$ is the probability the change happens, $n$ how many times, and $R$ the
+number of future reads. Two things fall out.
+
+**$R$ is large and $n$ is usually small.** Code is read far more often than it
+changes, so $r$ — a small per-read cost — is multiplied by a big number, while $s$
+is multiplied by a small one. That asymmetry is why premature abstraction loses
+even when the abstraction is "correct".
+
+**The rule of three is this inequality with numbers in.** At one implementation, $p
+\cdot n$ is a guess. At three, it is an observation: the change has now happened
+twice, so $p \approx 1$, and the pattern is justified by evidence rather than
+prediction.
+
+**Decorators compose linearly, which is the mathematically interesting property.**
+Each is a function from a service to a service, so $k$ decorators over $m$ base
+implementations gives $m \cdot 2^k$ reachable configurations from only $m + k$
+classes:
+
+| Base impls | Decorators | Configurations | Classes written |
+|---:|---:|---:|---:|
+| 2 | 3 | 16 | 5 |
+| 3 | 4 | 48 | 7 |
+| 3 | 6 | 192 | 9 |
+
+Compare the [inheritance arithmetic](/cs-fundamentals/6-languages/oop/), where
+those configurations would each be a class. The exponent moved from the class count
+into the *composition*, which is the entire structural argument.
+
+The cost is that each layer adds a call frame and, more importantly, a place a
+stack trace has to be read through. At $k = 6$ the trace is mostly framework.
+
+## When NOT to use it
+
+**Do not introduce a pattern before the shape exists.** The rule of three: wait for
+the third case. One implementation is a guess about the future, two is a
+coincidence, three is a pattern.
+
+**Do not use Singleton for mutable state.** A connection pool is fine because it is
+effectively immutable — you use it, you do not reconfigure it. A module-level object
+whose fields are mutated from anywhere is untestable, order-dependent, and invisible
+in every signature that relies on it.
+
+**Do not use a service locator and call it dependency injection.**
+
+```ts
+class OrderService {
+  run() {
+    const repo = Container.get('UserRepo'); // ✗ invisible dependency
+  }
+}
+```
+
+It looks like DI and is not: the dependency is no longer in the signature, so it is
+only discoverable at runtime, and you find out what a class needs when a test
+throws.
+
+**Do not build a Repository that exposes the database's query language.** Covered
+above; it is the difference between the pattern working and being decoration.
+
+**Do not reach for Observer when you need durability.** In-process events are a
+decoupling tool, not a delivery guarantee.
+
+**Do not use a Factory where a constructor works.** `UserFactory.create(name)`
+returning `new User(name)` is a constructor with extra steps. A factory earns its
+place when creation involves a *decision* — picking an implementation, reading
+config, or assembling several collaborators.
+
+**Do not abstract a third-party SDK into an interface with the SDK's own shape.**
+An adapter whose methods mirror the vendor's signatures gives you a second name for
+the same coupling. The interface should describe what *you* need.
+
+## Real-world usage
+
+**Express middleware is Chain of Responsibility and Decorator at once.** Each
+handler receives the request, may act, and may pass it on:
+
+```ts
+app.use(cors());
+app.use(helmet());
+app.use(rateLimit());
+app.use(authenticate);
+```
+
+The ordering is semantic, not cosmetic — authentication after rate limiting means
+unauthenticated floods are cheap to reject, and the reverse means they are not.
+This is the same ordering question as decorator composition.
+
+**Passport strategies are Strategy in its textbook form**: one `authenticate`
+interface, dozens of implementations, selected by name at runtime.
+
+**The Node standard library is full of these.** `EventEmitter` is Observer.
+`stream.pipe` is a form of Decorator — each stream wraps the previous and adds a
+transformation. `AbortController` is Observer applied to cancellation.
+
+**React hooks replaced an inheritance-shaped pattern with a compositional one.**
+Higher-order components were Decorator applied to components, and they hit exactly
+the composition-depth problem above — five HOCs meant a stack trace of five
+wrappers and a props flow nobody could follow. Hooks are the same capability
+expressed as plain function composition, with no wrapper layers at all.
+
+**The circuit breaker is a decorator worth knowing by name**, because it is the
+answer to the availability-multiplication problem:
+
+```ts
+class CircuitBroken<T> implements Service<T> {
+  private failures = 0;
+  private openUntil = 0;
+
+  constructor(private inner: Service<T>) {}
+
+  async call(req: T) {
+    // Fail fast while open: a dependency that is down should cost us a
+    // microsecond, not a timeout per request.
+    if (Date.now() < this.openUntil) throw new CircuitOpen();
+
+    try {
+      const result = await this.inner.call(req);
+      this.failures = 0;
+      return result;
+    } catch (err) {
+      if (++this.failures >= 5) this.openUntil = Date.now() + 30_000;
+      throw err;
+    }
+  }
+}
+```
+
+## Failure modes
+
+**Symptom: a stack trace is fifteen frames of wrappers and one frame of your code.**
+Decorator depth. Composition is cheap to write and expensive to debug; six layers is
+past the point where anyone can follow a failure.
+
+**Symptom: tests interfere with each other and pass in isolation.** Singleton
+holding mutable state. The classic is a module-level cache or connection retaining
+data across tests.
+
+**Symptom: you cannot tell what a class depends on without reading its whole
+body.** Service locator.
+
+**Symptom: adding a database field means editing six files.** A repository whose
+interface mirrors the schema, so the abstraction transmits change rather than
+absorbing it. A domain-shaped interface would have contained it.
+
+**Symptom: an event fires, a listener throws, and the request succeeds anyway with
+half the work done.** In-process Observer with no durability and no error handling.
+`EventEmitter` swallows nothing — an `error` event with no listener actually
+crashes the process — but a throwing listener in a synchronous `emit` propagates
+into the emitter's caller, which is rarely what anyone intended.
+
+**Symptom: an interface has one implementation and is named after it.**
+`UserServiceImpl implements UserService`. That naming is the tell that the
+interface exists to satisfy a rule rather than a need.
+
+**Symptom: a "factory" that only ever returns one type.** A constructor with
+ceremony.
+
+**Symptom: one class is 3,000 lines and every feature touches it.** God object. The
+`UserService` that validates, persists, notifies, and reports.
+
+**Anti-patterns worth naming, with definitions**, because being able to name them is
+half of arguing against them:
+
+- **God object** — one class that knows and does everything; every change touches
+  it.
+- **Anemic domain model** — entities are bags of public fields with no behaviour,
+  and all the rules live in services. Everything type-checks and nothing enforces an
+  invariant, so the same rule gets re-implemented in three services and one of them
+  gets it wrong. The fix is behaviour on the entity: `appointment.cancel(actor)`
+  rather than `service.setStatus(a, 'CANCELLED')`.
+- **Service locator** — as above.
+- **Premature abstraction** — an interface with one implementation, a plugin system
+  with one plugin, a config option nobody sets.
+- **Singleton-as-global-state** — mutable state on a module-level object, mutated
+  from anywhere.
+- **Primitive obsession** — every id is a `string`, so nothing stops you passing a
+  `doctorId` where a `patientId` belongs.
+  [Branded types](/cs-fundamentals/6-languages/typescript/) are the fix.
+
+## Practice problems
+
+**1. Name the pattern and justify it.** This function keeps growing:
+
+```ts
+async function notify(user: User, message: string, channel: string) {
+  if (channel === 'email') await sendEmail(user.email, message);
+  else if (channel === 'sms') await sendSms(user.phone, message);
+  else if (channel === 'push') await sendPush(user.deviceToken, message);
+  else if (channel === 'slack') await sendSlack(user.slackId, message);
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+**Strategy**, and the justification is the rule of three: four cases is past the
+threshold where "it might change" became "it demonstrably keeps changing".
+
+```ts
+interface NotificationChannel {
+  send(user: User, message: string): Promise<void>;
+}
+
+const channels: Record<string, NotificationChannel> = {
+  email: new EmailChannel(),
+  sms: new SmsChannel(),
+  push: new PushChannel(),
+  slack: new SlackChannel(),
+};
+
+async function notify(user: User, message: string, channel: string) {
+  const impl = channels[channel];
+  if (!impl) throw new UnknownChannel(channel);
+  await impl.send(user, message);
+}
+```
+
+Three things improved beyond the obvious extensibility:
+
+**Each channel is independently testable** without the others in scope.
+
+**The `User` coupling is now visible.** In the original, `notify` needed to know
+about `email`, `phone`, `deviceToken` and `slackId` — a growing dependency on the
+user's shape, hidden inside a branch. Each channel now owns its own field access.
+
+**The unknown-channel case is handled.** The original silently did nothing for a
+typo'd channel name, which is the kind of bug that goes unnoticed for months.
+
+**The counter-argument worth acknowledging**: with two channels and no third
+planned, the `if/else` is better. The trigger is the third case, not a preference
+for interfaces.
+
+</details>
+
+**2. Add caching, retry and metrics** to `UserRepository` without modifying it or
+its consumers. What is the ordering decision?
+
+<details>
+<summary>Solution</summary>
+
+Decorator, three times.
+
+```ts
+class CachedUsers implements UserRepository {
+  constructor(private inner: UserRepository, private cache: Cache) {}
+  async findById(id: string) {
+    const hit = await this.cache.get(id);
+    if (hit) return hit;
+    const user = await this.inner.findById(id);
+    await this.cache.set(id, user, { ttl: 300 });
+    return user;
+  }
+}
+
+class RetryingUsers implements UserRepository {/* … */}
+class MeasuredUsers implements UserRepository {/* … */}
+
+const users = new MeasuredUsers(new CachedUsers(new RetryingUsers(new PgUsers())));
+```
+
+**The ordering is a real decision with observable consequences**, and getting it
+wrong produces misleading data rather than an error:
+
+- **Metrics outermost** measures what the *caller* experiences, including cache
+  hits — which is what you want on a latency dashboard. Put metrics innermost and
+  you measure only database calls, so your p99 looks terrible while users are being
+  served from cache in a millisecond.
+- **Cache outside retry** means a cache hit skips the retry logic entirely, which
+  is correct — there is nothing to retry.
+- **Retry inside cache** means a successful retry populates the cache, so the next
+  caller does not pay for the flakiness.
+
+Reverse cache and retry — `Retrying(Cached(...))` — and you retry the cache lookup
+itself, which is nearly always pointless and can hammer Redis during a database
+outage.
+
+The property that makes this pattern strong: `PgUsers` and every consumer are
+untouched, and the ordering is one line you can change and reason about, rather than
+control flow buried inside a method.
+
+</details>
+
+**3. Why is this Singleton a problem, and what would you do?**
+
+```ts
+class ConfigService {
+  private static instance: ConfigService;
+  private overrides = new Map<string, string>();
+
+  static getInstance() {
+    return (this.instance ??= new ConfigService());
+  }
+
+  set(key: string, value: string) { this.overrides.set(key, value); }
+  get(key: string) { return this.overrides.get(key) ?? process.env[key]; }
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+The problem is not that it is a singleton — it is that it is a singleton with
+**mutable state**.
+
+**Tests leak into each other.** One test calls `set('FEATURE_X', 'on')`, and every
+subsequent test in the process sees it. The failure appears in a *different* test,
+which passes when run alone — the hardest kind of failure to diagnose, and it is
+order-dependent, so it appears and disappears as tests are added.
+
+**The dependency is invisible.** A class calling `ConfigService.getInstance()`
+inside a method has a dependency that appears in no signature and cannot be
+substituted. This is service locator wearing a singleton's clothes.
+
+**It cannot be reset**, so there is no clean way to isolate a test even if you
+notice.
+
+```ts
+// Immutable, validated once at startup. There is nothing to leak.
+export interface Config {
+  readonly databaseUrl: string;
+  readonly featureX: boolean;
+}
+
+export function loadConfig(env = process.env): Config {
+  return ConfigSchema.parse(env); // crashes at boot on a missing variable
+}
+
+// Injected, so a test passes its own object and nothing is shared.
+class OrderService {
+  constructor(private config: Config) {}
+}
+```
+
+The general rule this illustrates: **a singleton is acceptable when it is
+effectively immutable** — a connection pool, parsed config, a logger. The moment it
+holds state anyone can mutate, it is global state, and every problem global state
+has ever had applies.
+
+</details>
+
+<Quiz
+  client:visible
+  id="patterns-repository-leak"
+  kind="concept"
+  question="A repository interface exposes `find(filter: MongoFilter): Promise<T[]>`. What has this bought?"
+  options={[
+    { label: 'Almost nothing — the database has leaked into the domain', correct: true },
+    { label: 'Full decoupling, since consumers no longer import the driver' },
+    { label: 'Testability, because the filter can be asserted on in a mock' },
+    { label: 'Flexibility, since any query can be expressed without new methods' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Almost nothing. Every consumer now constructs Mongo query objects, so Mongo's
+        query language is spread through the business logic — the exact coupling the
+        repository existed to prevent. Swapping to Postgres means rewriting every
+        call site, which is the situation you were trying to avoid.
+      </p>
+      <p>
+        Option four names the real trap: the flexibility is what causes the problem.
+        A generic <code>find</code> means no method ever has to be added, so nobody
+        ever has to think about what the domain actually needs.
+      </p>
+      <p>
+        A repository's interface should speak the domain's language —{' '}
+        <code>findConflicting(doctorId, range)</code> — so the query lives in one
+        place, its intent is named, and the storage engine is genuinely replaceable.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="patterns-decorator-order"
+  kind="concept"
+  question="You wrap a repository as Measured(Cached(Retrying(Postgres))). Your latency dashboard now shows p99 of 0.4 ms. What changed if you reorder to Cached(Measured(Retrying(Postgres)))?"
+  options={[
+    { label: 'The metric stops counting cache hits, so p99 jumps to database latency', correct: true },
+    { label: 'Nothing — decorators are commutative' },
+    { label: 'Cache hits are counted twice, halving the reported p99' },
+    { label: 'Retries stop being measured, so p99 falls further' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Moving the metrics decorator <em>inside</em> the cache means it only sees
+        calls that missed. Cache hits never reach it, so the dashboard reports the
+        latency of the slow path exclusively — and p99 jumps to database latency even
+        though users are being served in well under a millisecond.
+      </p>
+      <p>
+        Neither ordering is wrong in the abstract; they measure different things.
+        Outermost answers "what does the caller experience", which is what belongs on
+        a user-facing latency dashboard. Innermost answers "how slow is Postgres",
+        which is useful on a database dashboard.
+      </p>
+      <p>
+        The point is that decorators are emphatically <em>not</em> commutative, and
+        the ordering is a design decision that produces misleading data rather than
+        an error when it is wrong. Making that decision one visible line is the
+        pattern's real benefit.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"What patterns do you use?"** Do not recite the table. A ranked, reasoned answer
+with a "what I avoid" beats a list:
+
+> In practice the ones I reach for most are Strategy, Repository, Adapter and
+> Decorator. Strategy whenever I have branching on a type that keeps growing.
+> Repository to keep the database out of business logic and make the unit tests
+> fast. Adapter around every third-party SDK so it is mockable and replaceable. And
+> Decorator, because that is what middleware already is — cross-cutting behaviour by
+> wrapping rather than by editing.
+>
+> The ones I am wary of are Singleton, for the testability reason, and anything that
+> adds a layer before there are two implementations to justify it.
+
+**"What is a pattern for?"** The meta-answer, which is worth leading with:
+
+> Mostly communication. A pattern is a name for a shape that keeps recurring, and
+> saying "this is a Strategy" in review saves a paragraph. Applied where the shape
+> is not there, it is just ceremony — so the trigger is recognising the shape, not
+> deciding to use a pattern.
+
+**"When would you use a Singleton?"** And always volunteer the caveat:
+
+> A connection pool or parsed config, where you genuinely want one instance. In Node
+> you get it for free, because ES modules are cached after first evaluation, so a
+> module-level instance *is* a singleton.
+>
+> The caveat is that it hurts testability and hides global state — a module that
+> imports it has an invisible dependency you cannot substitute, and tests leak state
+> into each other through it. So I would rather register one instance in a container:
+> one shared object, still injectable.
+
+**The anti-patterns worth being able to name**, because naming one ends an argument
+faster than describing it: god object, anemic domain model, service locator,
+premature abstraction, singleton-as-global-state, and primitive obsession.
+
+**The caveats worth voicing:**
+
+- A repository that exposes the database's query language has leaked the database
+  into the domain and bought nothing.
+- Decorators compose, and the ordering is semantic — metrics outside the cache
+  measures what users feel; inside it measures only the misses.
+- In-process events are a decoupling tool, not a durability tool. If losing one
+  matters, it needs a broker or an outbox.
+- Wait for the third case. Code is read far more often than it changes, so the
+  per-read cost of indirection is multiplied by a large number and the saving by a
+  small one.

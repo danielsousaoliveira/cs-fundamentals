@@ -42,20 +42,48 @@ const SPINE = [
   'Interview answers',
 ];
 
-/** Notebook → target section directory. */
+/** Notebook directory → target section directory. */
 const DEFAULT_MAP: Record<string, string> = {
   '1-complexity': '1-complexity',
   '2-data-structures': '2-data-structures',
+};
+
+/**
+ * Teaching order, which is not alphabetical and not the order the notebooks
+ * happen to sit in. Each structure builds on the one before it: you cannot
+ * explain why a hash table resizes without arrays, or a heap without trees.
+ */
+const ORDER: Record<string, number> = {
+  'arrays-lists': 1,
+  'linked-lists': 2,
+  'stacks-queues': 3,
+  'hash-tables': 4,
+  'binary-trees': 5,
+  heaps: 6,
+  graphs: 7,
+  advanced: 8,
+  examples: 1,
+};
+
+/** Slugs whose auto-titles read badly. */
+const TITLES: Record<string, string> = {
+  'arrays-lists': 'Arrays and Lists',
+  'stacks-queues': 'Stacks and Queues',
+  advanced: 'Advanced Structures',
+  examples: 'Big-O in Practice',
 };
 
 const text = (source: string[] | string): string =>
   Array.isArray(source) ? source.join('') : source;
 
 function titleFromSlug(slug: string): string {
-  return slug
-    .split('-')
-    .map((word) => word[0]!.toUpperCase() + word.slice(1))
-    .join(' ');
+  return (
+    TITLES[slug] ??
+    slug
+      .split('-')
+      .map((word) => word[0]!.toUpperCase() + word.slice(1))
+      .join(' ')
+  );
 }
 
 /** Demote headings by one level: the page title comes from frontmatter. */
@@ -187,7 +215,6 @@ if (args.length === 0) {
 const targets: { notebook: string; section: string; order: number }[] = [];
 
 if (args[0] === '--all') {
-  const byDir = new Map<string, number>();
   for (const notebook of findNotebooks()) {
     const dir = path.basename(path.dirname(notebook));
     const section = DEFAULT_MAP[dir];
@@ -195,9 +222,8 @@ if (args[0] === '--all') {
       console.warn(`Skipping ${notebook}: no section mapping for "${dir}".`);
       continue;
     }
-    const order = (byDir.get(section) ?? 0) + 1;
-    byDir.set(section, order);
-    targets.push({ notebook, section, order });
+    const slug = path.basename(notebook, '.ipynb');
+    targets.push({ notebook, section, order: ORDER[slug] ?? 999 });
   }
 } else {
   targets.push({

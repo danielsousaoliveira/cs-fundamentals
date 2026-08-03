@@ -1,0 +1,624 @@
+---
+title: JavaScript Semantics
+description: >-
+  Coercion, hoisting, closures, and `this` — the handful of rules that explain
+  almost every surprising JavaScript result, derived rather than memorised.
+sidebar:
+  order: 1
+difficulty: foundational
+status: complete
+prereqs: []
+tags: [javascript, coercion, closures, this, hoisting, equality]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+JavaScript has a reputation for arbitrary behaviour that it does not quite
+deserve. The famous results are surprising, but they are not random — almost all
+of them fall out of three decisions made early and never reversed:
+
+1. **Operators coerce their operands rather than failing.** There is no type error
+   for `[] + {}`; there is an algorithm that turns both into primitives and
+   proceeds. The results look absurd because the algorithm was designed to always
+   produce *something*.
+2. **Declarations are processed before the code runs.** Variables and functions
+   exist before the line that declares them, which is why some things are
+   `undefined` rather than errors and others throw.
+3. **`this` is decided by the call, not by the definition.** In most languages a
+   method knows what it belongs to. In JavaScript, `this` is an extra argument
+   passed implicitly by the call site — which is why detaching a method loses it.
+
+Learn those three and the trivia stops being trivia. The point is not to memorise
+the outputs; it is that each one is derivable, and knowing *why* transfers to the
+cases nobody quizzed you on.
+
+Every output on this page was run in Node 24 rather than recalled.
+
+## Mechanics
+
+### Coercion and equality
+
+```js
+[] == false        // true
+[] == ![]          // true
+'5' + 3            // '53'
+'5' - 3            // 2
+0.1 + 0.2 === 0.3  // false
+NaN === NaN        // false
+null == undefined  // true
+null === undefined // false
+typeof null        // 'object'
+typeof NaN         // 'number'
+[1, 2, 3] + [4]    // '1,2,34'
+```
+
+Each of these is derivable. Take `[] == false`:
+
+1. `==` with a boolean operand converts the boolean to a number: `false → 0`.
+2. Now it is `[] == 0`. An object compared to a number is converted to a primitive
+   via `ToPrimitive`, which for an array calls `join` → `''`.
+3. Now it is `'' == 0`. A string compared to a number converts the string:
+   `'' → 0`.
+4. `0 == 0` → **true**.
+
+And `[] == ![]` is the same thing: `![]` is `false` (arrays are truthy), so it
+reduces to step 1.
+
+`'5' + 3` versus `'5' - 3` differ because **`+` is overloaded and `-` is not.** If
+either operand of `+` is a string after `ToPrimitive`, it concatenates. `-` has no
+string meaning, so both sides go to numbers.
+
+`0.1 + 0.2` is not a JavaScript flaw — it is IEEE 754 binary floating point, and
+Python and Java give the same answer. Neither 0.1 nor 0.2 is exactly representable
+in binary, for the same reason 1/3 is not exactly representable in decimal.
+
+**The rule to state: always `===`**, with one useful exception — `x == null` is the
+idiomatic test for "null or undefined", and it is the only `==` worth writing
+deliberately.
+
+### `sort` is lexicographic by default
+
+```js
+[10, 9, 1].sort()               // [1, 10, 9]   ← not a typo
+[10, 9, 1].sort((a, b) => a - b) // [1, 9, 10]
+```
+
+The default comparator converts every element to a string and compares UTF-16 code
+units, so `'10' < '9'`. This bites hardest on ids and prices, where the data
+happens to be sorted correctly for small values and silently wrong past 9.
+
+`sort` also **mutates in place** and returns the same array reference.
+`toSorted()` is the non-mutating version.
+
+### Hoisting and the temporal dead zone
+
+```js
+console.log(a); var a = 1;   // undefined
+console.log(b); let b = 1;   // ReferenceError
+foo(); function foo() {}     // works
+bar(); var bar = () => {};   // TypeError: bar is not a function
+```
+
+Declarations are processed before execution, but *how* differs:
+
+- **`var`** is created and initialised to `undefined`. So the read succeeds and
+  gives you a value that means nothing.
+- **`let` and `const`** are created but *not* initialised. The gap between creation
+  and the declaration line is the **temporal dead zone**, and reading in it throws.
+  This is deliberate: the error is better than the wrong answer.
+- **Function declarations** are fully hoisted, body and all.
+- **A function assigned to a `var`** hoists only the variable, so `bar` is
+  `undefined` and calling it is a `TypeError` rather than a `ReferenceError`. The
+  difference in error message is the clue to which one you have.
+
+### Closures in loops
+
+```js
+for (var i = 0; i < 3; i++) setTimeout(() => console.log(i), 0); // 3 3 3
+for (let i = 0; i < 3; i++) setTimeout(() => console.log(i), 0); // 0 1 2
+```
+
+`var` is function-scoped, so all three callbacks close over **one binding**, which
+is 3 by the time any of them runs. `let` creates a **fresh binding per iteration**,
+so each callback captures its own.
+
+The deeper point: a closure captures *the variable*, not the value. Understanding
+that predicts far more than this one case.
+
+### `this` is set by the call site
+
+```js
+const obj = {
+  name: 'x',
+  regular() {
+    return this.name;
+  }, // 'x'
+  arrow: () => this.name, // undefined — lexical `this`
+};
+
+const f = obj.regular;
+f(); // undefined, or throws in strict mode — `this` was lost on detach
+```
+
+`obj.regular()` passes `obj` as `this` because of the dot. Assigning the function
+to `f` and calling `f()` has no dot, so there is no receiver. The method did not
+change; the call did.
+
+Arrow functions have **no own `this`, `arguments`, or `prototype`**, and cannot be
+`new`-ed. They inherit `this` lexically from where they were defined, which is
+exactly right for a callback and exactly wrong for an object method.
+
+### References, copies, and mutation
+
+```js
+const a = { x: 1, nested: { y: 2 } };
+const b = a;
+b.x = 2; // a.x === 2 — same object
+
+const c = { ...a }; // shallow: c.nested IS a.nested
+const d = structuredClone(a); // deep
+```
+
+| Mutate | Do not mutate |
+|---|---|
+| `push` `pop` `shift` `unshift` | `slice` `concat` `map` `filter` `reduce` |
+| `splice` `sort` `reverse` | `toSorted` `toReversed` `toSpliced` `with` |
+| `fill` `copyWithin` | `flat` `flatMap` |
+
+The `to*` methods and `with` are the modern non-mutating counterparts, and they
+remove most of the reason to reach for `slice()` before `sort()`.
+
+### Truthiness, and why it disagrees with `==`
+
+Falsy: `false`, `0`, `-0`, `0n`, `''`, `null`, `undefined`, `NaN`. **Everything
+else is truthy — including `[]`, `{}`, `'0'`, and `'false'`.**
+
+```js
+if ([]) console.log('runs'); // runs — [] is truthy
+[] == false; // true — different algorithm entirely
+```
+
+Both are correct, and they use different rules: truthiness is `ToBoolean` on the
+value itself, while `==` coerces both sides toward numbers. This pair is the
+clearest demonstration that "JavaScript is inconsistent" is really "JavaScript has
+several conversion algorithms and you have to know which one applies".
+
+```js
+0 || 5; // 5  — || tests truthiness
+0 ?? 5; // 0  — ?? tests only null/undefined
+```
+
+Use `??` whenever `0` or `''` are legitimate values, which for anything
+configuration-shaped they usually are.
+
+### The `map(parseInt)` trap
+
+```js
+[1, 2, 3].map(parseInt); // [1, NaN, NaN]
+```
+
+`map` calls the callback with `(value, index, array)`, and `parseInt` takes
+`(string, radix)`. So the calls are `parseInt(1, 0)`, `parseInt(2, 1)`,
+`parseInt(3, 2)`. Radix 0 is treated as 10, radix 1 is invalid, and `3` is not a
+valid digit in base 2.
+
+Fix with `.map(Number)` or `.map((x) => parseInt(x, 10))`. The general lesson:
+**passing a multi-argument function directly to `map` is a hazard**, because the
+extra arguments arrive silently.
+
+### Object key ordering is specified, and surprising
+
+```js
+Object.keys({ b: 1, 2: 2, a: 3, 1: 4 }); // ['1', '2', 'b', 'a']
+```
+
+Integer-like keys come first in **ascending numeric order**, then string keys in
+insertion order. So an object is only insertion-ordered if none of its keys look
+like array indices. Use a `Map` when order matters and keys are arbitrary.
+
+## Complexity
+
+**Floating point is where the surprises have real cost.** A double has 53 bits of
+mantissa, so integers are exact only up to $2^{53} - 1$:
+
+```js
+Number.MAX_SAFE_INTEGER; // 9007199254740991
+9007199254740992 === 9007199254740993; // true — both round to the same double
+```
+
+That matters concretely: a 64-bit database id or a Twitter-style snowflake id
+exceeds it, so `JSON.parse` on an id sent as a number **silently changes it**. This
+is why well-designed APIs send large ids as strings.
+
+For non-integers, the representable values are spaced $2^{e-52}$ apart, so absolute
+precision degrades as magnitude grows while *relative* precision stays constant at
+about $2^{-53} \approx 1.1 \times 10^{-16}$. Summing $n$ floats accumulates error
+that grows as $O(n\varepsilon)$ in the worst case and $O(\sqrt{n}\varepsilon)$ for
+random rounding — which is why summing a million currency values in floats drifts
+visibly, and why money belongs in integer cents or a decimal type.
+
+**String concatenation in a loop is the classic accidental quadratic.** Strings are
+immutable, so naive concatenation copies:
+
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2} = O(n^2)
+$$
+
+Modern engines optimise this heavily with rope representations, so the naive
+version is usually fine — but `arr.join('')` is $O(n)$ by construction and does not
+depend on an optimisation holding.
+
+**`delete` on an array is worse than it looks.** It leaves a hole, converting a
+dense array into a sparse one, and engines de-optimise sparse arrays out of their
+fast packed representation — a large constant-factor penalty on every subsequent
+operation, not just the delete. Use `splice` or `filter`.
+
+**Property access is not uniformly $O(1)$.** Engines optimise objects with a
+consistent shape (hidden classes) into something close to a struct field offset.
+Adding properties in different orders to otherwise-identical objects creates
+different shapes, which turns a monomorphic property access into a megamorphic one
+and costs a dictionary lookup instead. Initialising all fields in the constructor,
+in the same order, is a real optimisation and not folklore.
+
+## When NOT to use it
+
+**Do not use `==`** except for `x == null`. The coercion table is derivable but
+nobody derives it under time pressure, including the person reading your code.
+
+**Do not use `sort()` without a comparator** on anything numeric.
+
+**Do not use floats for money.** Integer cents, or a decimal library. `0.1 + 0.2`
+is the demonstration; the failure in production is a total that is off by a cent
+after ten thousand additions, and it is unreproducible in a small test.
+
+**Do not use arrow functions as object methods or prototype methods.** They capture
+`this` lexically, so they cannot see the instance:
+
+```js
+class Timer {
+  interval = 1000;
+  tick = () => this.interval; // ✓ fine — captures the instance's `this`
+}
+
+const obj = {
+  interval: 1000,
+  tick: () => this.interval, // ✗ `this` is module scope, not obj
+};
+```
+
+The class field version works and the object literal version does not, which is
+worth knowing precisely because they look identical.
+
+**Do not use `var`.** Function scoping and hoist-to-`undefined` produce bugs that
+`let` and `const` make impossible.
+
+**Do not pass a multi-argument function directly to `map`, `filter`, or `forEach`.**
+The extra arguments arrive whether you wanted them or not.
+
+**Do not rely on object key order** unless you know none of the keys are
+integer-like. Use a `Map`.
+
+**Do not use `structuredClone` on everything.** It is a deep copy, so it is
+$O(\text{size})$, and it throws on functions, DOM nodes, and class prototypes — an
+instance comes back as a plain object with no methods.
+
+## Real-world usage
+
+**`Object.is` and `Number.isNaN`** exist because `===` has two documented
+irregularities: `NaN !== NaN`, and `0 === -0`. `Object.is` fixes both, which
+matters inside equality checks in frameworks — React's `useState` bail-out uses
+`Object.is` precisely so that setting state to `NaN` does not re-render forever.
+
+**The `==` null idiom appears throughout real codebases** because it is the
+shortest correct way to test for "absent", covering both `null` and `undefined`
+without treating `0` or `''` as absent.
+
+**Closure-per-iteration is why `let` was introduced** with block scoping in the
+first place. Before it, the workaround was an IIFE to create a scope per
+iteration — a pattern still visible in older code and now entirely unnecessary.
+
+**`this` binding drives a lot of framework API design.** Every event-handler API
+that takes a callback has to decide what `this` will be, which is why class
+components needed `.bind(this)` in constructors and why hooks — plain functions
+with no `this` at all — removed an entire category of bug.
+
+**The safe-integer boundary shapes API contracts.** Any id generated by a 64-bit
+sequence, snowflake, or database `bigint` must cross JSON as a string, because
+`JSON.parse` will silently round it otherwise. The bug is invisible until two
+distinct ids collide.
+
+## Failure modes
+
+**Symptom: a list is sorted correctly until values exceed 9.** Default `sort`,
+comparing strings. Reliably passes small-fixture tests.
+
+**Symptom: a total is off by a few cents, and only on large datasets.**
+Accumulated floating-point error. Unreproducible with three test rows.
+
+**Symptom: two different records have the same id after a round trip.** Large
+integer ids crossing JSON as numbers, rounded to the nearest representable double.
+
+**Symptom: `this is undefined` inside a method.** The method was detached — passed
+as a callback, destructured, or assigned to a variable. `obj.method.bind(obj)`, or
+an arrow-function class field.
+
+**Symptom: a callback logs the last value of a loop variable, every time.** `var`
+in a loop, one shared binding.
+
+**Symptom: mutating a copy changed the original.** A spread is shallow — nested
+objects are still shared. This is one of the most common React bugs, because
+mutating nested state means the reference never changes and nothing re-renders.
+
+**Symptom: a config value of `0` or `''` is silently replaced by the default.**
+`||` instead of `??`. Reliably ships, because the default is usually right.
+
+**Symptom: a `for...in` loop picks up unexpected keys.** It walks the prototype
+chain and visits string keys in the surprising order above. `Object.keys`,
+`for...of`, or `Object.entries` instead.
+
+**Symptom: an array operation became mysteriously slow after a refactor.** A
+`delete` created a hole and de-optimised the array into sparse representation.
+
+## Practice problems
+
+**1. Predict every line, and say which rule applies.**
+
+```js
+console.log(typeof null);
+console.log([] + {});
+console.log(1 < 2 < 3);
+console.log(3 > 2 > 1);
+console.log([1, 2, 3] == '1,2,3');
+```
+
+<details>
+<summary>Solution</summary>
+
+```text
+'object'
+'[object Object]'
+true
+false
+true
+```
+
+**`typeof null`** is `'object'` — a bug from 1995, kept because fixing it would
+break the web. Values were tagged by their low bits and the null pointer's tag
+collided with the object tag.
+
+**`[] + {}`** — `+` calls `ToPrimitive` on both. `[]` joins to `''`; `{}` becomes
+`'[object Object]'`. One operand is a string, so it concatenates.
+
+**`1 < 2 < 3`** — relational operators are left-associative, so this is
+`(1 < 2) < 3` → `true < 3` → `1 < 3` → `true`. Correct answer, wrong reason.
+
+**`3 > 2 > 1`** — same shape, and here the coercion shows: `(3 > 2) > 1` →
+`true > 1` → `1 > 1` → **false**. This pair is the good demonstration, because the
+first one accidentally agrees with the mathematical reading and the second does not.
+
+**`[1,2,3] == '1,2,3'`** — object compared to string, so `ToPrimitive` on the
+array gives `'1,2,3'`, and the strings are equal.
+
+</details>
+
+**2. Fix this without changing the loop.**
+
+```js
+const buttons = document.querySelectorAll('button');
+for (var i = 0; i < buttons.length; i++) {
+  buttons[i].addEventListener('click', () => console.log('clicked', i));
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+Every handler logs `buttons.length`, because `var` is function-scoped: all the
+closures share one binding, and by the time any click happens the loop has finished
+and `i` is its final value.
+
+```js
+for (let i = 0; i < buttons.length; i++) {
+  // `let` creates a fresh binding per iteration, so each closure gets its own.
+  buttons[i].addEventListener('click', () => console.log('clicked', i));
+}
+```
+
+Before `let`, the fix was an IIFE to manufacture a scope:
+
+```js
+for (var i = 0; i < buttons.length; i++) {
+  (function (j) {
+    buttons[j].addEventListener('click', () => console.log('clicked', j));
+  })(i);
+}
+```
+
+Which shows what `let` is doing under the hood — the per-iteration binding is
+exactly the parameter of that function.
+
+The idea worth carrying away: **a closure captures the variable, not the value.**
+Ask "how many bindings exist?" and the answer falls out.
+
+</details>
+
+**3. Why does this print `undefined`, and give two fixes?**
+
+```js
+class Counter {
+  count = 0;
+  increment() {
+    this.count++;
+    return this.count;
+  }
+}
+
+const c = new Counter();
+const inc = c.increment;
+inc(); // TypeError
+[1, 2, 3].forEach(c.increment); // TypeError
+```
+
+<details>
+<summary>Solution</summary>
+
+`this` is determined by the call site. `c.increment()` passes `c` because of the
+dot; `inc()` has no receiver, so `this` is `undefined` in a class body (class code
+is always strict mode), and `this.count` throws.
+
+`forEach(c.increment)` is the same bug in the shape it usually arrives in — the
+method is detached the moment it is passed as a value.
+
+```js
+// Fix 1: bind at the call site.
+const inc = c.increment.bind(c);
+[1, 2, 3].forEach((n) => c.increment(n));
+
+// Fix 2: an arrow class field, bound per instance at construction.
+class Counter {
+  count = 0;
+  increment = () => {
+    this.count++;
+    return this.count;
+  };
+}
+```
+
+The trade is worth knowing rather than picking a favourite. A class field is a
+**per-instance** function, so a thousand counters means a thousand closures rather
+than one shared prototype method — more memory, and it is not on the prototype so
+it cannot be overridden by a subclass or stubbed via the prototype in a test. A
+prototype method with `.bind` at the call site keeps one function, at the cost of
+every caller remembering.
+
+For components and callbacks, the arrow field is usually right. For a class that
+will be instantiated in large numbers, it is not.
+
+</details>
+
+<Quiz
+  client:visible
+  id="js-truthy-vs-equals"
+  kind="output"
+  question="What does this print?"
+  snippet={`if ([]) console.log('A');
+if ([] == false) console.log('B');`}
+  lang="typescript"
+  options={[
+    { label: 'A and B', correct: true },
+    { label: 'A only' },
+    { label: 'B only' },
+    { label: 'Neither' },
+  ]}
+  explanation={
+    <>
+      <p>
+        Both, and they are not contradictory — they use different algorithms.
+      </p>
+      <p>
+        <code>if ([])</code> applies <code>ToBoolean</code> to the value itself, and
+        only the seven falsy values are false. An array is an object, so it is
+        truthy however empty it is.
+      </p>
+      <p>
+        <code>[] == false</code> applies the loose-equality algorithm, which coerces
+        toward numbers: <code>false</code> → <code>0</code>, then the array →{' '}
+        <code>''</code> → <code>0</code>, and <code>0 == 0</code>.
+      </p>
+      <p>
+        This pair is the cleanest evidence that "JavaScript is inconsistent" is
+        really "JavaScript has several conversion algorithms" — and the practical
+        consequence is to never write <code>== false</code>, since{' '}
+        <code>if (!x)</code> means something genuinely different.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="js-hoisting"
+  kind="output"
+  question="What does this print?"
+  snippet={`console.log(typeof a);
+console.log(typeof b);
+var a = 1;
+let b = 1;`}
+  lang="typescript"
+  options={[
+    { label: "'undefined', then a ReferenceError", correct: true },
+    { label: "'undefined', then 'undefined'" },
+    { label: 'A ReferenceError on the first line' },
+    { label: "'number', then 'number'" },
+  ]}
+  explanation={
+    <>
+      <p>
+        <code>var a</code> is hoisted <em>and initialised</em> to{' '}
+        <code>undefined</code>, so the read succeeds and <code>typeof</code> reports{' '}
+        <code>'undefined'</code>.
+      </p>
+      <p>
+        <code>let b</code> is hoisted but <em>not initialised</em>. The region
+        between the top of the block and the declaration is the temporal dead zone,
+        and any access in it throws — including <code>typeof</code>, which is
+        otherwise the one operator safe to use on undeclared identifiers.
+      </p>
+      <p>
+        That last detail is the interesting one: <code>typeof undeclaredThing</code>{' '}
+        returns <code>'undefined'</code> harmlessly, but{' '}
+        <code>typeof tdzThing</code> throws. The TDZ is deliberately stricter, on
+        the grounds that an error beats a wrong answer.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"Explain `==` versus `===`."**
+
+> `===` compares type and value with no conversion. `==` runs a coercion algorithm
+> first, which is well specified but not memorable — it is why `[] == false` is
+> true while `[]` is truthy, because those are two different conversions.
+>
+> I use `===` everywhere, with one exception: `x == null` is the idiomatic test for
+> "null or undefined", and it is the only loose equality I would write on purpose.
+
+**"What is a closure?"** A function together with the scope it was created in. The
+part worth adding is what it captures:
+
+> It captures the *variable*, not the value — which is exactly why `var` in a loop
+> gives you the last value in every callback and `let` does not. `var` is
+> function-scoped so there is one binding; `let` creates a fresh binding per
+> iteration.
+
+**"How does `this` work?"**
+
+> It is decided by the call site, not the definition. `obj.method()` passes `obj`
+> because of the dot; assigning that method to a variable and calling it has no
+> receiver, so `this` is undefined. The function did not change — the call did.
+>
+> Arrow functions are the exception: they have no own `this` and take it lexically
+> from where they were defined, which is right for callbacks and wrong for object
+> methods.
+
+**"Why is `0.1 + 0.2 !== 0.3`?"** IEEE 754 — neither value is exactly representable
+in binary, the same way 1/3 is not exactly representable in decimal. Not a
+JavaScript quirk; Python and Java agree. The practical consequence is that money
+goes in integer cents, and comparisons use an epsilon.
+
+**The caveats worth voicing:**
+
+- Integers are exact only to $2^{53}-1$, so 64-bit ids must cross JSON as strings
+  or `JSON.parse` silently rounds them.
+- A spread is a shallow copy. Nested objects are still shared, which is the most
+  common source of "I mutated a copy and the original changed".
+- `||` falls back on any falsy value, so `0` and `''` get replaced by defaults.
+  `??` only falls back on null and undefined, and is what you want for config.

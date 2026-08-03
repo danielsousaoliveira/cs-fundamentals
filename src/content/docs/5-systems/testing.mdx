@@ -1,0 +1,619 @@
+---
+title: Testing
+description: >-
+  Why the pyramid is the wrong shape for a backend, why fakes beat mocks, and
+  why a test that mocks the database passes while the query is wrong.
+sidebar:
+  order: 7
+difficulty: core
+status: complete
+prereqs: ['5-systems/databases']
+tags: [testing, mocks, integration, tdd, coverage, flaky]
+languages: [typescript]
+sources:
+  - interview-notes
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A test exists to answer one question: **if I change this code and break something,
+will I find out?** Everything else — coverage numbers, pyramid shapes, TDD
+orthodoxy — is downstream of that, and worth exactly as much as it contributes to
+it.
+
+Which reframes the usual question. The interesting property of a test is not
+whether it passes. It is:
+
+- **What would have to break for this test to fail?** If the answer is "nothing
+  that matters", the test is decoration.
+- **What could break without this test failing?** That is your actual gap, and it
+  is invisible in a coverage report.
+
+The second question is where mocks do their damage. A test that substitutes the
+database passes whether or not your SQL is correct — and a wrong query is the most
+likely defect in the code you are testing. You have written a test that verifies
+your expectations about your own mock.
+
+## Mechanics
+
+### The three levels, pinned down
+
+People use these words differently, so it is worth being precise:
+
+- **Unit test** — one function or class in isolation, dependencies substituted.
+  Milliseconds. Tells you *this logic* is right.
+- **Integration test** — several real components together, typically your app plus
+  a real database. Hundreds of milliseconds. Tells you the *wiring* is right: the
+  query, the transaction, the serialisation, the middleware order.
+- **End-to-end test** — the whole system through the user's interface. Seconds.
+  Tells you the *product* works.
+
+The **testing pyramid** says: many unit, fewer integration, very few e2e. The shape
+follows from cost — a unit test runs in a millisecond and cannot flake; an e2e test
+takes 30 seconds, needs a browser and a database, and fails for reasons unrelated
+to your change.
+
+**The refinement worth making for a backend** is that the pyramid over-weights the
+base. The integration layer gives the best return, because most bugs live at the
+boundaries. The things that actually break production are:
+
+- the query does not do what you thought;
+- the serialisation drops a field;
+- the middleware runs in the wrong order;
+- the migration did not apply.
+
+**None of those are visible to a unit test**, because a unit test with a mocked
+repository passes whether or not the SQL is right. Unit tests still earn their
+place for pure logic — pricing rules, a state machine, date arithmetic — where they
+are cheap and they document intent. But a suite's quality is not its unit-test
+count.
+
+### Test doubles, and why the vocabulary matters
+
+Everyone says "mock" for all five of these. Knowing the distinctions is really
+about knowing *why* you are substituting something.
+
+| Double | What it does | Use when |
+|---|---|---|
+| **Dummy** | Passed to satisfy a signature, never used | The dependency is irrelevant to this test |
+| **Stub** | Returns canned data, no assertions | The test needs the dependency to *provide* something |
+| **Spy** | Records how it was called | The *call itself* is the behaviour under test |
+| **Mock** | Pre-programmed expectations, verified | You must prove an interaction happened exactly so |
+| **Fake** | A real, working, lightweight implementation | Almost always |
+
+**Prefer fakes over mocks**, and the reason is about what survives refactoring:
+
+> A mock asserts on the *interaction*, so the test is coupled to how the code
+> achieves its result. Refactor two calls into one batched call and a passing test
+> goes red without any behaviour changing. A fake lets you assert on the *outcome*
+> instead — "after booking, the repository contains one appointment" — and that
+> test survives the refactor.
+
+```ts
+class InMemoryAppointmentRepo implements AppointmentRepository {
+  private rows = new Map<string, Appointment>();
+
+  async save(a: Appointment) {
+    this.rows.set(a.id, a);
+  }
+
+  async findConflicting(doctorId: string, r: TimeRange) {
+    // Two ranges overlap iff each starts before the other ends.
+    return [...this.rows.values()].filter(
+      (a) => a.doctorId === doctorId && a.startsAt < r.end && r.start < a.endsAt,
+    );
+  }
+}
+```
+
+Twenty lines, reusable across the whole suite, and it makes every arrange step
+readable.
+
+### What to mock, and where the line is
+
+**Mock at the edges of your system, not inside it.** Every mock in the middle is a
+place where the test and the code can agree with each other while both are wrong.
+
+**Mock what you do not own** — third-party HTTP, payment providers, email, an LLM
+provider. Those are slow, rate-limited, cost money, and are not yours to control.
+
+**Do not mock your own database.** Run a real Postgres in Testcontainers. A mocked
+repository verifies your expectations about your own mock, and the wrong query is
+precisely the defect you were trying to catch.
+
+<Tabs syncKey="lang">
+<TabItem label="Boundary mocking (MSW)">
+
+```ts
+// Intercepts at the network layer rather than substituting the HTTP client.
+// The code under test is completely unmodified — it still calls fetch — so the
+// assertion is against a real request and response, which is the actual
+// contract. This test survives swapping axios for fetch.
+const server = setupServer(
+  http.post('https://api.example.com/v1/charges', async ({ request }) => {
+    const body = await request.formData();
+    if (!body.get('idempotency_key')) {
+      return HttpResponse.json({ error: 'missing key' }, { status: 400 });
+    }
+    return HttpResponse.json({ id: 'ch_1', status: 'succeeded' });
+  }),
+);
+```
+
+</TabItem>
+<TabItem label="Real database (Testcontainers)">
+
+```ts
+// A real Postgres, started per suite. Slower than a mock, and the only thing
+// that can tell you the constraint, the migration and the query are right.
+let container: StartedPostgreSqlContainer;
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:17').start();
+  await migrate(container.getConnectionUri());
+}, 60_000);
+
+// Roll back rather than truncate: faster, and it guarantees isolation between
+// tests without anyone having to remember to clean up.
+beforeEach(() => db.query('BEGIN'));
+afterEach(() => db.query('ROLLBACK'));
+```
+
+</TabItem>
+</Tabs>
+
+### The practices that actually prevent bugs
+
+**AAA — Arrange, Act, Assert.** Three visually separated blocks. If the Act block
+has three actions, you are testing a workflow — which is fine, but say so, and do
+not be surprised when the failure message cannot tell you which step broke.
+
+**Test names describe behaviour**, in the form "does X when Y":
+
+```text
+✓ rejects a booking when the slot is already confirmed
+✗ test1  /  it works  /  testBooking2
+```
+
+The reason is practical: the name is what you read in a red CI log at 6pm.
+`test1 failed` means opening the file; the first form often tells you the cause
+outright.
+
+**Independent and order-independent.** No shared mutable state, fresh data per
+test, a rollback between integration tests. The diagnostic is concrete: the suite
+should pass with `--randomize` *and* pass when you run one test alone. If test 7
+only passes after test 3, you have two tests pretending to be one, and it will
+surface months later as a mystery.
+
+**Deterministic.** Same input, same result, forever:
+
+```ts
+// Freeze time. A test touching dates without this fails at midnight, in another
+// timezone, on the DST changeover, or when someone runs it in February.
+vi.useFakeTimers();
+vi.setSystemTime(new Date('2026-07-22T09:00:00Z'));
+```
+
+Seed randomness or inject an id generator. Never depend on the network — a test
+that hits a real API fails when you are on a train, and worse, *passes* when the
+API is silently broken. And never `await sleep(500)`: it is either flaky on a
+loaded CI box or slow on a fast one. Wait for a condition instead.
+
+## Complexity
+
+**The cost of a test is paid on every run, forever, by everyone.** With $n$ tests
+each costing $c$, run $r$ times a day across $d$ developers, the daily cost is
+$n \cdot c \cdot r \cdot d$ — and $r$ is not fixed. It *falls* as the suite gets
+slower, because people stop running it.
+
+That feedback loop is the real argument for the pyramid's shape:
+
+| Level | Typical cost | 1,000 of them | Can it flake? |
+|---|---:|---:|---|
+| Unit | 1 ms | 1 s | No |
+| Integration | 200 ms | 3 min | Rarely |
+| E2E | 30 s | 8 hours | Constantly |
+
+A thousand e2e tests is not a thorough suite, it is a suite nobody runs.
+
+**Flakiness compounds multiplicatively, which is the part people underestimate.**
+If each test independently passes with probability $p$, a suite of $n$ tests is
+green with probability $p^n$:
+
+$$
+P(\text{green}) = p^{\,n}
+$$
+
+| Per-test reliability | 100 tests | 1,000 tests |
+|---:|---:|---:|
+| 99.9% | 90.5% | 36.8% |
+| 99.99% | 99.0% | 90.5% |
+| 99.999% | 99.9% | 99.0% |
+
+At 99.9% per test — which sounds excellent — a suite of 1,000 fails **63% of the
+time** for no reason at all. That is the arithmetic behind the strongest claim in
+testing:
+
+> A flaky test is worse than no test.
+
+And the reason is social rather than technical. A flaky suite trains the team to
+re-run CI instead of reading it, and once that habit exists, **a real failure gets
+re-run too**. Better to delete a flaky test and know you have a gap than keep it
+and lose the team's trust in a red build.
+
+**Coverage saturates, and the last 20% costs the most.** Defect detection against
+coverage is roughly logarithmic: the first 60% is cheap and catches most crashes,
+60–80% catches real logic bugs, and 80–100% is increasingly spent on getters,
+generated code, and unreachable error branches. That is why a 100% mandate reliably
+produces tests written to satisfy the number:
+
+```ts
+// 100% line coverage of createUser. Asserts nothing. Proves the lines executed.
+it('creates a user', async () => {
+  await service.createUser(dto);
+});
+```
+
+Coverage is a smoke detector, not a goal. What matters is whether the **branches
+that matter** are covered — the error paths, the conflict path, the empty-list
+case. A useful CI rule is "coverage must not *decrease*", which catches untested
+new code without forcing anyone to test a getter.
+
+## When NOT to use it
+
+**Do not unit-test code whose only job is to call something else.** A repository
+method that is one line of SQL has no logic to unit-test; a test with a mocked
+driver asserts that you called the mock. Test it with a real database or not at
+all.
+
+**Do not write an e2e test for a case an integration test can cover.** E2E is for
+the handful of flows where the *product* working end to end is the thing at risk —
+signup, checkout, the critical path. Everything else is cheaper and more reliable
+one layer down.
+
+**Do not mock inside your own system.** Repeated because it is the most common
+mistake: a mock between two of your own modules lets both drift and stay green.
+
+**Do not use `.toThrow()` with no argument.**
+
+```ts
+await expect(book(slot)).rejects.toThrow();             // ✗ passes for ANY error
+await expect(book(slot)).rejects.toThrow('SLOT_TAKEN'); // ✓
+```
+
+The bare form passes for a `TypeError` thrown by your own broken test setup —
+exactly the case where you most want to know.
+
+**Do not claim strict TDD.** The honest position is better:
+
+> I use it where the logic is well-specified and I am going to iterate — a pricing
+> rule, a state machine, a parser. Writing the test first genuinely does force a
+> usable interface, because you write the call site before the implementation and
+> it is obvious when the call site is awkward. For exploratory work, a new
+> integration or an unfamiliar library, I write the code first and the tests
+> immediately after, because I do not yet know enough to specify the behaviour.
+
+**Do not add contract tests inside one team deploying one service.** They solve a
+specific problem — a consumer mocks a provider, the provider changes, both suites
+stay green, production breaks — and that problem requires independent deployment to
+exist.
+
+## Real-world usage
+
+**Testcontainers changed what "integration test" costs.** A real Postgres in
+Docker, started per suite, torn down after. That makes it practical to test the
+thing that actually breaks: constraints, migrations, transaction behaviour, and
+whether your ORM generated the query you think it did.
+
+**MSW is the right shape for outbound HTTP** because it intercepts at the network
+layer rather than substituting your client. The code under test is unmodified — it
+still calls `fetch` — so you assert against a request and a response, which is the
+real contract, rather than against your own mock's shape.
+
+**Playwright for e2e**, with two rules that eliminate most flakiness: locate by
+accessible role and name (`getByRole('button', { name: 'Book' })`) rather than by
+CSS, so the test breaks when the *behaviour* changes rather than when a class name
+does; and rely on its auto-waiting instead of sleeping.
+
+**Contract tests (Pact)** for services that deploy independently: the consumer's
+expectations are recorded and replayed against the provider's build, so the
+provider's CI fails when it breaks a consumer.
+
+## Failure modes
+
+**Symptom: the suite is green and production is broken.** The most common cause is
+mocking at the wrong level. If the repository was mocked, no test ever executed the
+query, so the suite proves the code calls a function you wrote in the test file.
+
+**Symptom: CI fails, someone re-runs it, it passes.** Flakiness, and — per the
+arithmetic above — this is on a path to a suite nobody believes. Common sources, in
+order: unfrozen time, shared state between tests, `sleep` instead of waiting for a
+condition, and test ordering dependencies.
+
+**Symptom: a test passes and asserts nothing.** The async trap, which quietly
+deletes tests:
+
+```ts
+it('rejects', () => {
+  expect(book(slot)).rejects.toThrow();   // ✗ no await
+});
+```
+
+Without the `await`, the assertion returns a pending promise, the test function
+returns, the runner marks it passed, and the rejection surfaces later as an
+unhandled rejection warning nobody reads. **Always `await` or `return` the
+promise.**
+
+**Symptom: a refactor with no behaviour change turns the suite red.** Over-mocking.
+The tests assert on interactions rather than outcomes, so they are pinned to the
+implementation. This is what makes a test suite feel like a tax rather than a
+safety net.
+
+**Symptom: coverage is 95% and bugs still ship.** Coverage measures execution, not
+assertion. Look at branch coverage on error paths instead.
+
+**Symptom: tests pass locally, fail in CI.** Almost always an environment
+assumption — timezone, locale, filesystem case-sensitivity, or a test that depends
+on a service running locally. Freezing time and pinning locale removes most of it.
+
+**Symptom: one test fails only when the full suite runs.** Shared state. Run it
+alone to confirm, then find what the earlier test left behind — a row, a global, a
+mocked module never restored.
+
+## Practice problems
+
+**1. What does this test actually prove?**
+
+```ts
+it('books an appointment', async () => {
+  const repo = { save: jest.fn(), findConflicting: jest.fn().mockResolvedValue([]) };
+  const service = new BookingService(repo);
+
+  await service.book({ doctorId: 'd1', startsAt: '09:00' });
+
+  expect(repo.save).toHaveBeenCalled();
+});
+```
+
+<details>
+<summary>Solution</summary>
+
+It proves that `book` calls `save` when `findConflicting` returns an empty array.
+That is very nearly nothing.
+
+**It cannot detect a wrong conflict query**, because `findConflicting` is a mock —
+the real one could have an inverted overlap condition and this stays green.
+
+**It cannot detect a missing database constraint**, so the double-booking
+guarantee is entirely untested.
+
+**It asserts the interaction, not the outcome.** Refactor `save` into `saveMany`
+and the test fails despite identical behaviour.
+
+**`toHaveBeenCalled` does not check the arguments**, so `save(undefined)` passes.
+
+A better version asserts on state, using a fake:
+
+```ts
+it('rejects a booking when the slot is already confirmed', async () => {
+  const repo = new InMemoryAppointmentRepo();
+  await repo.save(confirmedAppointment({ doctorId: 'd1', startsAt: '09:00' }));
+  const service = new BookingService(repo);
+
+  await expect(
+    service.book({ doctorId: 'd1', startsAt: '09:00' }),
+  ).rejects.toThrow('SLOT_TAKEN');
+
+  expect(await repo.countFor('d1')).toBe(1);   // outcome, not interaction
+});
+```
+
+</details>
+
+**2. Test the double-booking guarantee.** Write the test that would actually catch
+a missing constraint.
+
+<details>
+<summary>Solution</summary>
+
+Two tests, and only one of them proves anything.
+
+The unit test — given a confirmed appointment at 9:00, requesting 9:00 throws —
+tests the conflict logic and runs in a millisecond. **It would still pass if you
+dropped the database constraint**, because the fake repository does not have one.
+
+```ts
+it('allows exactly one of two concurrent bookings', async () => {
+  const slot = { doctorId: 'd1', startsAt: '2026-07-22T09:00:00Z' };
+
+  const results = await Promise.allSettled([
+    api.post('/appointments').send(slot),
+    api.post('/appointments').send(slot),
+  ]);
+
+  const codes = results.map((r) => r.value.status).sort();
+  expect(codes).toEqual([201, 409]);
+  expect(await countAppointments(slot)).toBe(1);
+});
+```
+
+This one runs against a real Postgres, so it exercises the constraint where the
+guarantee actually lives.
+
+**The caveat worth stating**, because it is what a careful engineer knows about
+their own test: two concurrent requests in a test do not reliably reproduce a
+race — the timing may well serialise them. What this test really pins down is that
+the constraint exists and that the 409 mapping works. The confidence that
+concurrency is safe comes from the constraint's existence, not from the test's
+timing.
+
+</details>
+
+**3. Diagnose the flake.** This fails roughly one run in twenty:
+
+```ts
+it('expires the session after 30 minutes', async () => {
+  const session = await createSession(user);
+  await sleep(100);
+  expect(await isExpired(session, Date.now() + 30 * 60 * 1000)).toBe(true);
+});
+```
+
+<details>
+<summary>Solution</summary>
+
+Three problems, and the third is the flake.
+
+**`sleep(100)` does nothing** except make the suite slower. Nothing happens during
+those 100 ms; it is superstition.
+
+**It depends on real time.** `Date.now()` inside the assertion means the result
+depends on how long the lines above it took.
+
+**The boundary is exactly on the expiry.** If `isExpired` uses `>` rather than
+`>=`, the answer depends on whether elapsed time pushed it a millisecond past the
+threshold — which is why it fails occasionally rather than always. A scheduling
+hiccup on CI is enough.
+
+```ts
+it('expires the session after 30 minutes', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-07-22T09:00:00Z'));
+
+  const session = await createSession(user);
+
+  vi.advanceTimersByTime(30 * 60 * 1000 - 1);
+  expect(await isExpired(session)).toBe(false);   // just before
+
+  vi.advanceTimersByTime(1);
+  expect(await isExpired(session)).toBe(true);    // exactly at
+});
+```
+
+Frozen time makes it deterministic, and testing *both sides* of the boundary turns
+an accidental flake into a specification of the off-by-one.
+
+</details>
+
+<Quiz
+  client:visible
+  id="testing-mock-db"
+  kind="concept"
+  question="A service test mocks the repository and asserts save() was called. Which bug does it definitely NOT catch?"
+  options={[
+    { label: 'The overlap query uses the wrong comparison operator', correct: true },
+    { label: 'The service throws when the input is invalid' },
+    { label: 'The service calls save with the wrong shape' },
+    { label: 'The service forgets to call save on the happy path' },
+  ]}
+  explanation={
+    <>
+      <p>
+        The query, because the query never runs. The mock returns whatever the test
+        told it to, so the real <code>findConflicting</code> could compare the wrong
+        way round, miss the boundary case, or query the wrong column, and this test
+        stays green.
+      </p>
+      <p>
+        That is the general shape of the problem: a mock replaces the component most
+        likely to contain the defect with a component that cannot contain one. You
+        have tested the code against your own expectations rather than against
+        reality.
+      </p>
+      <p>
+        Which is why the boundary matters — mock what you do not own, and use a real
+        database for your own data access.
+      </p>
+    </>
+  }
+/>
+
+<Quiz
+  client:visible
+  id="testing-flaky-math"
+  kind="concept"
+  question="Every test in a 1,000-test suite independently passes 99.9% of the time. How often is CI green?"
+  options={[
+    { label: 'About 37% of runs', correct: true },
+    { label: 'About 99.9% of runs' },
+    { label: 'About 90% of runs' },
+    { label: 'About 63% of runs' },
+  ]}
+  explanation={
+    <>
+      <p>
+        0.999<sup>1000</sup> ≈ 0.368, so roughly 37% — CI fails almost two runs in
+        three, with nothing wrong. Flakiness compounds multiplicatively, which is
+        why a per-test reliability that sounds excellent produces a suite that is
+        useless.
+      </p>
+      <p>
+        The consequence is behavioural rather than technical. A team that sees
+        spurious red learns to re-run rather than read, and then a <em>real</em>{' '}
+        failure gets re-run too. At that point the suite has stopped being a signal.
+      </p>
+      <p>
+        It also shows why "just retry failed tests" is a trap: it hides the
+        arithmetic instead of fixing it, and the underlying non-determinism is
+        usually a real bug in the code, not only in the test.
+      </p>
+    </>
+  }
+/>
+
+## Interview answers
+
+**"How do you structure your tests?"** Lead with the refinement, not the pyramid,
+because the pyramid is what everyone says:
+
+> The pyramid is a reasonable default, but for a backend I shape it more like a
+> trophy — the integration layer gives the best return, because most bugs live at
+> the boundaries. The things that break production are: the query does not do what
+> I thought, the serialisation drops a field, the middleware runs in the wrong
+> order, the migration did not apply. None of those are visible to a unit test with
+> a mocked repository.
+>
+> I still write unit tests for pure logic — pricing rules, a state machine, date
+> arithmetic — because they are cheap and they document intent. But I would not
+> measure a suite's quality by its unit-test count.
+
+**"What do you mock?"**
+
+> The boundaries I do not own: third-party HTTP, payment providers, email. Those
+> are slow, rate-limited and cost money.
+>
+> I do not mock my own database. I run a real Postgres in Testcontainers, because
+> mocking the database means the test passes while the query is wrong — and a wrong
+> query is the single most likely defect in the code I am testing. For outbound
+> HTTP I use MSW, which intercepts at the network layer, so the code under test is
+> unmodified and I am asserting against the real contract rather than my own mock's
+> shape.
+>
+> The general principle: mock at the edges of the system, not inside it. Every mock
+> in the middle is a place where the test and the code can agree with each other
+> while both are wrong.
+
+**"Mocks or fakes?"** Fakes, wherever possible. A mock asserts on the interaction,
+so the test is coupled to how the code achieves its result — refactor two calls
+into one batched call and a passing test goes red with no behaviour change. A fake
+lets you assert on the outcome, and that test survives refactoring, which is the
+property you actually want.
+
+**"Do you practise TDD?"** The honest answer above — yes for well-specified logic,
+code-first for exploratory work. Claiming strict TDD everywhere is a claim almost
+nobody can support.
+
+**The caveats worth voicing:**
+
+- A flaky test is worse than no test, because it trains the team to re-run CI
+  instead of reading it — and then real failures get re-run too.
+- Coverage is a smoke detector, not a goal. I look at whether the branches that
+  matter are covered, and I like a "coverage must not decrease" rule rather than a
+  fixed target.
+- I try to be clear about what a test does and does not prove. Two concurrent
+  requests in a test do not reliably reproduce a race; what that test pins down is
+  that the constraint exists and the error mapping works. The concurrency
+  confidence comes from the constraint, not the timing.

@@ -718,3 +718,247 @@
 .quiz__explanation > :last-child {
   margin-bottom: 0;
 }
+
+/* ----------------------------------------------------- widget: GrowthPlot --- */
+
+.growth-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.growth-plot__axis {
+  stroke: var(--viz-border);
+  stroke-width: 1;
+}
+
+.growth-plot__curve {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.growth-plot__axis-label {
+  fill: var(--viz-text-dim);
+  font-family: var(--viz-font-mono);
+  font-size: 0.7rem;
+  text-anchor: middle;
+}
+
+.growth-plot__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.growth-plot__legend li {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0;
+}
+
+.growth-plot__swatch {
+  width: 1rem;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.growth-plot__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+}
+
+.growth-plot__controls label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.growth-plot__controls input[type='range'] {
+  width: 9rem;
+  accent-color: var(--sl-color-accent);
+}
+
+.growth-plot__controls strong {
+  color: var(--viz-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------- widget: cost-per-op chart --- */
+
+.cost-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.cost-chart__label {
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+}
+
+.cost-chart__bars {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 5rem;
+  padding-top: 0.25rem;
+  border-bottom: 1px solid var(--viz-border);
+}
+
+.cost-chart__bar {
+  flex: 1 1 0;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--viz-role-default-border);
+  opacity: 0.35;
+  transition: opacity 200ms ease;
+}
+
+/* Bars for appends that have actually happened yet at this step. */
+.cost-chart__bar[data-spent] {
+  opacity: 1;
+}
+
+.cost-chart__bar[data-resize] {
+  background: var(--viz-role-swap-border);
+}
+
+/* -------------------------------------------------- widget: HashPlayground --- */
+
+.hash-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  overflow-x: auto;
+}
+
+.hash-table__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.hash-table__index {
+  min-width: 1.5rem;
+  font-family: var(--viz-font-mono);
+  font-size: 0.7rem;
+  text-align: right;
+  color: var(--viz-text-dim);
+}
+
+.hash-table__chain {
+  display: flex;
+  align-items: center;
+  min-height: var(--viz-cell-size);
+}
+
+/* The chain reads as "attached to this bucket" rather than as a second array. */
+.hash-table__chain .viz-array {
+  padding-bottom: 0;
+}
+
+.hash-table__chain .viz-cell {
+  font-size: 0.72rem;
+}
+
+/* A toggled-on button in a widget's action row (traversal order, algorithm). */
+.viz-btn[data-selected] {
+  border-color: var(--sl-color-accent);
+  background: var(--viz-role-active-bg);
+  color: var(--viz-role-active-fg);
+}
+
+.growth-plot__toggle {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-family: var(--viz-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--viz-text-dim);
+  cursor: pointer;
+}
+
+/* Side-by-side comparison pane (BFS vs DFS, before vs after). */
+.compare-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+}
+
+/* ── EventLoopSim ─────────────────────────────────────────────────────────── */
+
+/*
+ * Four columns on wide screens, stacked on narrow ones. The order is the order
+ * the loop drains them, left to right, so "further right = runs later" is
+ * readable straight off the layout without needing the captions.
+ */
+.loop-columns {
+  display: grid;
+  /*
+   * Explicitly four, not `auto-fit`. Auto-fit wraps to 3 + 1 in a typical
+   * content column, which puts the macrotask queue underneath the call stack
+   * and destroys the one thing the layout is carrying: left-to-right IS the
+   * order the loop drains them in.
+   */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Below that, 2x2 — which still reads in order, unlike 3 + 1. */
+@media (max-width: 60rem) {
+  .loop-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.loop-column {
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+}
+
+.loop-column__body {
+  display: flex;
+  align-items: center;
+  min-height: 3.25rem;
+  overflow-x: auto;
+}
+
+.loop-column__empty {
+  font-size: 0.8rem;
+  font-style: italic;
+  opacity: 0.5;
+}
+
+.loop-output__pre {
+  min-height: 4rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-sunken, transparent);
+}

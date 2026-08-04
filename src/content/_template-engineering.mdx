@@ -1,0 +1,113 @@
+---
+# Copy this file to src/content/docs/<section>/<slug>.mdx and start filling it in.
+# It lives outside docs/ (underscore prefix) so it is never published.
+#
+# This is the ENGINEERING spine — sections 7–13 (data, databases, cloud, AI,
+# frontend, backend, architecture). The only difference from _template.mdx is
+# that "Complexity" becomes "Cost & limits". Use _template.mdx instead for
+# sections 1–6, where the derivation lands in a complexity class.
+title: Thing
+description: >-
+  One sentence a stranger could read cold and know whether this page is for them.
+sidebar:
+  order: 1
+difficulty: core
+status: draft
+prereqs: []
+tags: []
+# Whatever the work is actually done in: sql, hcl, yaml, bash, python, typescript.
+languages: [typescript]
+# Which reading paths this page appears on: ai, data, cloud, backend, frontend, fullstack.
+roles: []
+sources: []
+---
+
+{/\*
+The spine below is fixed. `pnpm lint:spine` fails CI if a page marked
+`status: complete` is missing any of these headings — most importantly
+"When NOT to use it" and "Failure modes", which are the whole point.
+
+The voice: a claim, then the smallest thing that proves it, then the failure it
+causes in production, then the caveat that stops it sounding dogmatic. Write for
+a stranger reading cold.
+
+Two rules specific to these sections:
+
+1. **Commands and output are real, or they are marked.** Paste what the terminal
+   actually printed. If you could not run it — a cloud console, a paid tier, a
+   dataset you do not have — say so beside the block and give the source and the
+   date. An invented `terraform plan` that looks plausible is worse than none,
+   because the reader cannot tell which parts to trust.
+2. **Prices and quotas rot.** Any number from a vendor's pricing page carries the
+   date you read it. Frameworks move too; pin the version you tested against.
+\*/}
+
+## Intuition
+
+The mental model, before any config or CLI. What problem does this tool exist to
+solve, and what is the one idea that makes it work? Name the thing it replaced —
+most infrastructure only makes sense as an answer to a specific pain.
+
+Use an analogy only if it survives being pushed on. A bad analogy costs more
+than none.
+
+## Mechanics
+
+How it actually works, with **real commands and real captured output**. Show the
+smallest complete example that runs, then the one flag or field that everybody
+gets wrong.
+
+A diagram belongs here if the shape is the point — a ```mermaid fence renders to
+inline SVG at build time, so it costs no JavaScript. Do not draw a diagram of
+something a sentence already made clear.
+
+## Cost & limits
+
+**Derive it — the same discipline the algorithms pages apply to a complexity
+bound, just in different units.**
+
+Requests per second before the quota bites. RU/s for this partition key. Dollars
+per TB egressed. p99 at this connection-pool size. Tokens per request, and what
+that becomes at a thousand users a day. Rows scanned versus rows returned.
+
+A number the reader can check beats an adjective. "Expensive" tells them nothing;
+"$0.09/GB egress, so a 2 TB nightly export is $180 a month" tells them whether to
+care. Show the arithmetic, and say which numbers came from a docs page and when.
+
+Say what the ceiling is, and what happens when you hit it — throttling, a queue,
+a hard error, or a silent truncation. The last one is the dangerous one.
+
+## When NOT to use it
+
+Non-negotiable. The conditions under which this is the wrong tool, and what to
+reach for instead. Include the case where the answer is "nothing — you do not
+have this problem yet", because premature infrastructure is the most common
+version of this mistake.
+
+If you cannot name three, you do not understand the tool well enough to write the
+page yet.
+
+## Real-world usage
+
+Where this actually appears, specifically enough to be checkable. Which layer of
+which kind of system, at what scale, and what it is doing there.
+
+## Failure modes
+
+Non-negotiable. How it breaks in production and **what the symptom looks like
+from the outside** — the 3am page, the bill, the silently empty table, the
+latency cliff after a deploy that changed nothing.
+
+Name the symptom first, because that is what the reader meets before they know
+the cause. Then the cause, then the fix, then how to detect it earlier next time.
+
+## Practice problems
+
+Two or three, with worked solutions, chosen to exercise the failure modes above
+rather than to be documentation trivia. "Here is a query plan / a plan diff / a
+bill — what is wrong?" beats "what does flag X do?".
+
+## Interview answers
+
+The two-minute spoken version, plus the caveat that signals you have run this in
+production rather than only read about it. The caveat is the part that lands.

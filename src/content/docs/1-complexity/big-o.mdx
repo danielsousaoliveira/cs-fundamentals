@@ -169,21 +169,20 @@ But read the annotations again: "average" and "amortised". Neither says
     { label: 'O(n + m)' },
     { label: 'O(n)' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>O(n · m)</strong>, where n and m are the lengths of two{' '}
-        <em>different</em> lists. Writing it as O(n²) quietly assumes they are the
-        same size, and that assumption is where a lot of bad analysis starts.
-      </p>
-      <p>
-        It matters in practice: if <code>b</code> is a fixed lookup table of 10
-        elements, this is O(10n) = <strong>O(n)</strong> — linear, not quadratic.
-        Naming your variables honestly is half of analysing correctly.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>O(n · m)</strong>, where n and m are the lengths of two{' '}
+      <em>different</em> lists. Writing it as O(n²) quietly assumes they are the
+      same size, and that assumption is where a lot of bad analysis starts.
+    </p>
+    <p>
+      It matters in practice: if <code>b</code> is a fixed lookup table of 10
+      elements, this is O(10n) = <strong>O(n)</strong> — linear, not quadratic.
+      Naming your variables honestly is half of analysing correctly.
+    </p>
+  </Fragment>
+</Quiz>
 
 ### Space complexity
 
@@ -366,23 +365,22 @@ for (const item of items) {
     { label: 'O(n²)', correct: true },
     { label: 'O(1)' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>O(n²).</strong> The loop is O(n), but <code>Array#includes</code>{' '}
-        is itself an O(n) scan, so the cost is n × n. Nothing about the code{' '}
-        <em>looks</em> quadratic — which is exactly what makes this the most common
-        complexity bug there is.
-      </p>
-      <p>
-        <code>[...new Set(items)]</code> is O(n), because a Set hashes instead of
-        scanning. The general lesson: <strong>a method call is not O(1) just
-        because it is one line.</strong> Whenever a loop body calls into a
-        collection, ask what that call costs.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>O(n²).</strong> The loop is O(n), but <code>Array#includes</code>{' '}
+      is itself an O(n) scan, so the cost is n × n. Nothing about the code{' '}
+      <em>looks</em> quadratic — which is exactly what makes this the most common
+      complexity bug there is.
+    </p>
+    <p>
+      <code>[...new Set(items)]</code> is O(n), because a Set hashes instead of
+      scanning. The general lesson: <strong>a method call is not O(1) just
+      because it is one line.</strong> Whenever a loop body calls into a
+      collection, ask what that call costs.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Practice problems
 

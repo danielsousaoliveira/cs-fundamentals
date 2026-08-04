@@ -21,7 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: withastro/action@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # `rehype-mermaid` renders every ```mermaid fence to inline SVG at build
+      # time, and it drives Playwright's Chromium to do it. Without this the
+      # build fails outright rather than silently dropping the diagrams.
+      #
+      # This is why the build is spelled out rather than using
+      # `withastro/action`: that action bundles install and build into a single
+      # step, leaving nowhere to install the browser between them.
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/
 
   deploy:
     needs: build

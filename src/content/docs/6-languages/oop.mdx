@@ -561,27 +561,26 @@ That is more useful than a rule in either direction.
     { label: '12 versus 12 — the count is the same either way' },
     { label: '3 subclasses versus 4 composable pieces' },
   ]}
-  explanation={
-    <>
-      <p>
-        Inheritance multiplies the axes: 3 × 4 = 12 subclasses, one per combination.
-        Composition adds them: 3 formatters + 4 senders = 7 pieces, wired at the call
-        site.
-      </p>
-      <p>
-        The growth rate matters more than the totals. Adding a fifth destination
-        costs <em>one</em> class under composition and <em>three</em> under
-        inheritance — and adding a third axis, say compression, takes the
-        inheritance count to 36 while composition goes to 9.
-      </p>
-      <p>
-        This is why class names accumulate adjectives. Each adjective in{' '}
-        <code>CachedRetryingJsonHttpClient</code> is an independent axis that has
-        been collapsed into the name because inheritance had nowhere else to put it.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Inheritance multiplies the axes: 3 × 4 = 12 subclasses, one per combination.
+      Composition adds them: 3 formatters + 4 senders = 7 pieces, wired at the call
+      site.
+    </p>
+    <p>
+      The growth rate matters more than the totals. Adding a fifth destination
+      costs <em>one</em> class under composition and <em>three</em> under
+      inheritance — and adding a third axis, say compression, takes the
+      inheritance count to 36 while composition goes to 9.
+    </p>
+    <p>
+      This is why class names accumulate adjectives. Each adjective in{' '}
+      <code>CachedRetryingJsonHttpClient</code> is an independent axis that has
+      been collapsed into the name because inheritance had nowhere else to put it.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -601,28 +600,27 @@ console.log('area' in c);`}
     { label: 'false, then false' },
     { label: 'true, then false' },
   ]}
-  explanation={
-    <>
-      <p>
-        <code>hasOwnProperty</code> checks only the instance itself, and{' '}
-        <code>area</code> is not there — methods live on{' '}
-        <code>Shape.prototype</code>, shared by every instance rather than copied
-        into each one.
-      </p>
-      <p>
-        <code>in</code> walks the whole prototype chain: instance →{' '}
-        <code>Circle.prototype</code> → <code>Shape.prototype</code>, where it finds
-        it. That walk <em>is</em> what "inheritance" means in JavaScript.
-      </p>
-      <p>
-        The practical consequence is the one that catches people out with
-        serialisation: <code>Object.keys</code>, spread, and{' '}
-        <code>JSON.stringify</code> all use own properties only, so spreading an
-        instance gives you its data and silently drops every method.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <code>hasOwnProperty</code> checks only the instance itself, and{' '}
+      <code>area</code> is not there — methods live on{' '}
+      <code>Shape.prototype</code>, shared by every instance rather than copied
+      into each one.
+    </p>
+    <p>
+      <code>in</code> walks the whole prototype chain: instance →{' '}
+      <code>Circle.prototype</code> → <code>Shape.prototype</code>, where it finds
+      it. That walk <em>is</em> what "inheritance" means in JavaScript.
+    </p>
+    <p>
+      The practical consequence is the one that catches people out with
+      serialisation: <code>Object.keys</code>, spread, and{' '}
+      <code>JSON.stringify</code> all use own properties only, so spreading an
+      instance gives you its data and silently drops every method.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

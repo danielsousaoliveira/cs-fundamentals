@@ -563,26 +563,25 @@ time.
     { label: "WHERE country = 'PT' AND city = 'Porto'" },
     { label: "WHERE country = 'PT' ORDER BY city" },
   ]}
-  explanation={
-    <>
-      <p>
-        The one that skips <code>country</code>. The index is sorted by country
-        first, so entries for Porto are scattered across every country's section —
-        there is no contiguous range to scan.
-      </p>
-      <p>
-        The other three all start at the leftmost column. The fourth is worth
-        noticing specially: it uses the index for the <code>WHERE</code> and gets
-        the <code>ORDER BY</code> for free, because within one country the entries
-        are already sorted by city. No sort step at all.
-      </p>
-      <p>
-        This is the leftmost-prefix rule, and it is why the column order in a
-        composite index is a design decision rather than a formality.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The one that skips <code>country</code>. The index is sorted by country
+      first, so entries for Porto are scattered across every country's section —
+      there is no contiguous range to scan.
+    </p>
+    <p>
+      The other three all start at the leftmost column. The fourth is worth
+      noticing specially: it uses the index for the <code>WHERE</code> and gets
+      the <code>ORDER BY</code> for free, because within one country the entries
+      are already sorted by city. No sort step at all.
+    </p>
+    <p>
+      This is the leftmost-prefix rule, and it is why the column order in a
+      composite index is a design decision rather than a formality.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -595,28 +594,27 @@ time.
     { label: 'One is aborted with a serialization failure' },
     { label: 'The second insert is rejected by the isolation level' },
   ]}
-  explanation={
-    <>
-      <p>
-        Both succeed. This is <strong>write skew</strong>: each transaction reads a
-        consistent snapshot in which the slot is free, each makes a decision that is
-        perfectly valid given what it saw, and the two decisions are only
-        contradictory together. Neither transaction wrote a row the other read, so
-        snapshot isolation sees no conflict to report.
-      </p>
-      <p>
-        Raising to <code>SERIALIZABLE</code> would catch it — Postgres detects the
-        conflict at commit and aborts one with SQLSTATE <code>40001</code>, which
-        means you must write a retry loop or you have traded corruption for a 500.
-      </p>
-      <p>
-        The cheaper and more robust answer is an exclusion constraint. It costs one
-        index, works at every isolation level, and cannot be bypassed by a code path
-        that forgot the rule.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Both succeed. This is <strong>write skew</strong>: each transaction reads a
+      consistent snapshot in which the slot is free, each makes a decision that is
+      perfectly valid given what it saw, and the two decisions are only
+      contradictory together. Neither transaction wrote a row the other read, so
+      snapshot isolation sees no conflict to report.
+    </p>
+    <p>
+      Raising to <code>SERIALIZABLE</code> would catch it — Postgres detects the
+      conflict at commit and aborts one with SQLSTATE <code>40001</code>, which
+      means you must write a retry loop or you have traded corruption for a 500.
+    </p>
+    <p>
+      The cheaper and more robust answer is an exclusion constraint. It costs one
+      index, works at every isolation level, and cannot be bypassed by a code path
+      that forgot the rule.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

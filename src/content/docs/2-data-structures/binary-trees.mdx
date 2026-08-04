@@ -170,23 +170,22 @@ no cycles, so it needs no visited set.
     { label: '20 40 30 70 50' },
     { label: '50 30 70 20 40' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>Sorted order.</strong> That is not a coincidence about these
-        numbers — it follows directly from the invariant. In-order emits the whole
-        left subtree (everything smaller) before the node, and the whole right
-        subtree (everything larger) after it.
-      </p>
-      <p>
-        The other options are pre-order (50 30 20 40 70), post-order (20 40 30 70
-        50), and level-order (50 30 70 20 40). Notice level-order happens to match
-        the insertion sequence here — a coincidence of this particular tree, not a
-        property to rely on.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>Sorted order.</strong> That is not a coincidence about these
+      numbers — it follows directly from the invariant. In-order emits the whole
+      left subtree (everything smaller) before the node, and the whole right
+      subtree (everything larger) after it.
+    </p>
+    <p>
+      The other options are pre-order (50 30 20 40 70), post-order (20 40 30 70
+      50), and level-order (50 30 70 20 40). Notice level-order happens to match
+      the insertion sequence here — a coincidence of this particular tree, not a
+      property to rely on.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Complexity
 

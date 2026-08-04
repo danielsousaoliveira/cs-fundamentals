@@ -509,27 +509,26 @@ expired.
     { label: 'It works — the sign of the values is irrelevant' },
     { label: 'It throws once the running total goes negative' },
   ]}
-  explanation={
-    <>
-      <p>
-        Wrong answers, quietly. The shrink loop assumes the sum is <em>monotonic</em>
-        in the window: extending can only increase it, shrinking can only decrease
-        it. That is true for positive values and false as soon as one is negative.
-      </p>
-      <p>
-        Concretely, with <code>[2, −1, 2]</code> and target 3, the full array sums to
-        3 and is the answer. A shrink loop stops the moment the total reaches the
-        target and never reconsiders a window it already passed.
-      </p>
-      <p>
-        This is the most common misapplication of the technique, and it ships because
-        every hand-written test uses positive numbers. With negatives you need prefix
-        sums plus a hash map or a sorted structure — O(n) or O(n log n), but not a
-        window.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Wrong answers, quietly. The shrink loop assumes the sum is <em>monotonic</em>
+      in the window: extending can only increase it, shrinking can only decrease
+      it. That is true for positive values and false as soon as one is negative.
+    </p>
+    <p>
+      Concretely, with <code>[2, −1, 2]</code> and target 3, the full array sums to
+      3 and is the answer. A shrink loop stops the moment the total reaches the
+      target and never reconsiders a window it already passed.
+    </p>
+    <p>
+      This is the most common misapplication of the technique, and it ships because
+      every hand-written test uses positive numbers. With negatives you need prefix
+      sums plus a hash map or a sorted structure — O(n) or O(n log n), but not a
+      window.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -542,28 +541,27 @@ expired.
     { label: 'The inner loop is O(log n), giving O(n log n) rounded down' },
     { label: 'It is O(n²) in the worst case — O(n) is only the average' },
   ]}
-  explanation={
-    <>
-      <p>
-        The bound is amortised, not per-iteration. A single outer step can run the
-        inner loop many times — but <code>left</code> never moves backwards and
-        cannot exceed n, so across the <em>entire run</em> the inner loop body
-        executes at most n times in total.
-      </p>
-      <p>
-        Option two is the tempting wrong answer: there is no per-step constant bound,
-        and one iteration really can shrink the window by hundreds of positions. It
-        is the running total that is bounded, not any individual step.
-      </p>
-      <p>
-        This is the same accounting as amortised dynamic-array growth, and it has the
-        same fragility: the argument depends entirely on the monotonic counter. The
-        moment a code path resets <code>left</code> backwards, the analysis is void
-        and the algorithm really can go quadratic.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The bound is amortised, not per-iteration. A single outer step can run the
+      inner loop many times — but <code>left</code> never moves backwards and
+      cannot exceed n, so across the <em>entire run</em> the inner loop body
+      executes at most n times in total.
+    </p>
+    <p>
+      Option two is the tempting wrong answer: there is no per-step constant bound,
+      and one iteration really can shrink the window by hundreds of positions. It
+      is the running total that is bounded, not any individual step.
+    </p>
+    <p>
+      This is the same accounting as amortised dynamic-array growth, and it has the
+      same fragility: the argument depends entirely on the monotonic counter. The
+      moment a code path resets <code>left</code> backwards, the analysis is void
+      and the algorithm really can go quadratic.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

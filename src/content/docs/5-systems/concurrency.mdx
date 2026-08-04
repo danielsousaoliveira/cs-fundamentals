@@ -415,23 +415,22 @@ for the latency of the request doing the work.
     { label: 'Leave latency unchanged but free the event loop' },
     { label: 'Make it faster only if the response is large' },
   ]}
-  explanation={
-    <>
-      <p>
-        Slightly slower, for nothing. The event loop was <em>already</em> free
-        during those 800 ms — that is what non-blocking I/O means. Adding a worker
-        introduces spawn cost, message serialisation, and an extra hop, and none of
-        it removes any waiting.
-      </p>
-      <p>
-        Parallelism only helps when the thing you are duplicating is the resource
-        you are short of. Here you are short of nothing; you are waiting on someone
-        else's server. The fixes that do work are caching, batching, or fanning out
-        with a bounded <code>Promise.all</code> so several waits overlap.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Slightly slower, for nothing. The event loop was <em>already</em> free
+      during those 800 ms — that is what non-blocking I/O means. Adding a worker
+      introduces spawn cost, message serialisation, and an extra hop, and none of
+      it removes any waiting.
+    </p>
+    <p>
+      Parallelism only helps when the thing you are duplicating is the resource
+      you are short of. Here you are short of nothing; you are waiting on someone
+      else's server. The fixes that do work are caching, batching, or fanning out
+      with a bounded <code>Promise.all</code> so several waits overlap.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -444,25 +443,24 @@ for the latency of the request doing the work.
     { label: '80×' },
     { label: 'Unbounded — more cores always help' },
   ]}
-  explanation={
-    <>
-      <p>
-        5×. Amdahl's law: with parallel fraction <em>p</em>, speedup converges to
-        1/(1 − <em>p</em>) as workers go to infinity. Here that is 1/0.2 = 5.
-      </p>
-      <p>
-        The serial 20% is the whole story. Even with a thousand cores the parallel
-        part collapses to nearly zero time and the serial part is untouched — so
-        the job takes 20% of its original time and not a moment less.
-      </p>
-      <p>
-        The practical consequence: once you are within a factor of two of the
-        ceiling, more workers are wasted money and the only remaining win is
-        shrinking the serial section.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      5×. Amdahl's law: with parallel fraction <em>p</em>, speedup converges to
+      1/(1 − <em>p</em>) as workers go to infinity. Here that is 1/0.2 = 5.
+    </p>
+    <p>
+      The serial 20% is the whole story. Even with a thousand cores the parallel
+      part collapses to nearly zero time and the serial part is untouched — so
+      the job takes 20% of its original time and not a moment less.
+    </p>
+    <p>
+      The practical consequence: once you are within a factor of two of the
+      ceiling, more workers are wasted money and the only remaining win is
+      shrinking the serial section.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

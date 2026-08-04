@@ -1,0 +1,5 @@
+{
+  "label": "Web & Frontend",
+  "icon": "🖥️",
+  "description": "What the browser actually does with your code — rendering strategies across React, Vue, Svelte, Astro and Next, and the performance budget each one spends."
+}

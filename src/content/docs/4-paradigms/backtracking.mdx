@@ -549,28 +549,27 @@ four regardless — a quiet 4× on the successful path.
     { label: 'The used[] array is never reset' },
     { label: 'The recursion returns before appending' },
   ]}
-  explanation={
-    <>
-      <p>
-        <code>result.append(current)</code> instead of{' '}
-        <code>result.append(current.copy())</code>. Backtracking reuses one mutable
-        list for the whole search, so every stored "solution" is a reference to that
-        same object — and by the time the search finishes, the undo steps have popped
-        it back to empty.
-      </p>
-      <p>
-        The symptom is diagnostic: you get the <em>right number</em> of results, all
-        identical and all empty. Right count means the traversal is correct and only
-        the recording is wrong.
-      </p>
-      <p>
-        This is the most common backtracking bug, and it exists precisely because the
-        single-mutable-state trick is what makes the technique memory-efficient. The
-        copy is the one place you must opt out of it.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <code>result.append(current)</code> instead of{' '}
+      <code>result.append(current.copy())</code>. Backtracking reuses one mutable
+      list for the whole search, so every stored "solution" is a reference to that
+      same object — and by the time the search finishes, the undo steps have popped
+      it back to empty.
+    </p>
+    <p>
+      The symptom is diagnostic: you get the <em>right number</em> of results, all
+      identical and all empty. Right count means the traversal is correct and only
+      the recording is wrong.
+    </p>
+    <p>
+      This is the most common backtracking bug, and it exists precisely because the
+      single-mutable-state trick is what makes the technique memory-efficient. The
+      copy is the one place you must opt out of it.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -583,27 +582,26 @@ four regardless — a quiet 4× on the successful path.
     { label: 'They are equivalent; both remove one subtree' },
     { label: 'Depth 8, because more information is available to decide' },
   ]}
-  explanation={
-    <>
-      <p>
-        Depth 2. Cutting a branch at depth <em>d</em> in a tree of height <em>h</em>{' '}
-        with branching factor <em>b</em> removes b^(h−d) leaves — so at depth 2 that
-        is 2⁸ = 256 leaves, and at depth 8 it is 2² = 4.
-      </p>
-      <p>
-        The practical consequence inverts the usual optimisation instinct: an{' '}
-        <em>expensive</em> check high in the tree normally beats a cheap one near the
-        leaves, because it is eliminating hundreds of times more work.
-      </p>
-      <p>
-        It is also why the most-constrained-variable heuristic works in Sudoku and SAT
-        solvers. Choosing the variable with fewest remaining options maximises the
-        chance of failing early — deliberately arranging to hit contradictions as
-        high in the tree as possible.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Depth 2. Cutting a branch at depth <em>d</em> in a tree of height <em>h</em>{' '}
+      with branching factor <em>b</em> removes b^(h−d) leaves — so at depth 2 that
+      is 2⁸ = 256 leaves, and at depth 8 it is 2² = 4.
+    </p>
+    <p>
+      The practical consequence inverts the usual optimisation instinct: an{' '}
+      <em>expensive</em> check high in the tree normally beats a cheap one near the
+      leaves, because it is eliminating hundreds of times more work.
+    </p>
+    <p>
+      It is also why the most-constrained-variable heuristic works in Sudoku and SAT
+      solvers. Choosing the variable with fewest remaining options maximises the
+      chance of failing early — deliberately arranging to hit contradictions as
+      high in the tree as possible.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

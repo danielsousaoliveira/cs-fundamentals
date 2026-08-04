@@ -64,7 +64,17 @@ export function CodePane({
         )}
       </div>
 
-      <pre className="viz-code__pre">
+      {/*
+        Focusable because it scrolls: a long function overflows the pane's
+        max-height, and a scroll container that cannot take focus is
+        unreachable with a keyboard.
+      */}
+      <pre
+        className="viz-code__pre"
+        tabIndex={0}
+        role="group"
+        aria-label={`${label ?? 'code'} (scrollable)`}
+      >
         <code>
           {lines.map((line, i) => {
             const lineNumber = i + 1;

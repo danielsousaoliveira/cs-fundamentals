@@ -1,0 +1,5 @@
+{
+  "label": "Architecture",
+  "icon": "🏛️",
+  "description": "Decisions that are expensive to reverse — distributed systems, event-driven design, resilience, and how to reason about a system before it exists."
+}

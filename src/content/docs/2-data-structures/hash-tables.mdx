@@ -231,23 +231,22 @@ capacity does not shrink**, in either Python or JavaScript.
     { label: 'O(n²), if an attacker chooses the keys', correct: true },
     { label: 'O(1)' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>O(n²) with adversarial input.</strong> If every key hashes to the
-        same bucket, each insert walks a chain that grows by one each time — the
-        table degenerates into a linked list, and n inserts cost 1+2+3+…+n.
-      </p>
-      <p>
-        This is a real, named attack — <strong>hash flooding</strong> — and it took
-        down PHP, Java, Python, and Ruby web frameworks in 2011 with a single POST
-        body. The fix shipped by every one of them was <em>hash randomisation</em>:
-        seed the hash with a per-process random value, so an attacker cannot
-        predict which keys collide. Python has had it on by default since 3.3.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>O(n²) with adversarial input.</strong> If every key hashes to the
+      same bucket, each insert walks a chain that grows by one each time — the
+      table degenerates into a linked list, and n inserts cost 1+2+3+…+n.
+    </p>
+    <p>
+      This is a real, named attack — <strong>hash flooding</strong> — and it took
+      down PHP, Java, Python, and Ruby web frameworks in 2011 with a single POST
+      body. The fix shipped by every one of them was <em>hash randomisation</em>:
+      seed the hash with a per-process random value, so an attacker cannot
+      predict which keys collide. Python has had it on by default since 3.3.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 

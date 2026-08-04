@@ -68,14 +68,24 @@
 }
 
 :root[data-theme='light'] {
-  --viz-surface: var(--sl-color-white);
-  --viz-surface-raised: var(--sl-color-gray-7);
-  --viz-border: var(--sl-color-gray-5);
-  --viz-text: var(--sl-color-black);
-  --viz-text-dim: var(--sl-color-gray-2);
-
-  --viz-role-default-bg: var(--sl-color-gray-7);
-  --viz-role-default-fg: var(--sl-color-black);
+  /*
+   * Surfaces and text are deliberately NOT re-mapped here.
+   *
+   * Starlight's colour names are semantic and already invert per theme:
+   * `--sl-color-black` is the page background in both themes and
+   * `--sl-color-white` is the foreground in both. So the values in `:root`
+   * above are correct for light mode as they stand, and an override that
+   * "swaps them back" actually swaps them the wrong way — which is what used
+   * to happen here, giving a contrast ratio of 1.51:1 on the widget titles in
+   * light mode against the 4.5:1 the guidelines require. Caught by axe, not by
+   * eye, because the site is dark by default.
+   *
+   * Only the role colours below are genuinely light-specific: they are
+   * hand-picked hex pairs rather than semantic tokens, so they do not invert
+   * on their own.
+   */
+  --viz-role-default-bg: var(--sl-color-gray-6);
+  --viz-role-default-fg: var(--sl-color-white);
   --viz-role-default-border: var(--sl-color-gray-4);
 
   --viz-role-compare-bg: #fff5d6;

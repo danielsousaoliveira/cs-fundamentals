@@ -282,23 +282,22 @@ while jobs:
     { label: 'O(n²)', correct: true },
     { label: 'O(1) amortised per job, so O(n) overall' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>O(n²).</strong> <code>pop(0)</code> removes from the front, which
-        means every remaining element shifts down one slot — O(n) per call, n
-        times. For 100,000 jobs that is roughly 5 billion element moves.
-      </p>
-      <p>
-        Changing <code>list</code> to <code>collections.deque</code> and{' '}
-        <code>pop(0)</code> to <code>popleft()</code> makes it O(n). The reason
-        this bug is so common is that it is <em>invisible</em>: the code reads
-        correctly, it passes every test with a small fixture, and it only fails at
-        the scale where you actually needed it to work.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>O(n²).</strong> <code>pop(0)</code> removes from the front, which
+      means every remaining element shifts down one slot — O(n) per call, n
+      times. For 100,000 jobs that is roughly 5 billion element moves.
+    </p>
+    <p>
+      Changing <code>list</code> to <code>collections.deque</code> and{' '}
+      <code>pop(0)</code> to <code>popleft()</code> makes it O(n). The reason
+      this bug is so common is that it is <em>invisible</em>: the code reads
+      correctly, it passes every test with a small fixture, and it only fails at
+      the scale where you actually needed it to work.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 

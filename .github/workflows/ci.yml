@@ -29,3 +29,32 @@ jobs:
       - run: pnpm lint:spine
 
       - run: pnpm lint
+
+  # Separate job: it needs a browser download and takes minutes rather than
+  # seconds, so keeping it out of `check` preserves fast time-to-red on the
+  # cheap failures.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm exec playwright install --with-deps chromium
+
+      # The only layer that exercises hydration. Unit and jsdom tests mount
+      # components by hand, so they cannot see an island that renders correct
+      # HTML and then dies the moment React attaches — which is exactly the
+      # failure that made every quiz on the site inert while 212 tests passed.
+      - run: pnpm test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -553,27 +553,26 @@ has ever had applies.
     { label: 'Testability, because the filter can be asserted on in a mock' },
     { label: 'Flexibility, since any query can be expressed without new methods' },
   ]}
-  explanation={
-    <>
-      <p>
-        Almost nothing. Every consumer now constructs Mongo query objects, so Mongo's
-        query language is spread through the business logic — the exact coupling the
-        repository existed to prevent. Swapping to Postgres means rewriting every
-        call site, which is the situation you were trying to avoid.
-      </p>
-      <p>
-        Option four names the real trap: the flexibility is what causes the problem.
-        A generic <code>find</code> means no method ever has to be added, so nobody
-        ever has to think about what the domain actually needs.
-      </p>
-      <p>
-        A repository's interface should speak the domain's language —{' '}
-        <code>findConflicting(doctorId, range)</code> — so the query lives in one
-        place, its intent is named, and the storage engine is genuinely replaceable.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Almost nothing. Every consumer now constructs Mongo query objects, so Mongo's
+      query language is spread through the business logic — the exact coupling the
+      repository existed to prevent. Swapping to Postgres means rewriting every
+      call site, which is the situation you were trying to avoid.
+    </p>
+    <p>
+      Option four names the real trap: the flexibility is what causes the problem.
+      A generic <code>find</code> means no method ever has to be added, so nobody
+      ever has to think about what the domain actually needs.
+    </p>
+    <p>
+      A repository's interface should speak the domain's language —{' '}
+      <code>findConflicting(doctorId, range)</code> — so the query lives in one
+      place, its intent is named, and the storage engine is genuinely replaceable.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -586,29 +585,28 @@ has ever had applies.
     { label: 'Cache hits are counted twice, halving the reported p99' },
     { label: 'Retries stop being measured, so p99 falls further' },
   ]}
-  explanation={
-    <>
-      <p>
-        Moving the metrics decorator <em>inside</em> the cache means it only sees
-        calls that missed. Cache hits never reach it, so the dashboard reports the
-        latency of the slow path exclusively — and p99 jumps to database latency even
-        though users are being served in well under a millisecond.
-      </p>
-      <p>
-        Neither ordering is wrong in the abstract; they measure different things.
-        Outermost answers "what does the caller experience", which is what belongs on
-        a user-facing latency dashboard. Innermost answers "how slow is Postgres",
-        which is useful on a database dashboard.
-      </p>
-      <p>
-        The point is that decorators are emphatically <em>not</em> commutative, and
-        the ordering is a design decision that produces misleading data rather than
-        an error when it is wrong. Making that decision one visible line is the
-        pattern's real benefit.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Moving the metrics decorator <em>inside</em> the cache means it only sees
+      calls that missed. Cache hits never reach it, so the dashboard reports the
+      latency of the slow path exclusively — and p99 jumps to database latency even
+      though users are being served in well under a millisecond.
+    </p>
+    <p>
+      Neither ordering is wrong in the abstract; they measure different things.
+      Outermost answers "what does the caller experience", which is what belongs on
+      a user-facing latency dashboard. Innermost answers "how slow is Postgres",
+      which is useful on a database dashboard.
+    </p>
+    <p>
+      The point is that decorators are emphatically <em>not</em> commutative, and
+      the ordering is a design decision that produces misleading data rather than
+      an error when it is wrong. Making that decision one visible line is the
+      pattern's real benefit.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

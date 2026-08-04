@@ -505,26 +505,25 @@ overall.
     { label: 'O(n log n) and O(n²)' },
     { label: 'Both O(n log n) — the combine is a constant factor' },
   ]}
-  explanation={
-    <>
-      <p>
-        O(n) and O(n log n). With an O(1) combine the per-level work halves — n, n/2,
-        n/4 … — a geometric series summing to 2n. With an O(n) combine every level
-        costs n, and there are log n levels.
-      </p>
-      <p>
-        That is why tree traversal is linear and merge sort is linearithmic despite
-        identical recursion structure. The recursion is not what decides the class —
-        the combine step is, which is where to look first when analysing one of these.
-      </p>
-      <p>
-        Option four is the tempting error: the combine is not a constant factor
-        because it runs at <em>every node of the recursion tree</em>, and the number
-        of nodes grows with n.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      O(n) and O(n log n). With an O(1) combine the per-level work halves — n, n/2,
+      n/4 … — a geometric series summing to 2n. With an O(n) combine every level
+      costs n, and there are log n levels.
+    </p>
+    <p>
+      That is why tree traversal is linear and merge sort is linearithmic despite
+      identical recursion structure. The recursion is not what decides the class —
+      the combine step is, which is where to look first when analysing one of these.
+    </p>
+    <p>
+      Option four is the tempting error: the combine is not a constant factor
+      because it runs at <em>every node of the recursion tree</em>, and the number
+      of nodes grows with n.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -537,28 +536,27 @@ overall.
     { label: 'Whether the recursion has one branch or several' },
     { label: 'Whether the input is sorted' },
   ]}
-  explanation={
-    <>
-      <p>
-        Overlap. Divide and conquer assumes subproblems are <em>independent</em> and
-        solves each from scratch — merge sort's two halves share nothing, so there is
-        nothing to reuse. Dynamic programming exists precisely because subproblems
-        recur, and caching each one collapses an exponential tree to a polynomial.
-      </p>
-      <p>
-        The clearest demonstration is naive Fibonacci: structurally it is divide and
-        conquer, and it takes O(2ⁿ) because <code>fib(n−1)</code> and{' '}
-        <code>fib(n−2)</code> re-derive almost all of the same work. Add memoisation
-        — no structural change at all — and it is O(n).
-      </p>
-      <p>
-        So the diagnostic question is: does the same subproblem appear more than
-        once? If yes, cache it and you have dynamic programming. If no, caching costs
-        memory and buys nothing.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Overlap. Divide and conquer assumes subproblems are <em>independent</em> and
+      solves each from scratch — merge sort's two halves share nothing, so there is
+      nothing to reuse. Dynamic programming exists precisely because subproblems
+      recur, and caching each one collapses an exponential tree to a polynomial.
+    </p>
+    <p>
+      The clearest demonstration is naive Fibonacci: structurally it is divide and
+      conquer, and it takes O(2ⁿ) because <code>fib(n−1)</code> and{' '}
+      <code>fib(n−2)</code> re-derive almost all of the same work. Add memoisation
+      — no structural change at all — and it is O(n).
+    </p>
+    <p>
+      So the diagnostic question is: does the same subproblem appear more than
+      once? If yes, cache it and you have dynamic programming. If no, caching costs
+      memory and buys nothing.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

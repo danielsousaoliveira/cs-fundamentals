@@ -520,23 +520,22 @@ usually not earning its complexity.
     { label: 'It uses more memory than an equivalent key with a TTL' },
     { label: 'Reads of a key with no TTL are slower' },
   ]}
-  explanation={
-    <>
-      <p>
-        Because invalidation is code, and code has bugs. The day someone adds a
-        second write path — an admin tool, a migration, a background job — and
-        forgets the delete, that key is permanently wrong. Nothing errors, nothing
-        logs, and there is no way to tell which keys are affected short of flushing
-        everything.
-      </p>
-      <p>
-        A TTL bounds the damage without requiring you to be right. It converts
-        "wrong forever, silently" into "wrong for five minutes" — which is why it
-        is worth keeping even when you also invalidate explicitly.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Because invalidation is code, and code has bugs. The day someone adds a
+      second write path — an admin tool, a migration, a background job — and
+      forgets the delete, that key is permanently wrong. Nothing errors, nothing
+      logs, and there is no way to tell which keys are affected short of flushing
+      everything.
+    </p>
+    <p>
+      A TTL bounds the damage without requiring you to be right. It converts
+      "wrong forever, silently" into "wrong for five minutes" — which is why it
+      is worth keeping even when you also invalidate explicitly.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -549,26 +548,25 @@ usually not earning its complexity.
     { label: 'Redis spills the least-recently-used jobs to disk' },
     { label: 'Nothing — LRU only evicts keys that have a TTL set' },
   ]}
-  explanation={
-    <>
-      <p>
-        The jobs are evicted. <code>allkeys-lru</code> means <em>any</em> key is a
-        candidate, TTL or not, so pending job data is discarded exactly like a
-        stale cache entry — because to Redis it is indistinguishable from one.
-      </p>
-      <p>
-        What makes this one of the worst misconfigurations available is that it is
-        completely silent. No error, no log, no failed job. The work simply never
-        happens, and you find out from a user asking why they never got the email.
-      </p>
-      <p>
-        A queue or session store wants <code>noeviction</code>, so writes fail
-        loudly when memory runs out. If cache and queue must share an instance, use
-        separate databases with separate policies — or, better, separate instances.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The jobs are evicted. <code>allkeys-lru</code> means <em>any</em> key is a
+      candidate, TTL or not, so pending job data is discarded exactly like a
+      stale cache entry — because to Redis it is indistinguishable from one.
+    </p>
+    <p>
+      What makes this one of the worst misconfigurations available is that it is
+      completely silent. No error, no log, no failed job. The work simply never
+      happens, and you find out from a user asking why they never got the email.
+    </p>
+    <p>
+      A queue or session store wants <code>noeviction</code>, so writes fail
+      loudly when memory runs out. If cache and queue must share an instance, use
+      separate databases with separate policies — or, better, separate instances.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

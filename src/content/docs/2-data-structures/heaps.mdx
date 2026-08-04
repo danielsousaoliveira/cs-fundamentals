@@ -285,23 +285,22 @@ proof.
     { label: 'O(n²)' },
     { label: 'O(log n)' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>O(n log n).</strong> The cheap build does not help: it is followed by{' '}
-        <em>n</em> pops, each costing O(log n), and <code>n · log n</code>
-        dominates the linear <code>n</code> from the build.
-      </p>
-      <p>
-        This is the general trap with a fast preprocessing step — the total is governed
-        by whichever term grows fastest, so speeding up a term that was never the
-        bottleneck changes nothing asymptotically. Build-heap's O(n) matters when you
-        heapify once and pop only a few times (the top-k case), which is precisely why{' '}
-        <code>heapq.nsmallest</code> exists.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>O(n log n).</strong> The cheap build does not help: it is followed by{' '}
+      <em>n</em> pops, each costing O(log n), and <code>n · log n</code>
+      dominates the linear <code>n</code> from the build.
+    </p>
+    <p>
+      This is the general trap with a fast preprocessing step — the total is governed
+      by whichever term grows fastest, so speeding up a term that was never the
+      bottleneck changes nothing asymptotically. Build-heap's O(n) matters when you
+      heapify once and pop only a few times (the top-k case), which is precisely why{' '}
+      <code>heapq.nsmallest</code> exists.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 
@@ -528,22 +527,21 @@ $O(1)$.
     { label: 'A min-heap of size n' },
     { label: 'A max-heap of size n' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>A min-heap of size k.</strong> It feels backwards, and that is why it is
-        worth checking: the heap's root must be the element you want to
-        <em> evict</em>, which for "keep the largest" is the smallest of the ones you
-        are currently holding.
-      </p>
-      <p>
-        So: push every element; whenever the heap exceeds k, pop the root, which
-        discards the smallest. Whatever survives is the top k. The rule generalises —{' '}
-        <em>the heap points at the thing you throw away.</em>
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>A min-heap of size k.</strong> It feels backwards, and that is why it is
+      worth checking: the heap's root must be the element you want to
+      <em> evict</em>, which for "keep the largest" is the smallest of the ones you
+      are currently holding.
+    </p>
+    <p>
+      So: push every element; whenever the heap exceeds k, pop the root, which
+      discards the smallest. Whatever survives is the top k. The rule generalises —{' '}
+      <em>the heap points at the thing you throw away.</em>
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

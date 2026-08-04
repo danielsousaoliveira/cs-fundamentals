@@ -507,29 +507,28 @@ it. That interaction is *only* implementable with a stable sort.
     { label: 'It runs in O(n log n) as usual — the input order does not matter' },
     { label: 'It throws a stack overflow before completing' },
   ]}
-  explanation={
-    <>
-      <p>
-        Sorted input is the worst case for a last-element pivot. The pivot is always
-        the largest element in its range, so the partition puts everything on one
-        side and nothing on the other. Instead of halving the problem, each step
-        removes exactly one element: <em>T(n) = T(n−1) + O(n)</em>, which is O(n²).
-      </p>
-      <p>
-        About 50 million comparisons against merge sort's 130 thousand — nearly 400×.
-        And option four is nearly right for the wrong reason: an unoptimised
-        recursive implementation <em>would</em> also blow the stack at that depth,
-        since recursion depth becomes n rather than log n.
-      </p>
-      <p>
-        This is why real implementations use a randomised or median-of-three pivot,
-        or introsort's depth cap. It also matters for security: if the input comes
-        from a user who knows your pivot rule, the worst case is something they can
-        choose.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Sorted input is the worst case for a last-element pivot. The pivot is always
+      the largest element in its range, so the partition puts everything on one
+      side and nothing on the other. Instead of halving the problem, each step
+      removes exactly one element: <em>T(n) = T(n−1) + O(n)</em>, which is O(n²).
+    </p>
+    <p>
+      About 50 million comparisons against merge sort's 130 thousand — nearly 400×.
+      And option four is nearly right for the wrong reason: an unoptimised
+      recursive implementation <em>would</em> also blow the stack at that depth,
+      since recursion depth becomes n rather than log n.
+    </p>
+    <p>
+      This is why real implementations use a randomised or median-of-three pivot,
+      or introsort's depth cap. It also matters for security: if the input comes
+      from a user who knows your pivot rule, the worst case is something they can
+      choose.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -542,29 +541,28 @@ it. That interaction is *only* implementable with a stable sort.
     { label: 'An error, since the two orderings conflict' },
     { label: 'Departments in the wrong order' },
   ]}
-  explanation={
-    <>
-      <p>
-        The departments group correctly; the names inside them come out in whatever
-        order the algorithm happened to produce. An unstable sort gives no guarantee
-        about elements it considers equal, and every row in a department is "equal"
-        as far as a department comparator is concerned.
-      </p>
-      <p>
-        The reason this bug survives is that nothing fails. There is no error, the
-        primary ordering is right, and the result looks plausible — it is just
-        subtly wrong in a way users find hard to articulate.
-      </p>
-      <p>
-        This is the practical reason stability is worth knowing about: successive
-        refinement — sort by one column, then another — is a UI pattern that only
-        works on a stable sort. JavaScript has required stability since ES2019
-        precisely because engines previously used different algorithms for short and
-        long arrays, so the same code behaved differently at 10 and 100 elements.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The departments group correctly; the names inside them come out in whatever
+      order the algorithm happened to produce. An unstable sort gives no guarantee
+      about elements it considers equal, and every row in a department is "equal"
+      as far as a department comparator is concerned.
+    </p>
+    <p>
+      The reason this bug survives is that nothing fails. There is no error, the
+      primary ordering is right, and the result looks plausible — it is just
+      subtly wrong in a way users find hard to articulate.
+    </p>
+    <p>
+      This is the practical reason stability is worth knowing about: successive
+      refinement — sort by one column, then another — is a UI pattern that only
+      works on a stable sort. JavaScript has required stability since ES2019
+      precisely because engines previously used different algorithms for short and
+      long arrays, so the same code behaved differently at 10 and 100 elements.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

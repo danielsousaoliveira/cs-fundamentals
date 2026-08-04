@@ -1,0 +1,5 @@
+{
+  "label": "Backend & APIs",
+  "icon": "🔌",
+  "description": "The server side — Node, Nest and Python, REST and GraphQL, authentication, background work, and the failure modes that only appear under concurrency."
+}

@@ -282,25 +282,24 @@ is not, it is usually a deque.
     { label: 'A Python list with pop(0)' },
     { label: 'A doubly linked list, for O(1) at both ends' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>A deque.</strong> Python's <code>collections.deque</code> is a
-        doubly linked list of <em>fixed-size blocks</em> — typically 64 elements
-        each. That gets O(1) at both ends like a linked list, while keeping runs of
-        elements contiguous so traversal stays cache-friendly and the pointer
-        overhead is amortised over 64 values instead of paid per value.
-      </p>
-      <p>
-        A plain linked list is right in principle and loses on constants. A Python
-        list with <code>pop(0)</code> is O(n) per pop, so O(n²) overall. The
-        general lesson: <strong>the winning structures are usually hybrids</strong>{' '}
-        — blocks of contiguous memory linked together, which is also how ropes,
-        B-trees, and chunked deques all work.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>A deque.</strong> Python's <code>collections.deque</code> is a
+      doubly linked list of <em>fixed-size blocks</em> — typically 64 elements
+      each. That gets O(1) at both ends like a linked list, while keeping runs of
+      elements contiguous so traversal stays cache-friendly and the pointer
+      overhead is amortised over 64 values instead of paid per value.
+    </p>
+    <p>
+      A plain linked list is right in principle and loses on constants. A Python
+      list with <code>pop(0)</code> is O(n) per pop, so O(n²) overall. The
+      general lesson: <strong>the winning structures are usually hybrids</strong>{' '}
+      — blocks of contiguous memory linked together, which is also how ropes,
+      B-trees, and chunked deques all work.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Real-world usage
 

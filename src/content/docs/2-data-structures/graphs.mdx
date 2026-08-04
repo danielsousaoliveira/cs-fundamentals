@@ -259,23 +259,22 @@ $O(V)$.
     { label: "Dijkstra's algorithm" },
     { label: 'Either BFS or DFS — both find a path' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>BFS.</strong> It visits nodes in non-decreasing hop distance, so the
-        first time it reaches the target, it has arrived by a shortest route. DFS
-        finds <em>a</em> path — often an absurd one — because it commits to a branch
-        before considering alternatives.
-      </p>
-      <p>
-        Dijkstra also works but is strictly more machinery than the problem needs:
-        with every edge weighing 1, its priority queue degenerates into a plain
-        queue and it <em>is</em> BFS, with an O(log V) factor bolted on for nothing.{' '}
-        <strong>Unweighted shortest path is BFS; weighted is Dijkstra.</strong>
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>BFS.</strong> It visits nodes in non-decreasing hop distance, so the
+      first time it reaches the target, it has arrived by a shortest route. DFS
+      finds <em>a</em> path — often an absurd one — because it commits to a branch
+      before considering alternatives.
+    </p>
+    <p>
+      Dijkstra also works but is strictly more machinery than the problem needs:
+      with every edge weighing 1, its priority queue degenerates into a plain
+      queue and it <em>is</em> BFS, with an O(log V) factor bolted on for nothing.{' '}
+      <strong>Unweighted shortest path is BFS; weighted is Dijkstra.</strong>
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 

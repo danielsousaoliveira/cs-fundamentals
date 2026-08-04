@@ -211,24 +211,23 @@ $\phi \approx 1.618$.
     { label: 'Yes, as long as you pre-sort the data' },
     { label: 'No — appending is actually O(log n)' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>Amortised says nothing about any individual operation.</strong>{' '}
-        The append that triggers a resize at four million elements copies four
-        million elements, inside one unlucky request. Your average stays flat and
-        your p99 spikes.
-      </p>
-      <p>
-        The fix is to remove the surprise, not the cost: pre-allocate when you know
-        the size (<code>[None] * n</code>, or <code>new Array(n)</code>), which
-        turns n resizes into one that happens where you chose. This is the same
-        reason hash-map rehashes and GC pauses get blamed for mysterious tail
-        latency — rare, expensive, and invisible in the mean.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>Amortised says nothing about any individual operation.</strong>{' '}
+      The append that triggers a resize at four million elements copies four
+      million elements, inside one unlucky request. Your average stays flat and
+      your p99 spikes.
+    </p>
+    <p>
+      The fix is to remove the surprise, not the cost: pre-allocate when you know
+      the size (<code>[None] * n</code>, or <code>new Array(n)</code>), which
+      turns n resizes into one that happens where you chose. This is the same
+      reason hash-map rehashes and GC pauses get blamed for mysterious tail
+      latency — rare, expensive, and invisible in the mean.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 

@@ -587,30 +587,29 @@ across every file that touched a Stripe type.
     { label: 'Rectangle should have been an interface rather than a class' },
     { label: 'Nothing — it compiles and both classes are internally consistent' },
   ]}
-  explanation={
-    <>
-      <p>
-        A function that calls <code>setWidth(5)</code> then{' '}
-        <code>setHeight(4)</code> and expects an area of 20 is perfectly reasonable
-        code against <code>Rectangle</code>'s implied contract. Hand it a{' '}
-        <code>Square</code> and it gets 16. The subtype cannot honour a guarantee
-        the supertype never wrote down.
-      </p>
-      <p>
-        The important part is that the compiler is no help. Liskov is about
-        behaviour, and TypeScript checks shapes — so a subclass can type-check
-        perfectly and still break every caller.
-      </p>
-      <p>
-        The generalisable lesson is that "is-a" in the domain does not imply
-        substitutability in code. A square <em>is</em> a rectangle mathematically,
-        and is not a subtype behaviourally, because mutability is what the two
-        disagree about. Immutable value types with an <code>area()</code> and no
-        setters have no such problem.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      A function that calls <code>setWidth(5)</code> then{' '}
+      <code>setHeight(4)</code> and expects an area of 20 is perfectly reasonable
+      code against <code>Rectangle</code>'s implied contract. Hand it a{' '}
+      <code>Square</code> and it gets 16. The subtype cannot honour a guarantee
+      the supertype never wrote down.
+    </p>
+    <p>
+      The important part is that the compiler is no help. Liskov is about
+      behaviour, and TypeScript checks shapes — so a subclass can type-check
+      perfectly and still break every caller.
+    </p>
+    <p>
+      The generalisable lesson is that "is-a" in the domain does not imply
+      substitutability in code. A square <em>is</em> a rectangle mathematically,
+      and is not a subtype behaviourally, because mutability is what the two
+      disagree about. Immutable value types with an <code>area()</code> and no
+      setters have no such problem.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -623,28 +622,27 @@ across every file that touched a Stripe type.
     { label: 'Faster unit tests, since every dependency can be substituted' },
     { label: 'Compliance with Open/Closed, so future changes are additive' },
   ]}
-  explanation={
-    <>
-      <p>
-        A cost with no matching benefit. Every interface adds a hop: reading a code
-        path means opening extra files and resolving bindings the type system will
-        not point you to, and that cost is paid by everyone, on every read, forever.
-      </p>
-      <p>
-        The benefit — cheap substitution when a second implementation arrives — is
-        only collected if that implementation actually arrives. With one implementer
-        and none planned, the expected value is close to zero.
-      </p>
-      <p>
-        Option three is the tempting one, and it is worth being precise about: an
-        interface is not required for a test seam. Constructor injection of a
-        concrete class is already substitutable, and TypeScript's structural typing
-        means a test fake satisfies the shape without any <code>implements</code>{' '}
-        clause. The extra interface adds nothing there either.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      A cost with no matching benefit. Every interface adds a hop: reading a code
+      path means opening extra files and resolving bindings the type system will
+      not point you to, and that cost is paid by everyone, on every read, forever.
+    </p>
+    <p>
+      The benefit — cheap substitution when a second implementation arrives — is
+      only collected if that implementation actually arrives. With one implementer
+      and none planned, the expected value is close to zero.
+    </p>
+    <p>
+      Option three is the tempting one, and it is worth being precise about: an
+      interface is not required for a test seam. Constructor injection of a
+      concrete class is already substitutable, and TypeScript's structural typing
+      means a test fake satisfies the shape without any <code>implements</code>{' '}
+      clause. The extra interface adds nothing there either.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

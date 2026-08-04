@@ -606,28 +606,27 @@ reintroduces a different quadratic.
     { label: 'Batching stops working and every load is a separate query' },
     { label: 'Nothing — the loader is stateless between requests' },
   ]}
-  explanation={
-    <>
-      <p>
-        DataLoader caches by key with no expiry and no notion of who is asking. A
-        module-level instance therefore caches across users and across time: user B
-        requests patient 7, gets the copy cached during user A's request, and
-        receives data they were never authorised to see. Updates also never appear,
-        because nothing invalidates.
-      </p>
-      <p>
-        The reason it survives testing is that the bug requires concurrent
-        <em> different</em> users. Tests run one request at a time, and staging
-        usually has one person clicking. Production is the first place with two.
-      </p>
-      <p>
-        Loaders belong in the per-request context, built fresh on every request.
-        That is also what makes the cache correct rather than merely safe: within
-        one request, caching a repeated lookup is exactly what you want.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      DataLoader caches by key with no expiry and no notion of who is asking. A
+      module-level instance therefore caches across users and across time: user B
+      requests patient 7, gets the copy cached during user A's request, and
+      receives data they were never authorised to see. Updates also never appear,
+      because nothing invalidates.
+    </p>
+    <p>
+      The reason it survives testing is that the bug requires concurrent
+      <em> different</em> users. Tests run one request at a time, and staging
+      usually has one person clicking. Production is the first place with two.
+    </p>
+    <p>
+      Loaders belong in the per-request context, built fresh on every request.
+      That is also what makes the cache correct rather than merely safe: within
+      one request, caching a repeated lookup is exactly what you want.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -640,28 +639,27 @@ reintroduces a different quadratic.
     { label: 'The correct next 20 items — offset is computed server-side' },
     { label: 'An error, because the cursor is stale' },
   ]}
-  explanation={
-    <>
-      <p>
-        Repeats. With newest-first ordering, three new items push everything down
-        by three positions. The items that were at offsets 17–19 on page 1 are now
-        at offsets 20–22, so page 2 shows them again.
-      </p>
-      <p>
-        Insert at the <em>end</em> instead and you get the opposite failure — items
-        skipped, which is worse because nobody notices. Either way the cause is the
-        same: offset is a position in a list that is being recomputed on every
-        request.
-      </p>
-      <p>
-        A cursor encodes <em>where the previous page ended</em> rather than how many
-        rows to discard, so concurrent inserts cannot shift it. That, plus the
-        constant query cost at any depth, is why cursors are the default for
-        anything live.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Repeats. With newest-first ordering, three new items push everything down
+      by three positions. The items that were at offsets 17–19 on page 1 are now
+      at offsets 20–22, so page 2 shows them again.
+    </p>
+    <p>
+      Insert at the <em>end</em> instead and you get the opposite failure — items
+      skipped, which is worse because nobody notices. Either way the cause is the
+      same: offset is a position in a list that is being recomputed on every
+      request.
+    </p>
+    <p>
+      A cursor encodes <em>where the previous page ended</em> rather than how many
+      rows to discard, so concurrent inserts cannot shift it. That, plus the
+      constant query cost at any depth, is why cursors are the default for
+      anything live.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

@@ -1,0 +1,5 @@
+{
+  "label": "Databases & Storage",
+  "icon": "💾",
+  "description": "Relational, document, and vector stores — what each one indexes, what it charges you for, and the query plan that tells you which one you actually got."
+}

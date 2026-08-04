@@ -52,6 +52,17 @@ export function ArrayStrip({
       className="viz-array"
       data-memory={memoryMode || undefined}
       data-vertical={vertical || undefined}
+      /*
+       * The strip scrolls horizontally when the array outgrows its container,
+       * and a scrollable region that cannot be focused is unreachable by
+       * keyboard — a mouse user can drag it, a keyboard user simply cannot see
+       * the rest of the array. `tabIndex={0}` makes it focusable so the arrow
+       * keys scroll it, and the role/label give screen readers something
+       * meaningful to announce when they land on it.
+       */
+      tabIndex={0}
+      role="group"
+      aria-label={label ? `${label} (scrollable)` : 'array contents (scrollable)'}
     >
       {label && <div className="viz-array__label">{label}</div>}
       <div className="viz-array__cells">

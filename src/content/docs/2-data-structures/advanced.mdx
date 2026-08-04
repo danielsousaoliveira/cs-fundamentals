@@ -422,25 +422,24 @@ the accurate phrasing.
     { label: 'A hash table keyed by range' },
     { label: 'Recompute the sum each time — O(n) is fine' },
   ]}
-  explanation={
-    <>
-      <p>
-        <strong>A Fenwick tree.</strong> A prefix-sum array answers queries in O(1)
-        but costs O(n) per update, since changing one price invalidates every
-        prefix after it. With constant updates that is a million operations per
-        write.
-      </p>
-      <p>
-        The Fenwick tree accepts O(log n) queries to get O(log n) updates — about
-        20 operations each instead of one-and-a-million. That trade,{' '}
-        <strong>a slightly worse query for a dramatically better update</strong>, is
-        the reason all four structures on this page exist. A segment tree also works
-        and is the right answer if you need min/max or non-prefix ranges; the
-        Fenwick tree is smaller and faster when prefix sums are all you need.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <strong>A Fenwick tree.</strong> A prefix-sum array answers queries in O(1)
+      but costs O(n) per update, since changing one price invalidates every
+      prefix after it. With constant updates that is a million operations per
+      write.
+    </p>
+    <p>
+      The Fenwick tree accepts O(log n) queries to get O(log n) updates — about
+      20 operations each instead of one-and-a-million. That trade,{' '}
+      <strong>a slightly worse query for a dramatically better update</strong>, is
+      the reason all four structures on this page exist. A segment tree also works
+      and is the right answer if you need min/max or non-prefix ranges; the
+      Fenwick tree is smaller and faster when prefix sums are all you need.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## When NOT to use it
 

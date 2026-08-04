@@ -1,0 +1,5 @@
+{
+  "label": "Data Engineering",
+  "icon": "🗄️",
+  "description": "Getting data from where it is to where it is useful — SQL, modelling, pipelines, and the quality checks that catch a bad load before a dashboard does."
+}

@@ -508,28 +508,27 @@ whether the team is "moving too fast".
     { label: 'Nothing — liveness failures are logged but not acted on' },
     { label: 'Instances restart one at a time, so the impact is minimal' },
   ]}
-  explanation={
-    <>
-      <p>
-        Every instance fails liveness simultaneously, because they all share the
-        same database, so the orchestrator restarts all of them at once. A
-        ten-second degradation becomes a full outage plus cold starts — and the
-        restarted instances then open a burst of new connections to a database that
-        was already struggling.
-      </p>
-      <p>
-        Liveness answers "is this process wedged?", and the only remedy it triggers
-        is a restart. A restart cannot fix someone else's database, so a dependency
-        has no business being in there.
-      </p>
-      <p>
-        Readiness is the right place: it stops traffic being routed to an instance
-        that cannot serve, leaves the process alive, and recovers on its own when
-        the dependency comes back.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Every instance fails liveness simultaneously, because they all share the
+      same database, so the orchestrator restarts all of them at once. A
+      ten-second degradation becomes a full outage plus cold starts — and the
+      restarted instances then open a burst of new connections to a database that
+      was already struggling.
+    </p>
+    <p>
+      Liveness answers "is this process wedged?", and the only remedy it triggers
+      is a restart. A restart cannot fix someone else's database, so a dependency
+      has no business being in there.
+    </p>
+    <p>
+      Readiness is the right place: it stops traffic being routed to an instance
+      that cannot serve, leaves the process alive, and recovers on its own when
+      the dependency comes back.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -542,26 +541,25 @@ whether the team is "moving too fast".
     { label: 'The same risk, spread over fewer events' },
     { label: 'Lower risk, provided each change is individually tested' },
   ]}
-  explanation={
-    <>
-      <p>
-        It trades frequency for blast radius, and blast radius is the expensive one.
-        When a fortnightly release breaks, there are 100 candidate changes to bisect,
-        the rollback reverts 99 innocent ones, and the person who wrote the offending
-        change did so two weeks ago and has forgotten the context.
-      </p>
-      <p>
-        With per-merge deploys there is one candidate. Diagnosis is immediate, the
-        rollback is precise, and the author still has the change in their head.
-      </p>
-      <p>
-        This is the counterintuitive finding behind continuous deployment: deploying
-        more often is safer. The instinct that says "fewer deploys, fewer chances to
-        break" is optimising the number of incidents rather than their cost.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      It trades frequency for blast radius, and blast radius is the expensive one.
+      When a fortnightly release breaks, there are 100 candidate changes to bisect,
+      the rollback reverts 99 innocent ones, and the person who wrote the offending
+      change did so two weeks ago and has forgotten the context.
+    </p>
+    <p>
+      With per-merge deploys there is one candidate. Diagnosis is immediate, the
+      rollback is precise, and the author still has the change in their head.
+    </p>
+    <p>
+      This is the counterintuitive finding behind continuous deployment: deploying
+      more often is safer. The instinct that says "fewer deploys, fewer chances to
+      break" is optimising the number of incidents rather than their cost.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

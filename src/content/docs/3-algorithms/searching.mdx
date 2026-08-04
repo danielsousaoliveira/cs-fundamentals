@@ -511,33 +511,32 @@ obvious linear scan, which is roughly 31,000.
     { label: 'It works, but is O(n) rather than O(log n)' },
     { label: 'It only fails when the array contains duplicates' },
   ]}
-  explanation={
-    <>
-      <p>
-        Two independent bugs.
-      </p>
-      <p>
-        <strong>The hang</strong> is <code>lo = mid</code>. With{' '}
-        <code>lo = 0, hi = 1</code>, the midpoint is 0, so <code>lo = mid</code>{' '}
-        assigns <code>lo = 0</code> — the range never shrinks and the loop spins
-        forever. This is the single most common binary search bug, and it manifests
-        as a hang rather than a wrong answer.
-      </p>
-      <p>
-        <strong>The miss</strong> is <code>lo &lt; hi</code> with inclusive bounds.
-        When <code>lo == hi</code> the range still holds one unexamined element, and
-        the loop exits without checking it.
-      </p>
-      <p>
-        Both are fixed by the discipline the page argues for: make every branch
-        strictly shrink the range (<code>mid + 1</code> / <code>mid - 1</code>), and
-        match the loop condition to whether the bounds are inclusive.{' '}
-        <code>(lo + hi) // 2</code> is fine in Python but would overflow in a
-        fixed-width language.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Two independent bugs.
+    </p>
+    <p>
+      <strong>The hang</strong> is <code>lo = mid</code>. With{' '}
+      <code>lo = 0, hi = 1</code>, the midpoint is 0, so <code>lo = mid</code>{' '}
+      assigns <code>lo = 0</code> — the range never shrinks and the loop spins
+      forever. This is the single most common binary search bug, and it manifests
+      as a hang rather than a wrong answer.
+    </p>
+    <p>
+      <strong>The miss</strong> is <code>lo &lt; hi</code> with inclusive bounds.
+      When <code>lo == hi</code> the range still holds one unexamined element, and
+      the loop exits without checking it.
+    </p>
+    <p>
+      Both are fixed by the discipline the page argues for: make every branch
+      strictly shrink the range (<code>mid + 1</code> / <code>mid - 1</code>), and
+      match the loop condition to whether the bounds are inclusive.{' '}
+      <code>(lo + hi) // 2</code> is fine in Python but would overflow in a
+      fixed-width language.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -550,27 +549,26 @@ obvious linear scan, which is roughly 31,000.
     { label: 'Build a hash table, then five lookups' },
     { label: 'Sort once, then one linear scan' },
   ]}
-  explanation={
-    <>
-      <p>
-        Five linear scans: about 5 million operations. Sorting alone is roughly n log
-        n ≈ 20 million before you search anything, so it loses by 4× — and building a
-        hash table is a full O(n) pass plus allocation and hashing per element, which
-        also costs more than the scans it saves.
-      </p>
-      <p>
-        The break-even is <em>k &gt; log n</em>. With n = 10⁶, log₂n ≈ 20, so
-        preprocessing only pays from about 20 lookups onward. At five, it cannot.
-      </p>
-      <p>
-        This is the calculation people skip when they reach for "sort it first"
-        reflexively. Preprocessing is an investment amortised over future queries, so
-        the question is never "is binary search faster than linear" — it is "how many
-        queries am I going to make?"
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Five linear scans: about 5 million operations. Sorting alone is roughly n log
+      n ≈ 20 million before you search anything, so it loses by 4× — and building a
+      hash table is a full O(n) pass plus allocation and hashing per element, which
+      also costs more than the scans it saves.
+    </p>
+    <p>
+      The break-even is <em>k &gt; log n</em>. With n = 10⁶, log₂n ≈ 20, so
+      preprocessing only pays from about 20 lookups onward. At five, it cannot.
+    </p>
+    <p>
+      This is the calculation people skip when they reach for "sort it first"
+      reflexively. Preprocessing is an investment amortised over future queries, so
+      the question is never "is binary search faster than linear" — it is "how many
+      queries am I going to make?"
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

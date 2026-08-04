@@ -516,30 +516,29 @@ if ([] == false) console.log('B');`}
     { label: 'B only' },
     { label: 'Neither' },
   ]}
-  explanation={
-    <>
-      <p>
-        Both, and they are not contradictory — they use different algorithms.
-      </p>
-      <p>
-        <code>if ([])</code> applies <code>ToBoolean</code> to the value itself, and
-        only the seven falsy values are false. An array is an object, so it is
-        truthy however empty it is.
-      </p>
-      <p>
-        <code>[] == false</code> applies the loose-equality algorithm, which coerces
-        toward numbers: <code>false</code> → <code>0</code>, then the array →{' '}
-        <code>''</code> → <code>0</code>, and <code>0 == 0</code>.
-      </p>
-      <p>
-        This pair is the cleanest evidence that "JavaScript is inconsistent" is
-        really "JavaScript has several conversion algorithms" — and the practical
-        consequence is to never write <code>== false</code>, since{' '}
-        <code>if (!x)</code> means something genuinely different.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Both, and they are not contradictory — they use different algorithms.
+    </p>
+    <p>
+      <code>if ([])</code> applies <code>ToBoolean</code> to the value itself, and
+      only the seven falsy values are false. An array is an object, so it is
+      truthy however empty it is.
+    </p>
+    <p>
+      <code>[] == false</code> applies the loose-equality algorithm, which coerces
+      toward numbers: <code>false</code> → <code>0</code>, then the array →{' '}
+      <code>''</code> → <code>0</code>, and <code>0 == 0</code>.
+    </p>
+    <p>
+      This pair is the cleanest evidence that "JavaScript is inconsistent" is
+      really "JavaScript has several conversion algorithms" — and the practical
+      consequence is to never write <code>== false</code>, since{' '}
+      <code>if (!x)</code> means something genuinely different.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -557,28 +556,27 @@ let b = 1;`}
     { label: 'A ReferenceError on the first line' },
     { label: "'number', then 'number'" },
   ]}
-  explanation={
-    <>
-      <p>
-        <code>var a</code> is hoisted <em>and initialised</em> to{' '}
-        <code>undefined</code>, so the read succeeds and <code>typeof</code> reports{' '}
-        <code>'undefined'</code>.
-      </p>
-      <p>
-        <code>let b</code> is hoisted but <em>not initialised</em>. The region
-        between the top of the block and the declaration is the temporal dead zone,
-        and any access in it throws — including <code>typeof</code>, which is
-        otherwise the one operator safe to use on undeclared identifiers.
-      </p>
-      <p>
-        That last detail is the interesting one: <code>typeof undeclaredThing</code>{' '}
-        returns <code>'undefined'</code> harmlessly, but{' '}
-        <code>typeof tdzThing</code> throws. The TDZ is deliberately stricter, on
-        the grounds that an error beats a wrong answer.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <code>var a</code> is hoisted <em>and initialised</em> to{' '}
+      <code>undefined</code>, so the read succeeds and <code>typeof</code> reports{' '}
+      <code>'undefined'</code>.
+    </p>
+    <p>
+      <code>let b</code> is hoisted but <em>not initialised</em>. The region
+      between the top of the block and the declaration is the temporal dead zone,
+      and any access in it throws — including <code>typeof</code>, which is
+      otherwise the one operator safe to use on undeclared identifiers.
+    </p>
+    <p>
+      That last detail is the interesting one: <code>typeof undeclaredThing</code>{' '}
+      returns <code>'undefined'</code> harmlessly, but{' '}
+      <code>typeof tdzThing</code> throws. The TDZ is deliberately stricter, on
+      the grounds that an error beats a wrong answer.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

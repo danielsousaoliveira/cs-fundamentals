@@ -494,27 +494,26 @@ go and be forgotten.
     { label: 'No, provided the consumer is in a transactional consumer group' },
     { label: 'Only if the producer is not idempotent' },
   ]}
-  explanation={
-    <>
-      <p>
-        Yes. Kafka's exactly-once is a guarantee <em>within Kafka</em>: it can
-        atomically commit produced messages and the consumer offset because both
-        live in Kafka. Your Postgres write does not.
-      </p>
-      <p>
-        So the two are back to being separate systems with no shared transaction.
-        Commit the offset first and a crash loses the write; write first and a
-        crash replays it. Either way, one of the two failure modes is available.
-      </p>
-      <p>
-        The answer is at-least-once delivery plus an idempotent consumer — a unique
-        constraint on the message id, inserted in the same transaction as the
-        effect. That gives exactly-once <em>effects</em>, which is what the phrase
-        means in practice.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Yes. Kafka's exactly-once is a guarantee <em>within Kafka</em>: it can
+      atomically commit produced messages and the consumer offset because both
+      live in Kafka. Your Postgres write does not.
+    </p>
+    <p>
+      So the two are back to being separate systems with no shared transaction.
+      Commit the offset first and a crash loses the write; write first and a
+      crash replays it. Either way, one of the two failure modes is available.
+    </p>
+    <p>
+      The answer is at-least-once delivery plus an idempotent consumer — a unique
+      constraint on the message id, inserted in the same transaction as the
+      effect. That gives exactly-once <em>effects</em>, which is what the phrase
+      means in practice.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -527,27 +526,26 @@ go and be forgotten.
     { label: 'The visibility timeout is too long' },
     { label: 'Messages are being redelivered because acks are too slow' },
   ]}
-  explanation={
-    <>
-      <p>
-        Prefetch is the problem. With a prefetch of 100 and 30-second jobs, the
-        first consumer to connect reserves up to 100 messages — 50 minutes of work
-        — before anyone else gets one. The other five sit idle with an empty local
-        buffer while the queue grows behind them.
-      </p>
-      <p>
-        For slow work, prefetch should be low, often exactly 1: take one message,
-        finish it, take the next. High prefetch is an optimisation for messages so
-        small that the round trip to fetch one dominates the work of processing it,
-        which is the opposite of this case.
-      </p>
-      <p>
-        This is why "we added consumers and nothing improved" is a common and
-        confusing report. The consumers were added; they just had nothing to do.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Prefetch is the problem. With a prefetch of 100 and 30-second jobs, the
+      first consumer to connect reserves up to 100 messages — 50 minutes of work
+      — before anyone else gets one. The other five sit idle with an empty local
+      buffer while the queue grows behind them.
+    </p>
+    <p>
+      For slow work, prefetch should be low, often exactly 1: take one message,
+      finish it, take the next. High prefetch is an optimisation for messages so
+      small that the round trip to fetch one dominates the work of processing it,
+      which is the opposite of this case.
+    </p>
+    <p>
+      This is why "we added consumers and nothing improved" is a common and
+      confusing report. The consumers were added; they just had nothing to do.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

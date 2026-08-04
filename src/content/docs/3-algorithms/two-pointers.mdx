@@ -524,27 +524,26 @@ quadratic case.
     { label: 'It still works, but degrades to O(n²)' },
     { label: 'It works — sortedness is only needed for the 3-sum variant' },
   ]}
-  explanation={
-    <>
-      <p>
-        It silently misses valid pairs. The entire justification for moving a pointer
-        is "if the smallest value paired with the largest is still too small, that
-        smallest value cannot pair with anything" — which is only true when the array
-        is sorted. Without order, advancing <code>lo</code> discards an element that
-        was never ruled out.
-      </p>
-      <p>
-        Nothing checks the precondition, and nothing cheaply could: verifying
-        sortedness is O(n), which is the same order as the algorithm itself.
-      </p>
-      <p>
-        For unsorted input the right tool is a hash table — one pass, O(n) time,
-        preserves the original indices, and no sort. Reaching for two pointers by
-        reflex is the actual mistake here.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      It silently misses valid pairs. The entire justification for moving a pointer
+      is "if the smallest value paired with the largest is still too small, that
+      smallest value cannot pair with anything" — which is only true when the array
+      is sorted. Without order, advancing <code>lo</code> discards an element that
+      was never ruled out.
+    </p>
+    <p>
+      Nothing checks the precondition, and nothing cheaply could: verifying
+      sortedness is O(n), which is the same order as the algorithm itself.
+    </p>
+    <p>
+      For unsorted input the right tool is a hash table — one pass, O(n) time,
+      preserves the original indices, and no sort. Reaching for two pointers by
+      reflex is the actual mistake here.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -557,27 +556,26 @@ quadratic case.
     { label: 'It would work, but uses more memory' },
     { label: 'Three steps breaks the phase-two entrance calculation only' },
   ]}
-  explanation={
-    <>
-      <p>
-        Once both pointers are in a cycle of length <em>c</em>, what matters is the
-        gap between them modulo <em>c</em>. With speeds 1 and 2 the gap grows by 1
-        each step, so it takes every residue mod <em>c</em> and must eventually hit
-        0 — the pointers meeting.
-      </p>
-      <p>
-        With speeds 1 and 3 the gap grows by 2. If <em>c</em> is even and the gap is
-        odd when they enter the cycle, it stays odd forever and never reaches 0. The
-        pointers circle each other indefinitely and the algorithm never terminates.
-      </p>
-      <p>
-        The general condition is gcd(gain, c) = 1, and a gain of 1 is the only value
-        that satisfies it for <em>every</em> possible cycle length. That is why the
-        2 is not an arbitrary choice.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Once both pointers are in a cycle of length <em>c</em>, what matters is the
+      gap between them modulo <em>c</em>. With speeds 1 and 2 the gap grows by 1
+      each step, so it takes every residue mod <em>c</em> and must eventually hit
+      0 — the pointers meeting.
+    </p>
+    <p>
+      With speeds 1 and 3 the gap grows by 2. If <em>c</em> is even and the gap is
+      odd when they enter the cycle, it stays odd forever and never reaches 0. The
+      pointers circle each other indefinitely and the algorithm never terminates.
+    </p>
+    <p>
+      The general condition is gcd(gain, c) = 1, and a gain of 1 is the only value
+      that satisfies it for <em>every</em> possible cycle length. That is why the
+      2 is not an arbitrary choice.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

@@ -523,28 +523,27 @@ and nothing in either implementation reveals which case you are in.
     { label: 'Greedy never works for coin change' },
     { label: 'The coins need to be sorted differently' },
   ]}
-  explanation={
-    <>
-      <p>
-        The algorithm is fine and the data is the problem. Greedy takes 25, leaving 5,
-        which only 1s can serve — six coins. Optimal is 10+10+10, three coins. Add a 5
-        to the coin set and greedy becomes optimal again with no code change at all.
-      </p>
-      <p>
-        This is the defining hazard of the paradigm: correctness is a property of the
-        <em> input</em>, and nothing in the implementation records that dependency.
-        Real currencies are deliberately designed as canonical coin systems, which is
-        why greedy change-making feels reliable in everyday life.
-      </p>
-      <p>
-        The practical consequence: if greedy is only valid under an assumption about
-        the data, assert that assumption in code or document it where the next person
-        will see it — otherwise a data change silently breaks a function nobody
-        touched.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The algorithm is fine and the data is the problem. Greedy takes 25, leaving 5,
+      which only 1s can serve — six coins. Optimal is 10+10+10, three coins. Add a 5
+      to the coin set and greedy becomes optimal again with no code change at all.
+    </p>
+    <p>
+      This is the defining hazard of the paradigm: correctness is a property of the
+      <em> input</em>, and nothing in the implementation records that dependency.
+      Real currencies are deliberately designed as canonical coin systems, which is
+      why greedy change-making feels reliable in everyday life.
+    </p>
+    <p>
+      The practical consequence: if greedy is only valid under an assumption about
+      the data, assert that assumption in code or document it where the next person
+      will see it — otherwise a data change silently breaks a function nobody
+      touched.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -557,28 +556,27 @@ and nothing in either implementation reveals which case you are in.
     { label: 'Start time works equally well; end time is convention' },
     { label: 'Shortest duration is optimal, but end time is simpler' },
   ]}
-  explanation={
-    <>
-      <p>
-        Earliest end is the choice that constrains the future least, and it is
-        provably optimal by exchange argument: the first activity greedy picks ends no
-        later than the first in any optimal solution, so swapping it in keeps that
-        solution valid and the same size.
-      </p>
-      <p>
-        The other two metrics have small counter-examples. Earliest{' '}
-        <em>start</em> fails on (0,10), (1,2), (3,4) — it takes the long one and gets
-        1 instead of 2. Shortest <em>duration</em> fails on (0,5), (4,6), (5,10) — the
-        short middle interval blocks both others.
-      </p>
-      <p>
-        This is the general shape of greedy design: the implementation is three lines,
-        and all the difficulty is in choosing the metric. A wrong metric produces
-        flawless code that returns wrong answers.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Earliest end is the choice that constrains the future least, and it is
+      provably optimal by exchange argument: the first activity greedy picks ends no
+      later than the first in any optimal solution, so swapping it in keeps that
+      solution valid and the same size.
+    </p>
+    <p>
+      The other two metrics have small counter-examples. Earliest{' '}
+      <em>start</em> fails on (0,10), (1,2), (3,4) — it takes the long one and gets
+      1 instead of 2. Shortest <em>duration</em> fails on (0,5), (4,6), (5,10) — the
+      short middle interval blocks both others.
+    </p>
+    <p>
+      This is the general shape of greedy design: the implementation is three lines,
+      and all the difficulty is in choosing the metric. A wrong metric produces
+      flawless code that returns wrong answers.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

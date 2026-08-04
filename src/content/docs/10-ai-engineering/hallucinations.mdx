@@ -1,0 +1,590 @@
+---
+title: Hallucinations
+description: >-
+  Why fabrication is a property of the training objective rather than a bug, what
+  actually reduces it, and how to build a system that fails loudly instead of
+  confidently.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs:
+  - 10-ai-engineering/llms-how-they-work
+tags: [hallucination, grounding, citations, confidence, reliability]
+languages: [python, typescript]
+roles: [ai, backend, fullstack]
+sources: []
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A hallucination is not the model malfunctioning. **It is the model doing exactly
+what it was trained to do**, on an input where that happens to produce something
+false.
+
+The training objective is to predict the next token in human text. Human text is
+overwhelmingly confident, fluent, and specific — so a model that has learned to
+continue it well will produce confident, fluent, specific output whether or not
+the content is true. There is no term in the loss function for "and be correct",
+and no internal state corresponding to "I do not know" that could be surfaced if
+only the API exposed it.
+
+That reframing matters because it tells you where the fix can live. You cannot
+instruct your way out of it — "do not make things up" is tokens in the same
+channel as everything else. What works is **changing the conditions**: put the
+answer in the context, make the claim checkable, or give the model a tool that
+knows.
+
+### Why it sounds so convincing
+
+The mechanism that produces a correct answer and the mechanism that produces a
+fabricated one are the same mechanism. Fluency is uncorrelated with truth here,
+which is why human reviewers are unreliable detectors — we use confidence as a
+proxy for competence, and that proxy is exactly what fails.
+
+Worse, the errors are **plausible by construction**. A fabricated citation has a
+real-sounding author, a plausible journal, a year that fits. A fabricated API
+method is named the way that library names methods. The failure mode is not
+noise; it is a near-miss, which is the hardest kind to catch.
+
+### The taxonomy that changes what you do
+
+| Kind | What happens | What fixes it |
+|---|---|---|
+| **Knowledge gap** | Asked about something absent or rare in training | Retrieval |
+| **Outdated** | Training data has a cutoff; the world moved | Retrieval, tools |
+| **Conflation** | Merges two real things into a plausible third | Retrieval + citation checking |
+| **Ungrounded inference** | Extrapolates past what the context supports | Constrain to context; require quotes |
+| **Sycophantic** | Agrees with a false premise in the question | Premise checking; do not lead |
+| **Reasoning** | Arithmetic or logic errors, stated confidently | Tools — a calculator, a query, a compiler |
+
+The point of the table is that "reduce hallucinations" is not one project. A
+system leaking answers from an outdated training set needs retrieval; a system
+getting arithmetic wrong needs a calculator; a system agreeing with false
+premises needs a different prompt. Diagnose before treating.
+
+## Mechanics
+
+### Grounding: put the answer in the context
+
+The single highest-leverage change. A model asked to answer from documents
+supplied in the context is doing a much easier task than one asked to answer
+from what it absorbed in training — and critically, one whose output you can
+check.
+
+```text
+<instructions>
+Answer using only the documents below. Cite the id of every document you use.
+If the documents do not contain the answer, reply exactly:
+NOT_IN_CONTEXT
+</instructions>
+
+<documents>
+<document id="doc-114">…</document>
+<document id="doc-207">…</document>
+</documents>
+
+<question>What is the retention period for audit logs?</question>
+```
+
+Three deliberate choices:
+
+- **Document ids** make citations checkable — you can assert `doc-114` was
+  actually in the context. This turns "did it hallucinate" from a judgement call
+  into an assertion.
+- **An exact escape string** (`NOT_IN_CONTEXT`) is machine-detectable. "Say you
+  do not know" produces twelve different phrasings that no downstream code
+  matches.
+- **"Only the documents"** is a constraint the model will sometimes violate, and
+  the citation check is what catches it when it does.
+
+### Verify the citation, do not trust it
+
+Grounding without verification is theatre. The model can cite a document that
+does not support the claim, or cite one that was never in the context.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import re
+
+CITATION = re.compile(r"doc-\d+")
+
+def verify(answer: str, provided: dict[str, str]) -> list[str]:
+    """Return the problems with an answer. Empty list means it checks out."""
+    problems = []
+    cited = set(CITATION.findall(answer))
+
+    # A citation to a document that was never in the context is the clearest
+    # possible hallucination signal — no judgement required.
+    for doc_id in cited - provided.keys():
+        problems.append(f"cited {doc_id}, which was not provided")
+
+    # An answer with no citations at all is ungrounded, whatever it says.
+    if not cited and answer.strip() != "NOT_IN_CONTEXT":
+        problems.append("no citation")
+
+    return problems
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const CITATION = /doc-\d+/g;
+
+function verify(answer: string, provided: Map<string, string>): string[] {
+  const problems: string[] = [];
+  const cited = new Set(answer.match(CITATION) ?? []);
+
+  for (const id of cited) {
+    if (!provided.has(id)) problems.push(`cited ${id}, which was not provided`);
+  }
+  if (cited.size === 0 && answer.trim() !== 'NOT_IN_CONTEXT') {
+    problems.push('no citation');
+  }
+  return problems;
+}
+```
+
+</TabItem>
+</Tabs>
+
+This is cheap, deterministic, and catches the most dangerous class outright. A
+stricter version requires the cited span to actually appear in the cited
+document, which catches "cited a real document that does not say that".
+
+### Self-consistency: use variance as a signal
+
+Sample the same prompt several times at moderate temperature and compare. Where
+the samples agree, the model is on solid ground. Where they diverge, it is
+guessing — and divergence is a far better confidence signal than the model's own
+stated confidence, which is itself generated text.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from collections import Counter
+
+def self_consistent(ask, prompt, n=5, threshold=0.6):
+    """Answer only if independent samples agree. Otherwise escalate."""
+    answers = [ask(prompt, temperature=0.7) for _ in range(n)]
+    answer, votes = Counter(map(normalise, answers)).most_common(1)[0]
+
+    # Agreement across independent samples is real evidence. A model saying
+    # "I am 95% confident" is not — that is just more generated text.
+    if votes / n < threshold:
+        return None, votes / n
+    return answer, votes / n
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+async function selfConsistent(ask: Ask, prompt: string, n = 5, threshold = 0.6) {
+  const answers = await Promise.all(
+    Array.from({ length: n }, () => ask(prompt, { temperature: 0.7 })),
+  );
+  const counts = new Map<string, number>();
+  for (const a of answers.map(normalise)) counts.set(a, (counts.get(a) ?? 0) + 1);
+
+  const [answer, votes] = [...counts].sort((x, y) => y[1] - x[1])[0]!;
+  return votes / n < threshold ? { answer: null, agreement: votes / n } : { answer, agreement: votes / n };
+}
+```
+
+</TabItem>
+</Tabs>
+
+The trade is explicit: **n× the cost for a confidence signal you did not have.**
+Worth it on high-stakes, low-volume decisions; not worth it on a chat UI.
+
+### Log-probabilities, with a caveat
+
+Some APIs expose per-token log-probabilities, and low probability on the content
+tokens of an answer does correlate with unreliability. It is a genuine signal
+and it is cheap.
+
+The caveat: it measures the model's confidence in **the tokens**, not in the
+fact. A model that has confidently memorised something false will report high
+probability. Use it to catch uncertainty, never as evidence of correctness.
+
+## Cost & limits
+
+### What each mitigation actually costs
+
+| Mitigation | Cost | Reduces |
+|---|---|---|
+| Retrieval grounding | +input tokens, +retrieval latency | Knowledge-gap, outdated |
+| Citation verification | negligible — a regex | Fabricated sources |
+| Span verification | small — string search | Misattributed claims |
+| Self-consistency (n=5) | **5× the whole call** | Reasoning, ambiguity |
+| LLM-as-judge check | +1 call per answer | Broad, but judges hallucinate too |
+| Tool use (calculator, query) | +latency, +complexity | Arithmetic, lookups — near-completely |
+
+Note the ordering. **The two cheapest are deterministic and catch the most
+dangerous class**, and teams routinely skip them in favour of the expensive
+probabilistic ones. Verify citations before you consider a judge model.
+
+### The floor is not zero
+
+No combination of these gets fabrication to zero, and a system designed on the
+assumption that it will is designed wrong. The realistic target is:
+
+1. **Most errors prevented** by grounding.
+2. **Most of the remainder detected** by verification.
+3. **The rest fail visibly** — escalated, flagged, or refused — rather than
+   silently.
+
+That third line is the one that separates a system you can operate from one you
+cannot. **Design for detection, not for perfection.**
+
+<aside class="dated-figure">
+
+**Deliberately no benchmark numbers here.** Published hallucination rates vary by
+an order of magnitude depending on model, domain, and how "hallucination" was
+defined, and they age badly. Any number quoted here would be misleading within
+months. Measure on your own data with your own definition — that number is the
+only one that governs your system.
+
+</aside>
+
+## When NOT to use it
+
+Read this section as: when not to rely on mitigation, and use something else
+instead.
+
+**When the answer must be exactly right and is available deterministically.**
+Account balances, inventory counts, permission checks, prices. Query the
+database. A grounded, cited, verified LLM answer is still worse than a `SELECT`.
+
+**When arithmetic is involved.** Give it a calculator or run the computation in
+code. Models are unreliable at multi-step arithmetic and completely confident
+about it, and no prompt fixes this — it is the wrong instrument.
+
+**When there is no verification path and the stakes are real.** Medical, legal,
+financial advice with no human review is not a hallucination problem you can
+engineer around; it is a product decision that should be different.
+
+**When "I do not know" is not an acceptable output.** If the product cannot
+display a refusal, you have removed the model's only correct response to an
+unanswerable question — and you have guaranteed fabrication. Fix the product
+before the prompt.
+
+## Real-world usage
+
+- **Support and documentation search** — retrieval plus mandatory citation, with
+  the cited source shown in the UI. The citation is both a mitigation and a
+  feature: users verify it themselves.
+- **Contract and document review** — extract with required quoted spans, then
+  assert each span appears verbatim in the source. Ungrounded claims are
+  rejected before a human sees them.
+- **Coding assistants** — the verifier is the compiler and the test suite,
+  which is why this domain tolerates far more model error than others.
+- **Data extraction** — schema validation catches structural fabrication;
+  cross-field consistency checks catch semantic fabrication.
+- **Medical and legal tooling** — retrieval-grounded, citation-required, and
+  positioned as retrieval assistance for a professional rather than as an
+  answer.
+
+## Failure modes
+
+### The plausible citation
+
+**Symptom:** a reference with a real-sounding author, journal and year that does
+not exist. Or a real paper that does not say what was claimed.
+
+**Cause:** citations are highly patterned text, so a model is very good at
+generating well-formed ones. Format is what it learned; existence is not.
+
+**Fix:** never accept a citation you have not resolved. Check the id was in the
+context, then check the claimed span appears in that document. Both are cheap
+and deterministic.
+
+### Agreeing with a false premise
+
+**Symptom:** "Why does our API rate-limit at 100 requests per second?" gets a
+detailed explanation of a limit that does not exist.
+
+**Cause:** the question asserts the premise, and continuing the assertion is the
+likely continuation. Contradicting the user is not.
+
+**Fix:** instruct explicitly that false premises should be corrected, and — more
+reliably — do not build UIs that encourage leading questions. Ask "what are the
+rate limits" rather than "why is the limit 100".
+
+### Ungrounded inference from real documents
+
+**Symptom:** retrieval worked, the documents are correct, and the answer still
+contains a claim none of them support.
+
+**Cause:** the model synthesised across documents and filled a gap. This is
+usually desirable behaviour and occasionally catastrophic.
+
+**Fix:** require a quoted span per claim. If a claim cannot be attached to a
+quote, it is inference — surface it as such or drop it.
+
+### Confidence that is generated text
+
+**Symptom:** the model rates its own answer "95% confident" and is wrong.
+
+**Cause:** that number was sampled from a distribution like every other token.
+It is not introspection.
+
+**Fix:** derive confidence from something external — agreement across samples,
+log-probabilities, whether verification passed. Never from a self-report.
+
+### Degradation as context grows
+
+**Symptom:** fabrication increases in long conversations.
+
+**Cause:** the grounding documents have been pushed into the middle of the
+context or truncated out entirely, so the model is answering from training
+again. See
+[context engineering](/cs-fundamentals/10-ai-engineering/context-engineering/).
+
+**Fix:** re-retrieve per turn rather than carrying documents forward, and keep
+them near the edges of the context.
+
+## Practice problems
+
+**1. The confident wrong answer with a real source.**
+
+A documentation bot cites `doc-88`, which genuinely exists and was genuinely
+retrieved. But the answer states a retention period the document does not
+mention. Citation checking passes. What now?
+
+<details>
+<summary>Solution</summary>
+
+Citation checking verified the wrong thing. It confirmed the document existed
+and was provided — not that it supports the claim.
+
+**Fix: require quoted spans, then verify them.**
+
+```text
+For each claim, output:
+  claim: <the claim>
+  source: <document id>
+  quote: <exact text from that document that supports it>
+```
+
+Then assert, in code, that `quote` appears verbatim in the cited document. That
+is a substring check — deterministic, fast, and it fails exactly the case that
+slipped through.
+
+Two refinements worth having:
+
+- Normalise whitespace before comparing, or trivially-reformatted quotes fail
+  and you train yourself to ignore the alarm.
+- If the quote is present but does not actually support the claim, you are into
+  judgement territory — that is where an LLM judge earns its cost, *after* the
+  deterministic checks, not instead of them.
+
+**The trap to avoid:** concluding that grounding does not work. It moved the
+failure from "invented a source" to "over-read a real source", which is a much
+smaller and much more detectable problem.
+
+</details>
+
+**2. Choose the mitigation.**
+
+Three failures in one product. Assign a fix to each and justify the cost.
+
+- (a) Asked about a feature shipped last month, it describes the old behaviour.
+- (b) Asked to total 14 line items, it returns a number that is off by one item.
+- (c) Asked an ambiguous question, it picks one interpretation confidently and
+  never mentions the other.
+
+<details>
+<summary>Solution</summary>
+
+Three different categories, three different fixes — and using the wrong one is
+the common failure.
+
+**(a) Outdated → retrieval.** The training cutoff predates the feature; no
+prompt can fix missing information. Retrieve current documentation and require
+citation. Cost: input tokens plus retrieval latency. Cheapest of the three and
+completely effective for this class.
+
+**(b) Arithmetic → a tool.** Do not prompt around this. Have the model emit the
+line items as structured data and total them in code, or give it a calculator
+tool. Cost: a little complexity. This moves accuracy from ~unreliable to exact,
+and it is the only fix that does.
+
+**(c) Ambiguity → self-consistency.** Sample five times at temperature 0.7. If
+the interpretations diverge, the question is ambiguous — surface that rather
+than picking. Cost: 5× the call, which is why this is reserved for the case
+where it is genuinely warranted.
+
+**The generalisable move:** diagnose the *category* first. "Reduce
+hallucinations" as a single project produces a system with retrieval bolted onto
+an arithmetic problem.
+
+</details>
+
+**3. Design the failure path.**
+
+A legal-research tool must never present an unsupported claim as fact. Design
+what happens when verification fails.
+
+<details>
+<summary>Solution</summary>
+
+The design goal is not "never fail" — unattainable — but **never fail silently**.
+
+Layered, cheapest first:
+
+1. **Retrieval with mandatory citation.** No citation, no answer.
+2. **Deterministic checks.** Cited ids were provided; quoted spans appear
+   verbatim. Free, and catches the worst class.
+3. **Self-consistency on the legal conclusion** (n=3). Disagreement means
+   genuine uncertainty.
+4. **On any failure: do not answer.** Show the retrieved sources and say the
+   tool could not verify a conclusion.
+
+That last step is the whole design. The failure output must be **useful** — the
+sources are still valuable to a researcher — while being unmistakably not an
+answer. A tool that degrades from "answer" to "here are three relevant cases,
+unverified" is one a professional can work with. One that degrades from "answer"
+to "confident wrong answer" is a liability.
+
+Also required, and often skipped: **log every verification failure with the
+inputs.** That log is your evaluation set, your evidence for what the failure
+rate actually is, and the thing that tells you whether a model upgrade helped.
+
+**The trap to avoid:** a confidence score in the UI. Users read 85% as "probably
+right" and stop checking. A binary verified/unverified is harder to
+misinterpret, and it matches what you can actually determine.
+
+</details>
+
+<Quiz
+  client:visible
+  id="halluc-why"
+  kind="concept"
+  question="Why do models produce fabrications in the same confident tone as correct answers?"
+  options={[
+    { label: 'The training objective rewards plausible continuation, and there is no internal uncertainty state that could be expressed differently', correct: true },
+    { label: 'Safety training suppresses expressions of doubt to keep answers useful' },
+    { label: 'Confidence is a sampling artefact that disappears at temperature 0' },
+    { label: 'The model knows it is uncertain but the API does not expose that field' },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>
+      Correct answers and fabricated ones are produced by the same mechanism:
+      predicting likely next tokens. Human text is confident, so continuations of
+      it are confident, regardless of truth. There is no separate "certainty"
+      variable being computed and then hidden — that is what the fourth option
+      assumes, and it is the most tempting error here.
+    </p>
+    <p>
+      Temperature does not touch this either. Greedy decoding produces the{' '}
+      <em>most likely</em> continuation, which for a question the model cannot
+      answer is a confident fabrication — arguably the most confident one
+      available.
+    </p>
+    <p>
+      Why it matters practically: it tells you the fix cannot be an instruction.
+      "Do not make things up" is tokens in the same channel as everything else.
+      What works is changing the conditions — putting the answer in the context,
+      making the claim checkable, or handing the task to a tool that knows.
+    </p>
+  </Fragment>
+</Quiz>
+
+<Quiz
+  client:visible
+  id="halluc-confidence"
+  kind="concept"
+  question="Which is the most reliable signal that an answer may be fabricated?"
+  options={[
+    { label: 'Independent samples of the same prompt disagree with each other', correct: true },
+    { label: 'The model states a low confidence percentage in its answer' },
+    { label: 'The answer is short and lacks detail' },
+    { label: 'The answer contains no hedging language like "probably" or "I think"' },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>
+      Disagreement across independent samples is <em>external</em> evidence: if
+      the model lands somewhere different each time, it is drawing from a flat
+      distribution rather than a settled one. That is measurable without trusting
+      anything the model says about itself.
+    </p>
+    <p>
+      A self-reported confidence percentage is just more generated text —
+      sampled the same way as the answer, and not introspection. Length and
+      hedging are worse still: fabrications are often <em>more</em> detailed and{' '}
+      <em>less</em> hedged than true answers, because specific confident prose is
+      exactly what the training data rewards.
+    </p>
+    <p>
+      The trade is that self-consistency costs n× a normal call, so it belongs
+      on high-stakes low-volume decisions. Cheaper external signals worth
+      reaching for first: whether a cited document was actually provided, and
+      whether a quoted span appears verbatim in it. Both are deterministic and
+      nearly free.
+    </p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Why do LLMs hallucinate?"**
+
+> Because the training objective is next-token prediction over human text, and
+> human text is confident and specific. A fluent plausible wrong answer scores
+> well on that objective — there is no term for correctness, and no internal "I
+> do not know" state that could be surfaced.
+>
+> That framing matters because it rules out a whole class of fixes. You cannot
+> instruct your way out of it; the instruction is tokens in the same channel as
+> everything else. What works is changing the conditions — grounding the answer
+> in retrieved context, making claims checkable, or handing arithmetic to a
+> calculator.
+
+**"How would you reduce hallucinations in a production system?"**
+
+> In cost order, cheapest first. Retrieval grounding, so the answer is in the
+> context rather than in the weights. Mandatory citation with document ids.
+> Then two deterministic checks that cost almost nothing: the cited id was
+> actually provided, and the quoted span actually appears in that document.
+> Those two catch the most dangerous class outright and teams routinely skip
+> them for expensive probabilistic ones.
+>
+> Above that, self-consistency where the stakes justify n× the cost, and tools
+> wherever the task is really a computation.
+>
+> The caveat I would voice is that none of this reaches zero, so the design goal
+> is detection rather than perfection. What separates an operable system is that
+> the residual failures are visible — escalated or refused — instead of silent.
+
+**"The model cited a real document but got the fact wrong. What went wrong?"**
+
+> Citation checking verified existence, not support. That is a real gap and it
+> is common — grounding moved the failure from "invented a source" to "over-read
+> a real one".
+>
+> The fix is to require a quoted span per claim and assert in code that the
+> quote appears verbatim in the cited document. It is a substring check. If the
+> quote is there but does not support the claim, that is where a judge model
+> earns its cost — after the deterministic checks, not instead of them.
+
+**The caveats worth voicing:**
+
+- Self-reported confidence is generated text, not introspection.
+- Log-probabilities measure confidence in tokens, not in facts — good for
+  catching uncertainty, useless as evidence of correctness.
+- A product that cannot display "I do not know" has guaranteed fabrication.
+- Give the model an exact escape string, not "say you are unsure" — twelve
+  phrasings match nothing downstream.
+- Every verification failure should be logged with its inputs. That log is your
+  evaluation set.

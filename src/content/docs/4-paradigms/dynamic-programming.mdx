@@ -555,29 +555,28 @@ obvious table.
     { label: 'It produces the same answer but runs slower' },
     { label: 'It throws an IndexError' },
   ]}
-  explanation={
-    <>
-      <p>
-        Ascending order lets an item be reused within its own pass. When the loop
-        reaches <code>w</code>, the entry at <code>w - weight</code> may already have
-        been updated <em>with this same item</em> during this pass — so the item gets
-        counted twice, three times, as many as fit.
-      </p>
-      <p>
-        Descending guarantees <code>dp[w - weight]</code> still holds the value from
-        the <em>previous</em> item's pass, which is exactly the "use each item at most
-        once" constraint of 0/1 knapsack.
-      </p>
-      <p>
-        So the two loop directions solve two genuinely different problems, and both
-        compile and return plausible numbers. This is the highest-consequence
-        one-character difference in common DP code — and it is also the reason the
-        coin-change example on this page loops ascending, since coins <em>are</em>{' '}
-        reusable.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Ascending order lets an item be reused within its own pass. When the loop
+      reaches <code>w</code>, the entry at <code>w - weight</code> may already have
+      been updated <em>with this same item</em> during this pass — so the item gets
+      counted twice, three times, as many as fit.
+    </p>
+    <p>
+      Descending guarantees <code>dp[w - weight]</code> still holds the value from
+      the <em>previous</em> item's pass, which is exactly the "use each item at most
+      once" constraint of 0/1 knapsack.
+    </p>
+    <p>
+      So the two loop directions solve two genuinely different problems, and both
+      compile and return plausible numbers. This is the highest-consequence
+      one-character difference in common DP code — and it is also the reason the
+      coin-change example on this page loops ascending, since coins <em>are</em>{' '}
+      reusable.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -590,27 +589,26 @@ obvious table.
     { label: 'It is not — O(n·W) is polynomial, so knapsack is in P' },
     { label: 'Because n and W can both grow, making it O(n²)' },
   ]}
-  explanation={
-    <>
-      <p>
-        Complexity is measured against the <em>size of the input</em>, and a capacity
-        of W is written in about log₂W bits. So O(n·W) is exponential in the input
-        length: adding 30 characters to the number takes W from 1,000 to 10¹² and the
-        table from feasible to impossible.
-      </p>
-      <p>
-        This is called <strong>pseudo-polynomial</strong> — polynomial in the numeric
-        value, exponential in the encoding. It is why the DP is genuinely useful for
-        small capacities and why it does not settle P versus NP.
-      </p>
-      <p>
-        The practical reading: before writing this DP, check the magnitude of W. The
-        algorithm's feasibility depends on a number's value rather than on how many
-        numbers there are, which is an unusual and easy-to-miss failure mode.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Complexity is measured against the <em>size of the input</em>, and a capacity
+      of W is written in about log₂W bits. So O(n·W) is exponential in the input
+      length: adding 30 characters to the number takes W from 1,000 to 10¹² and the
+      table from feasible to impossible.
+    </p>
+    <p>
+      This is called <strong>pseudo-polynomial</strong> — polynomial in the numeric
+      value, exponential in the encoding. It is why the DP is genuinely useful for
+      small capacities and why it does not settle P versus NP.
+    </p>
+    <p>
+      The practical reading: before writing this DP, check the magnitude of W. The
+      algorithm's feasibility depends on a number's value rather than on how many
+      numbers there are, which is an unusual and easy-to-miss failure mode.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

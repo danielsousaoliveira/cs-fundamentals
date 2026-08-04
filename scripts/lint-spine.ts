@@ -17,8 +17,16 @@ import path from 'node:path';
 
 const DOCS = path.resolve(process.cwd(), 'src/content/docs');
 
-/** Heading text (lowercased, punctuation-insensitive) required on every complete page. */
-const REQUIRED = [
+interface Section {
+  name: string;
+  match: RegExp;
+}
+
+/**
+ * Heading text (lowercased, punctuation-insensitive) required on every complete
+ * page. The algorithmic spine — data structures, algorithms, paradigms.
+ */
+const ALGORITHMIC: Section[] = [
   { name: 'Intuition', match: /^intuition/ },
   { name: 'Mechanics', match: /^mechanics/ },
   { name: 'Complexity', match: /^complexity/ },
@@ -28,6 +36,61 @@ const REQUIRED = [
   { name: 'Practice problems', match: /^practice/ },
   { name: 'Interview answers', match: /^interview/ },
 ];
+
+/**
+ * The engineering spine — cloud, data, AI, web. Exactly one substitution:
+ * "Complexity" becomes "Cost & limits".
+ *
+ * The substitution is a change of units, not a relaxation. "Derive it, never
+ * assert it" still holds; on a Terraform or CosmosDB page the derivation lands
+ * in RU/s, dollars per TB egressed, or p99 at a given pool size rather than in
+ * $O(\log n)$. Asking those pages for a complexity class would have produced
+ * either a stretch or a lie, and the honest alternative to a stretched heading
+ * is a different heading.
+ *
+ * Note what is byte-identical between the two lists: "When NOT to use it" and
+ * "Failure modes". They are the reason the project exists, and keeping them
+ * duplicated across two explicit arrays — rather than loosening the rule to a
+ * smaller shared core — is what stops a future variant quietly dropping one.
+ */
+const ENGINEERING: Section[] = [
+  { name: 'Intuition', match: /^intuition/ },
+  { name: 'Mechanics', match: /^mechanics/ },
+  { name: 'Cost & limits', match: /^cost/ },
+  { name: 'When NOT to use it', match: /^when not to use/ },
+  { name: 'Real-world usage', match: /^real[- ]world/ },
+  { name: 'Failure modes', match: /^failure modes/ },
+  { name: 'Practice problems', match: /^practice/ },
+  { name: 'Interview answers', match: /^interview/ },
+];
+
+/**
+ * Which spine each section directory answers to.
+ *
+ * Unlisted directories fall back to ALGORITHMIC — the stricter of the two, so a
+ * new section added without a decision here fails loudly rather than silently
+ * accepting a page with no cost analysis *and* no complexity analysis.
+ */
+const VARIANTS: Record<string, Section[]> = {
+  '1-complexity': ALGORITHMIC,
+  '2-data-structures': ALGORITHMIC,
+  '3-algorithms': ALGORITHMIC,
+  '4-paradigms': ALGORITHMIC,
+  '5-systems': ALGORITHMIC,
+  '6-languages': ALGORITHMIC,
+  '7-data-engineering': ENGINEERING,
+  '8-databases-storage': ENGINEERING,
+  '9-cloud-infra': ENGINEERING,
+  '10-ai-engineering': ENGINEERING,
+  '11-web-frontend': ENGINEERING,
+  '12-backend-apis': ENGINEERING,
+  '13-architecture': ENGINEERING,
+};
+
+/** The top-level section directory a page lives in, e.g. `10-ai-engineering`. */
+function sectionOf(file: string): string {
+  return path.relative(DOCS, file).split(path.sep)[0] ?? '';
+}
 
 interface Problem {
   file: string;
@@ -71,7 +134,7 @@ for (const file of walk(DOCS)) {
   const found = headings(source);
   const relative = path.relative(process.cwd(), file);
 
-  for (const section of REQUIRED) {
+  for (const section of VARIANTS[sectionOf(file)] ?? ALGORITHMIC) {
     if (!found.some((heading) => section.match.test(heading))) {
       problems.push({
         file: relative,

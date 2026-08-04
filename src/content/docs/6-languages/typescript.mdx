@@ -585,27 +585,26 @@ would need `T[K] | undefined`, because an array index has no guarantee of existi
     { label: 'Compile error on the switch statement' },
     { label: 'It compiles and silently returns undefined for triangles' },
   ]}
-  explanation={
-    <>
-      <p>
-        A compile error, which is the entire point. Inside <code>default</code>,
-        TypeScript narrows <code>s</code> by eliminating the handled cases. With
-        two variants handled out of three, <code>s</code> is now the triangle type —
-        and a triangle is not assignable to <code>never</code>.
-      </p>
-      <p>
-        Remove the <code>_exhaustive</code> line and option two becomes correct: it
-        compiles, and triangles throw at runtime, in production, some time after the
-        variant was added.
-      </p>
-      <p>
-        This is what makes it valuable — the compiler enumerates every switch that
-        needs updating, so adding a variant becomes a mechanical fix-the-errors task
-        rather than a grep you can get wrong.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      A compile error, which is the entire point. Inside <code>default</code>,
+      TypeScript narrows <code>s</code> by eliminating the handled cases. With
+      two variants handled out of three, <code>s</code> is now the triangle type —
+      and a triangle is not assignable to <code>never</code>.
+    </p>
+    <p>
+      Remove the <code>_exhaustive</code> line and option two becomes correct: it
+      compiles, and triangles throw at runtime, in production, some time after the
+      variant was added.
+    </p>
+    <p>
+      This is what makes it valuable — the compiler enumerates every switch that
+      needs updating, so adding a variant becomes a mechanical fix-the-errors task
+      rather than a grep you can get wrong.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -618,29 +617,28 @@ would need `T[K] | undefined`, because an array index has no guarantee of existi
     { label: 'Type guards cannot narrow `unknown`, only `any`' },
     { label: 'Type guards are slower at runtime than a schema parse' },
   ]}
-  explanation={
-    <>
-      <p>
-        Because <code>x is User</code> is an unchecked assertion. TypeScript takes
-        your word for it and never verifies that the function body actually proves
-        the claim, so a guard checking only <code>'id' in x</code> returns true for{' '}
-        <code>{'{ id: 42 }'}</code> and every consumer then treats a number as a
-        string.
-      </p>
-      <p>
-        There is a second, quieter failure: the guard and the{' '}
-        <code>User</code> interface are two separate declarations that must be kept
-        in sync by hand. Add a field to the interface and the guard silently stops
-        checking it.
-      </p>
-      <p>
-        A schema removes both problems — the type is <em>derived from</em> the
-        validator with <code>z.infer</code>, so they cannot disagree, and the parse
-        throws with the path to the offending field.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Because <code>x is User</code> is an unchecked assertion. TypeScript takes
+      your word for it and never verifies that the function body actually proves
+      the claim, so a guard checking only <code>'id' in x</code> returns true for{' '}
+      <code>{'{ id: 42 }'}</code> and every consumer then treats a number as a
+      string.
+    </p>
+    <p>
+      There is a second, quieter failure: the guard and the{' '}
+      <code>User</code> interface are two separate declarations that must be kept
+      in sync by hand. Add a field to the interface and the guard silently stops
+      checking it.
+    </p>
+    <p>
+      A schema removes both problems — the type is <em>derived from</em> the
+      validator with <code>z.infer</code>, so they cannot disagree, and the parse
+      throws with the path to the offending field.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

@@ -507,29 +507,28 @@ console.log('done');`}
     { label: "'done' only — the callbacks never run" },
     { label: 'The order is non-deterministic' },
   ]}
-  explanation={
-    <>
-      <p>
-        <code>'done'</code> first. Each callback runs synchronously up to its{' '}
-        <code>await</code>, then suspends and hands the rest of itself to the
-        microtask queue. <code>forEach</code> receives the returned promise and
-        discards it, so all three iterations start and none finishes before{' '}
-        <code>forEach</code> returns.
-      </p>
-      <p>
-        The order of the three saves <em>is</em> deterministic here — the
-        microtask queue is FIFO and they were queued in order — but relying on
-        that is fragile: it only holds because <code>save</code> resolves after
-        the same number of microtask turns for every item.
-      </p>
-      <p>
-        The real problem is not the ordering, it is that nothing is tracking those
-        promises. If one rejects, it is an unhandled rejection, which terminates
-        the process by default in modern Node.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      <code>'done'</code> first. Each callback runs synchronously up to its{' '}
+      <code>await</code>, then suspends and hands the rest of itself to the
+      microtask queue. <code>forEach</code> receives the returned promise and
+      discards it, so all three iterations start and none finishes before{' '}
+      <code>forEach</code> returns.
+    </p>
+    <p>
+      The order of the three saves <em>is</em> deterministic here — the
+      microtask queue is FIFO and they were queued in order — but relying on
+      that is fragile: it only holds because <code>save</code> resolves after
+      the same number of microtask turns for every item.
+    </p>
+    <p>
+      The real problem is not the ordering, it is that nothing is tracking those
+      promises. If one rejects, it is an unhandled rejection, which terminates
+      the process by default in modern Node.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -542,29 +541,28 @@ console.log('done');`}
     { label: 'Both — an infinite loop is an infinite loop' },
     { label: 'Neither — the loop always makes progress' },
   ]}
-  explanation={
-    <>
-      <p>
-        The promise chain. The microtask queue is drained <em>to empty</em> before
-        the loop moves on, so a microtask that queues another microtask refills the
-        queue it is being drained from and the loop never reaches the macrotask
-        phase. Timers, I/O callbacks and incoming connections all starve.
-      </p>
-      <p>
-        A recursive <code>setTimeout</code> is well behaved by comparison: only one
-        macrotask is taken per turn, so everything else gets a chance to interleave
-        between iterations.
-      </p>
-      <p>
-        This is the practical reason to break long recursive async work with{' '}
-        <code>setImmediate</code> rather than an already-resolved promise. It is
-        also worth knowing that <code>process.nextTick</code> is worse still — it
-        drains ahead of microtasks, so an unbounded <code>nextTick</code> recursion
-        starves promises as well.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The promise chain. The microtask queue is drained <em>to empty</em> before
+      the loop moves on, so a microtask that queues another microtask refills the
+      queue it is being drained from and the loop never reaches the macrotask
+      phase. Timers, I/O callbacks and incoming connections all starve.
+    </p>
+    <p>
+      A recursive <code>setTimeout</code> is well behaved by comparison: only one
+      macrotask is taken per turn, so everything else gets a chance to interleave
+      between iterations.
+    </p>
+    <p>
+      This is the practical reason to break long recursive async work with{' '}
+      <code>setImmediate</code> rather than an already-resolved promise. It is
+      also worth knowing that <code>process.nextTick</code> is worse still — it
+      drains ahead of microtasks, so an unbounded <code>nextTick</code> recursion
+      starves promises as well.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

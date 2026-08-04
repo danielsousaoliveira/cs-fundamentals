@@ -13,7 +13,26 @@ interface QuizProps {
   snippet?: string;
   lang?: 'python' | 'typescript' | 'javascript';
   options: QuizOption[];
-  /** Shown after answering, right or wrong. This is where the teaching happens. */
+  /**
+   * Shown after answering, right or wrong. This is where the teaching happens.
+   *
+   * Passed as an Astro **named slot**, not as a JSX prop:
+   *
+   * ```mdx
+   * <Quiz …>
+   *   <Fragment slot="explanation">…</Fragment>
+   * </Quiz>
+   * ```
+   *
+   * The distinction is load-bearing rather than stylistic. JSX written in an
+   * `.mdx` file compiles to *Astro* JSX — objects shaped
+   * `{ 'astro:jsx', type, props }` — and handing one of those to a React island
+   * as a prop makes React throw error #31 the instant it hydrates. The build
+   * still succeeds and the server-rendered markup still looks right, so the
+   * only symptom is that every quiz silently stops responding to clicks in
+   * production. A named slot is serialised by Astro into something React can
+   * actually render.
+   */
   explanation: ReactNode;
   /** Stable key for remembering that this quiz was answered. */
   id: string;

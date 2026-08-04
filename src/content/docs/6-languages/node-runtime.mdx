@@ -544,28 +544,27 @@ block. Both matter, and only the first is obvious.
     { label: 'About 10/minute, since each instance sees a tenth of the traffic' },
     { label: '100/minute per instance, which is the intended behaviour' },
   ]}
-  explanation={
-    <>
-      <p>
-        Roughly 1,000, because each instance keeps its own counter and knows nothing
-        about the other nine. Round-robin balancing spreads a user's requests across
-        all of them, so each instance sees about a tenth of that user's traffic and
-        allows 100 of them.
-      </p>
-      <p>
-        The part that makes it more than a bug is that the number is not fixed. Scale
-        to 20 instances and the effective limit doubles — autoscaling silently
-        changes a security control, and nothing in the code or config records that it
-        happened.
-      </p>
-      <p>
-        This is the general rule for a Node process: anything in memory is invisible
-        to your other instances. Counters, locks, sessions and socket registries all
-        have to move somewhere shared.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Roughly 1,000, because each instance keeps its own counter and knows nothing
+      about the other nine. Round-robin balancing spreads a user's requests across
+      all of them, so each instance sees about a tenth of that user's traffic and
+      allows 100 of them.
+    </p>
+    <p>
+      The part that makes it more than a bug is that the number is not fixed. Scale
+      to 20 instances and the effective limit doubles — autoscaling silently
+      changes a security control, and nothing in the code or config records that it
+      happened.
+    </p>
+    <p>
+      This is the general rule for a Node process: anything in memory is invisible
+      to your other instances. Counters, locks, sessions and socket registries all
+      have to move somewhere shared.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -578,28 +577,27 @@ block. Both matter, and only the first is obvious.
     { label: 'Roughly the same; both are O(n) in the number of objects' },
     { label: 'Retaining is cheaper, since retained objects are never re-scanned' },
   ]}
-  explanation={
-    <>
-      <p>
-        Retaining, by a wide margin. V8's minor collector is a copying collector
-        whose cost is proportional to the objects that <em>survive</em>, not to how
-        many were allocated — so a million objects that all die cost almost nothing,
-        because almost nothing is copied.
-      </p>
-      <p>
-        A million retained objects are promoted to old space, where collection is
-        mark-sweep-compact and proportional to the whole live heap. They are scanned
-        on every major GC, for the lifetime of the process.
-      </p>
-      <p>
-        This inverts the instinct carried over from other runtimes that allocation is
-        the thing to avoid. In V8 the expensive decision is what you <em>keep</em>,
-        which is also why an unbounded cache costs you steadily rising p99 latency
-        long before it costs you a crash.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Retaining, by a wide margin. V8's minor collector is a copying collector
+      whose cost is proportional to the objects that <em>survive</em>, not to how
+      many were allocated — so a million objects that all die cost almost nothing,
+      because almost nothing is copied.
+    </p>
+    <p>
+      A million retained objects are promoted to old space, where collection is
+      mark-sweep-compact and proportional to the whole live heap. They are scanned
+      on every major GC, for the lifetime of the process.
+    </p>
+    <p>
+      This inverts the instinct carried over from other runtimes that allocation is
+      the thing to avoid. In V8 the expensive decision is what you <em>keep</em>,
+      which is also why an unbounded cache costs you steadily rising p99 latency
+      long before it costs you a crash.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

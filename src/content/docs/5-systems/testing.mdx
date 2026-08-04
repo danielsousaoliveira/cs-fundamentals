@@ -509,27 +509,26 @@ an accidental flake into a specification of the off-by-one.
     { label: 'The service calls save with the wrong shape' },
     { label: 'The service forgets to call save on the happy path' },
   ]}
-  explanation={
-    <>
-      <p>
-        The query, because the query never runs. The mock returns whatever the test
-        told it to, so the real <code>findConflicting</code> could compare the wrong
-        way round, miss the boundary case, or query the wrong column, and this test
-        stays green.
-      </p>
-      <p>
-        That is the general shape of the problem: a mock replaces the component most
-        likely to contain the defect with a component that cannot contain one. You
-        have tested the code against your own expectations rather than against
-        reality.
-      </p>
-      <p>
-        Which is why the boundary matters — mock what you do not own, and use a real
-        database for your own data access.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      The query, because the query never runs. The mock returns whatever the test
+      told it to, so the real <code>findConflicting</code> could compare the wrong
+      way round, miss the boundary case, or query the wrong column, and this test
+      stays green.
+    </p>
+    <p>
+      That is the general shape of the problem: a mock replaces the component most
+      likely to contain the defect with a component that cannot contain one. You
+      have tested the code against your own expectations rather than against
+      reality.
+    </p>
+    <p>
+      Which is why the boundary matters — mock what you do not own, and use a real
+      database for your own data access.
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -542,27 +541,26 @@ an accidental flake into a specification of the off-by-one.
     { label: 'About 90% of runs' },
     { label: 'About 63% of runs' },
   ]}
-  explanation={
-    <>
-      <p>
-        0.999<sup>1000</sup> ≈ 0.368, so roughly 37% — CI fails almost two runs in
-        three, with nothing wrong. Flakiness compounds multiplicatively, which is
-        why a per-test reliability that sounds excellent produces a suite that is
-        useless.
-      </p>
-      <p>
-        The consequence is behavioural rather than technical. A team that sees
-        spurious red learns to re-run rather than read, and then a <em>real</em>{' '}
-        failure gets re-run too. At that point the suite has stopped being a signal.
-      </p>
-      <p>
-        It also shows why "just retry failed tests" is a trap: it hides the
-        arithmetic instead of fixing it, and the underlying non-determinism is
-        usually a real bug in the code, not only in the test.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      0.999<sup>1000</sup> ≈ 0.368, so roughly 37% — CI fails almost two runs in
+      three, with nothing wrong. Flakiness compounds multiplicatively, which is
+      why a per-test reliability that sounds excellent produces a suite that is
+      useless.
+    </p>
+    <p>
+      The consequence is behavioural rather than technical. A team that sees
+      spurious red learns to re-run rather than read, and then a <em>real</em>{' '}
+      failure gets re-run too. At that point the suite has stopped being a signal.
+    </p>
+    <p>
+      It also shows why "just retry failed tests" is a trap: it hides the
+      arithmetic instead of fixing it, and the underlying non-determinism is
+      usually a real bug in the code, not only in the test.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

@@ -35,9 +35,37 @@ export const collections = {
 
         tags: z.array(z.string()).default([]),
 
+        /**
+         * Which languages the page's code blocks are written in. Sections 1–6
+         * are Python and TypeScript; the engineering sections need the
+         * languages the work is actually done in — SQL for the data pages, HCL
+         * for Terraform, YAML for pipelines and Kubernetes, shell for
+         * everything with a CLI.
+         */
         languages: z
-          .array(z.enum(['python', 'typescript']))
+          .array(
+            z.enum([
+              'python',
+              'typescript',
+              'javascript',
+              'sql',
+              'bash',
+              'hcl',
+              'yaml',
+              'csharp',
+            ]),
+          )
           .default(['python', 'typescript']),
+
+        /**
+         * Which job roles this page belongs to. Sections are organised by
+         * domain, so a role is a *path across* them — `roles` is what makes
+         * those paths derivable rather than hand-listed. Tagging a page
+         * `[ai, backend]` puts it on two reading paths and costs nothing.
+         */
+        roles: z
+          .array(z.enum(['ai', 'fullstack', 'frontend', 'backend', 'cloud', 'data']))
+          .default([]),
 
         /** Summary shown on section cards, e.g. { insert: 'O(log n)' }. */
         complexity: z.record(z.string(), z.string()).optional(),

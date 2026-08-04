@@ -514,27 +514,26 @@ irrelevant, so choose whichever bounds the shape you actually have.
     { label: 'O(n log n)' },
     { label: 'O(1) — frames are reused' },
   ]}
-  explanation={
-    <>
-      <p>
-        O(n). Calls are made and returned depth-first, so frames are pushed and
-        popped continuously — at any instant the stack holds only one path from the
-        root to the current leaf, and the deepest such path is n.
-      </p>
-      <p>
-        The 2ⁿ counts calls <em>over the whole run</em>, which is time, not space.
-        Conflating the two is the common error, and it matters because it predicts
-        the failure mode: naive Fibonacci does not blow the stack, it just never
-        finishes.
-      </p>
-      <p>
-        Memoising fixes the time and leaves the space unchanged at O(n) — plus O(n)
-        for the cache. To get the space down too you need the bottom-up iterative
-        version, which keeps only the last two values and is O(1).
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      O(n). Calls are made and returned depth-first, so frames are pushed and
+      popped continuously — at any instant the stack holds only one path from the
+      root to the current leaf, and the deepest such path is n.
+    </p>
+    <p>
+      The 2ⁿ counts calls <em>over the whole run</em>, which is time, not space.
+      Conflating the two is the common error, and it matters because it predicts
+      the failure mode: naive Fibonacci does not blow the stack, it just never
+      finishes.
+    </p>
+    <p>
+      Memoising fixes the time and leaves the space unchanged at O(n) — plus O(n)
+      for the cache. To get the space down too you need the bottom-up iterative
+      version, which keeps only the last two values and is O(1).
+    </p>
+  </Fragment>
+</Quiz>
 
 <Quiz
   client:visible
@@ -547,27 +546,26 @@ irrelevant, so choose whichever bounds the shape you actually have.
     { label: 'It drops to O(log n)' },
     { label: 'It depends on whether the function is decorated' },
   ]}
-  explanation={
-    <>
-      <p>
-        Nothing. CPython does not eliminate tail calls and has no plans to — Guido
-        has argued against it explicitly, mainly because it destroys the stack traces
-        that make Python debuggable.
-      </p>
-      <p>
-        The same trap exists in JavaScript, and is worse because the specification
-        misleads: ES6 <em>requires</em> proper tail calls, and only Safari implements
-        them. V8 and SpiderMonkey have both declined, so the guarantee is on paper
-        only.
-      </p>
-      <p>
-        So in either language, tail-recursive style is a readability choice with a
-        stack overflow attached. If depth is the problem, the fix is a loop or an
-        explicit heap-allocated stack — not a rewrite the runtime will ignore.
-      </p>
-    </>
-  }
-/>
+>
+  <Fragment slot="explanation">
+    <p>
+      Nothing. CPython does not eliminate tail calls and has no plans to — Guido
+      has argued against it explicitly, mainly because it destroys the stack traces
+      that make Python debuggable.
+    </p>
+    <p>
+      The same trap exists in JavaScript, and is worse because the specification
+      misleads: ES6 <em>requires</em> proper tail calls, and only Safari implements
+      them. V8 and SpiderMonkey have both declined, so the guarantee is on paper
+      only.
+    </p>
+    <p>
+      So in either language, tail-recursive style is a readability choice with a
+      stack overflow attached. If depth is the problem, the fix is a loop or an
+      explicit heap-allocated stack — not a rewrite the runtime will ignore.
+    </p>
+  </Fragment>
+</Quiz>
 
 ## Interview answers
 

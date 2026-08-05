@@ -9,3 +9,9 @@ notebooks/
 # rewrites it to `{/_ … _/}`, which then fails to parse. Never format .mdx.
 *.mdx
 *.md
+
+# Raw EXPLAIN capture. This is evidence, not source: it is written by
+# scripts/capture-query-plans.sh and read by scripts/distil-query-plans.py.
+# Reformatting it would create diff noise on every re-capture and invites
+# hand-editing a file whose whole value is that nobody has touched it.
+src/components/viz/traces/fixtures/queryPlans.json

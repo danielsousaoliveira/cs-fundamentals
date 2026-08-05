@@ -1604,3 +1604,365 @@ svg[id^='mermaid-'] {
   color: var(--viz-role-compare-fg);
   border-radius: var(--viz-radius);
 }
+
+/* ---------------------------------------------------------------------------
+   QueryPlanExplorer
+
+   The plan tree reuses the site's role colours with a deliberate mapping:
+   `sorted` (the "done, good" green) for index access, `swap` (the alerting
+   amber) for a sequential scan. That is a value judgement encoded in colour, so
+   it is worth defending: the widget's whole argument is that neither node type
+   is universally better, and the colours could imply otherwise. They are read as
+   "the planner took the selective path" versus "the planner read everything",
+   which is what they literally mean, and the caption carries the nuance.
+   --------------------------------------------------------------------------- */
+
+.plan__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  margin-bottom: 0.9rem;
+}
+
+.plan__field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.plan__field legend {
+  padding: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--viz-text-dim);
+  margin-bottom: 0.3rem;
+}
+
+.plan__segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.plan__seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.3rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-family: var(--viz-font-mono);
+  color: var(--viz-text);
+  background: var(--viz-surface);
+  border: var(--viz-border-width) solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  cursor: pointer;
+}
+
+.plan__seg small {
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.plan__seg--on {
+  background: var(--viz-role-active-bg);
+  border-color: var(--viz-role-active-border);
+  color: var(--viz-role-active-fg);
+  font-weight: 700;
+}
+
+.plan__sql {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+}
+
+.plan__sql code {
+  font-family: var(--viz-font-mono);
+}
+
+.plan__verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.45rem 0.7rem;
+  margin-bottom: 0.8rem;
+  border-radius: var(--viz-radius);
+  border-left: 4px solid var(--viz-role-swap-border);
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+}
+
+.plan__verdict--index {
+  border-left-color: var(--viz-role-sorted-border);
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+}
+
+.plan__verdict strong {
+  font-family: var(--viz-font-mono);
+  font-size: 0.9rem;
+}
+
+.plan__verdict span {
+  font-size: 0.76rem;
+  opacity: 0.85;
+}
+
+.plan__tree {
+  list-style: none;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  font-family: var(--viz-font-mono);
+  font-size: 0.76rem;
+  overflow-x: auto;
+}
+
+.plan__node {
+  padding-block: 0.3rem;
+  border-top: 1px solid var(--viz-border);
+}
+
+.plan__node:first-child {
+  border-top: 0;
+}
+
+.plan__node-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.plan__node-type {
+  font-weight: 700;
+}
+
+.plan__node-index {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+/* Time bar. Width is the node's share of the query, so the eye finds the
+   expensive node before reading a single number. */
+.plan__node-share {
+  flex: 1;
+  min-width: 2rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--viz-role-active-border) var(--share),
+    var(--viz-role-default-bg) var(--share)
+  );
+}
+
+.plan__node-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.9rem;
+  font-size: 0.7rem;
+  color: var(--viz-text-dim);
+}
+
+.plan__node-facts em {
+  font-style: normal;
+  opacity: 0.9;
+}
+
+.plan__waste {
+  color: var(--viz-role-swap-border);
+  font-weight: 700;
+}
+
+.plan__provenance {
+  font-size: 0.7rem;
+  color: var(--viz-text-dim);
+}
+
+.plan__sweep {
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--viz-border);
+}
+
+.plan__sweep h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.plan__sweep-scroll {
+  overflow-x: auto;
+}
+
+.plan__sweep-table {
+  width: 100%;
+  min-width: 30rem;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  font-family: var(--viz-font-mono);
+}
+
+.plan__sweep-table th,
+.plan__sweep-table td {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--viz-border);
+  white-space: nowrap;
+}
+
+.plan__sweep-table thead th {
+  font-size: 0.68rem;
+  color: var(--viz-text-dim);
+  font-weight: 600;
+  white-space: normal;
+}
+
+.plan__cell--index {
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+}
+
+.plan__cell--seq {
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+}
+
+.plan__sweep-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.76rem;
+  color: var(--viz-text-dim);
+}
+
+/* --- JoinVisualiser -------------------------------------------------------- */
+
+.join__kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+
+.join__kind {
+  padding: 0.3rem 0.6rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-family: var(--viz-font-mono);
+  color: var(--viz-text);
+  background: var(--viz-surface);
+  border: var(--viz-border-width) solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  cursor: pointer;
+}
+
+.join__kind--on {
+  background: var(--viz-role-active-bg);
+  border-color: var(--viz-role-active-border);
+  color: var(--viz-role-active-fg);
+  font-weight: 700;
+}
+
+.join__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.join__table {
+  border-collapse: collapse;
+  font-family: var(--viz-font-mono);
+  font-size: 0.74rem;
+}
+
+.join__table caption {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--viz-text-dim);
+  padding-bottom: 0.25rem;
+}
+
+.join__table th,
+.join__table td {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--viz-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.join__table thead th {
+  font-size: 0.68rem;
+  color: var(--viz-text-dim);
+  font-weight: 600;
+}
+
+.join__table--result {
+  width: 100%;
+  min-width: 26rem;
+}
+
+.join__scroll {
+  overflow-x: auto;
+  margin-bottom: 0.8rem;
+}
+
+/* A dropped source row is de-emphasised rather than hidden: the reader needs to
+   see that it existed and did not survive. */
+.join__row--dropped {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.join__row--multiplied {
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+  font-weight: 700;
+}
+
+.join__result-row--match td {
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+}
+
+.join__result-row--padded-left td,
+.join__result-row--padded-right td {
+  background: var(--viz-role-compare-bg);
+  color: var(--viz-role-compare-fg);
+}
+
+.join__result-row--cross td {
+  background: var(--viz-role-ghost-bg);
+  color: var(--viz-role-ghost-fg);
+}
+
+.join__null {
+  font-style: italic;
+  opacity: 0.6;
+  font-size: 0.9em;
+}
+
+.join__sql {
+  margin: 0 0 0.7rem;
+  font-size: 0.78rem;
+}
+
+.join__sql code {
+  font-family: var(--viz-font-mono);
+}
+
+.join__wrong {
+  color: var(--viz-role-swap-border);
+}
+
+.join__warning {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
+  border-left: 3px solid var(--viz-role-swap-border);
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+  border-radius: var(--viz-radius);
+}

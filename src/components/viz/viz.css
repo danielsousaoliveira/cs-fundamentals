@@ -1966,3 +1966,119 @@ svg[id^='mermaid-'] {
   color: var(--viz-role-swap-fg);
   border-radius: var(--viz-radius);
 }
+
+/* --- PartitionKeyExplorer -------------------------------------------------- */
+
+.part__bars {
+  list-style: none;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  font-family: var(--viz-font-mono);
+  font-size: 0.74rem;
+}
+
+.part__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-block: 0.12rem;
+}
+
+.part__label {
+  width: 2.2rem;
+  color: var(--viz-text-dim);
+  flex: none;
+}
+
+.part__track {
+  flex: 1;
+  height: 0.85rem;
+  background: var(--viz-role-default-bg);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.part__bar {
+  display: block;
+  height: 100%;
+  background: var(--viz-role-sorted-border);
+  transition: width var(--viz-duration) var(--viz-ease);
+}
+
+/* A partition demanding more than its even share of RU/s is where the 429s come
+   from, so it is coloured as the alert rather than merely as "the big one". */
+.part__bar--hot {
+  background: var(--viz-role-swap-border);
+}
+
+.part__bar--idle {
+  background: transparent;
+}
+
+.part__count {
+  width: 5.5rem;
+  text-align: right;
+  flex: none;
+}
+
+.part__count small {
+  opacity: 0.65;
+}
+
+.part__count em {
+  font-style: italic;
+  opacity: 0.5;
+}
+
+.part__queries {
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--viz-border);
+}
+
+.part__queries h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.part__queries ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.78rem;
+}
+
+.part__queries li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--viz-radius);
+  margin-bottom: 0.2rem;
+}
+
+.part__query--routed {
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+}
+
+.part__query--fanout {
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+}
+
+.part__queries strong {
+  font-family: var(--viz-font-mono);
+  font-size: 0.72rem;
+}
+
+.part__ceiling {
+  margin: 0.9rem 0 0;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
+  border-left: 3px solid var(--viz-role-compare-border);
+  background: var(--viz-role-compare-bg);
+  color: var(--viz-role-compare-fg);
+  border-radius: var(--viz-radius);
+}

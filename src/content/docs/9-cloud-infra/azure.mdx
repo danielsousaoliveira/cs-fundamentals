@@ -1,0 +1,207 @@
+---
+title: Azure — resource groups, Entra ID, and Cloud Run's closest cousin
+description: >-
+  What's genuinely different about Azure once you already know AWS — resource
+  groups as a real management unit rather than a tagging convention, and
+  Entra ID's tenant-first identity model.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/aws
+tags: [azure, resource-groups, entra-id, azure-vm, cosmosdb]
+languages: [bash, yaml]
+roles: [cloud, backend, fullstack]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Most of Azure maps directly onto the AWS vocabulary from the
+[previous page](/cs-fundamentals/9-cloud-infra/aws/) — Azure VMs are EC2,
+Blob Storage is S3, Azure SQL/Cosmos DB is RDS/DynamoDB, Azure Functions is
+Lambda. Learning Azure is mostly relabeling, with two genuine structural
+differences worth understanding on their own terms: **resource groups**, which
+are a real management boundary rather than a naming convention, and
+**Entra ID** (formerly Azure AD), whose tenant-first identity model shapes
+how permissions and organizations relate in a way AWS's account model
+doesn't.
+
+## Mechanics
+
+### Resource groups: a real container, not a tag
+
+```bash
+az group create --name prod-orders-rg --location westeurope
+az vm create --resource-group prod-orders-rg --name web-01 \
+  --image Ubuntu2404 --size Standard_B2s
+```
+
+Every Azure resource lives inside exactly one **resource group**, and a
+resource group is a real management unit: you can apply an access policy to
+the whole group at once, tear down every resource in it with one delete, and
+view cost broken down by group without needing a separate tagging discipline.
+AWS has tags that *can* serve a similar purpose, but they're opt-in and
+enforced by convention; a resource group is enforced by the platform — a
+resource cannot exist without belonging to exactly one.
+
+This makes resource groups a natural unit for "everything this one
+environment or project needs" — `prod-orders-rg` holds the VM, its
+network security group, and its attached storage, and deleting the group
+tears down all three atomically, with no risk of an orphaned resource left
+behind because someone forgot one step of a manual cleanup.
+
+### Entra ID: tenant-first, not account-first
+
+AWS's identity model starts from an **account** — a billing and resource
+boundary that also happens to hold IAM users. Azure's starts from a
+**tenant** — a directory of identities (people, groups, service principals)
+that exists independently of any specific subscription (Azure's rough
+equivalent of an AWS account), and one tenant can have many subscriptions
+attached to it.
+
+```bash
+az ad sp create-for-rbac --name web-app-sp \
+  --role "Storage Blob Data Reader" \
+  --scope /subscriptions/<sub-id>/resourceGroups/prod-orders-rg
+```
+
+A **service principal** is Entra ID's equivalent of an IAM role assumed by a
+workload — an identity a service authenticates as, scoped (here) to read blob
+data within one resource group, not the whole subscription. The practical
+consequence of the tenant-first model: identity and access decisions are
+often made once at the organization level and inherited across every
+subscription in that tenant, which is powerful for a large organization with
+many teams and subscriptions, and easy to over-provision if nobody audits
+what inherits down.
+
+### Azure VM sizing and Cosmos DB: same shape, different names
+
+Azure VM sizes (`Standard_B2s`, `Standard_D4s_v5`) encode the same
+vCPU/RAM/network tradeoff as an EC2 instance type. **Cosmos DB** — covered in
+depth in [CosmosDB](/cs-fundamentals/8-databases-storage/cosmosdb/) — is
+Azure's globally-distributed NoSQL store; its partition-key and RU/s model has
+no direct AWS equivalent (DynamoDB is the closer cousin, though it prices
+capacity differently).
+
+## Cost & limits
+
+**Resource groups make cost attribution close to free** — Azure Cost
+Management can report spend per resource group with no additional tagging
+work, which is a genuine operational advantage over AWS's tag-based cost
+allocation, provided groups are drawn along boundaries (per environment, per
+team) that actually match how the organization wants to see cost broken down.
+
+**Entra ID's tenant-wide inheritance means an over-broad role assignment at
+the tenant level applies everywhere underneath it** — the cost of a
+misconfiguration here is not scoped to one subscription the way an
+over-broad IAM policy in AWS is scoped to one account; it can span every
+subscription the tenant owns.
+
+## When NOT to use it
+
+**Do not put unrelated resources in the same resource group "to save
+effort."** A group mixing a production database with a developer's scratch
+VM means a bulk-delete of the group (a common cleanup action) can destroy
+something that was never meant to be temporary. Group by lifecycle and
+environment, not by convenience.
+
+**Do not assign roles at the tenant level when a subscription- or
+resource-group-scoped assignment would do.** The tenant-first model makes
+broad grants easy to make and easy to forget were ever broad — scope every
+assignment to the narrowest level that still lets the workload do its job.
+
+## Real-world usage
+
+Organizations already standardized on Microsoft 365 or on-premises Active
+Directory often choose Azure specifically because Entra ID gives them a
+single identity system spanning both — a person's corporate login and their
+cloud permissions are the same identity, which is a real integration
+advantage AWS and GCP don't natively offer without additional federation
+setup. Resource groups map naturally onto "one per environment per service"
+(`orders-prod-rg`, `orders-staging-rg`), giving teams a clean unit for both
+access control and cost reporting without extra tooling.
+
+## Failure modes
+
+**The resource group that became a junk drawer.** A group that accumulated
+unrelated resources over time — someone's test VM alongside the production
+database — makes cleanup dangerous (a bulk delete risks the wrong thing) and
+cost attribution meaningless (the group's spend no longer maps to one
+environment or team).
+
+**The tenant-level role assignment that quietly granted access to every
+subscription.** A role assigned at the tenant root "to make onboarding
+easier" grants that access to every current and future subscription under the
+tenant — discovered, usually, when an access review asks "why does this
+contractor account have access to a subscription nobody remembers granting it
+to."
+
+## Practice problems
+
+**1. A production database and a developer's scratch VM are in the same
+resource group. What's the risk, and what's the fix?**
+
+A bulk-delete of the group (a common way to tear down an environment) would
+destroy the production database along with the scratch VM. Fix: move the
+scratch VM to its own resource group — groups should be drawn along lifecycle
+boundaries, not just "things one person happens to be working on."
+
+**2. A service principal has "Contributor" role at the subscription level,
+but only needs to manage one storage account. What should change?**
+
+The role assignment should be scoped to the resource group (or the specific
+storage account) the service actually needs, not the whole subscription —
+narrowing the scope limits the blast radius if the service principal's
+credentials are ever compromised, the same principle as scoping an AWS IAM
+policy to a specific bucket ARN rather than `*`.
+
+**3. Why might an organization already using Microsoft 365 prefer Azure over
+AWS or GCP, independent of any specific service comparison?**
+
+Entra ID unifies corporate identity (email, directory, SSO) with cloud
+resource access — an employee's existing login becomes their cloud identity
+without a separate federation setup, which is a real integration advantage
+for organizations already inside the Microsoft identity ecosystem, distinct
+from any comparison of compute or storage pricing.
+
+<Quiz
+  client:visible
+  id="azure-resource-groups"
+  kind="concept"
+  question="What makes an Azure resource group different from an AWS tag applied to resources for organization?"
+  options={[
+    { label: "Nothing -- they're the same concept with a different name" },
+    { label: "A resource group is enforced by the platform (every resource belongs to exactly one) and supports atomic deletion and cost reporting; a tag is an opt-in convention", correct: true },
+    { label: "Resource groups only exist for virtual machines" },
+    { label: "Tags are more powerful because they support multiple values per resource" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Every Azure resource must belong to exactly one resource group -- it's a platform-enforced boundary, not an optional label. That makes group-level operations (delete everything, report cost, apply a policy) atomic and reliable in a way that AWS tags, which are opt-in and can be applied inconsistently, are not.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's a resource group, and why does Azure have this but AWS doesn't
+have a direct equivalent?"** A resource group is a platform-enforced
+container every Azure resource must belong to, supporting atomic deletion,
+scoped access policies, and cost reporting without extra tagging discipline.
+AWS's tag-based organization is more flexible (a resource can have many tags)
+but weaker as a guarantee, because tagging is opt-in and easy to apply
+inconsistently. The caveat: resource groups are only useful if drawn along
+real lifecycle boundaries — a group mixing unrelated resources loses the
+safety the atomic-delete property was supposed to provide.
+
+**"How does Azure's identity model differ from AWS's?"** Azure starts from a
+tenant — an organization-wide identity directory — with subscriptions
+attached underneath it; AWS starts from the account, with IAM users scoped
+to that account. The caveat that shows real Azure experience: this
+tenant-first model is a genuine advantage for organizations already using
+Microsoft identity infrastructure, and a genuine risk if role assignments are
+made at the tenant level by habit — a broad grant there applies to every
+subscription under it, not just the one someone had in mind.

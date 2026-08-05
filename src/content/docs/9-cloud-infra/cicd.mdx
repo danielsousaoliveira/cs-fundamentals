@@ -1,0 +1,242 @@
+---
+title: CI/CD — the pipeline as the only path to production
+description: >-
+  Why caching only helps when it's actually restored, what a deployment
+  strategy trades off (blue-green vs rolling vs canary), and the discipline
+  that makes a pipeline trustworthy — nothing reaches production except
+  through it.
+sidebar:
+  order: 8
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/containers
+tags: [cicd, github-actions, deployment, blue-green, canary, rollback]
+languages: [yaml, bash]
+roles: [cloud, backend, fullstack]
+sources:
+  - github-actions-cache-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+CI/CD is two related but distinct disciplines wearing one hyphenated name.
+**Continuous integration** is "every change is built and tested automatically,
+before it merges" — the goal is catching a broken change in minutes, not
+after it's already in `main` alongside five other people's work. **Continuous
+deployment** (or delivery, if a human approves the last step) is "every
+change that passes CI can reach production automatically, through a
+repeatable, auditable path" — the goal is making the pipeline the *only* way
+anything reaches production, so "what's actually running" is always
+derivable from "what's in the pipeline's history," not from someone's memory
+of a manual step they ran once.
+
+## Mechanics
+
+### Caching: only helps if it's actually restored
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: npm-${{ hashFiles('package-lock.json') }}
+    restore-keys: npm-
+- run: npm ci
+```
+
+[Caching can cut build times by up to 80% in the best case](https://dev.to/ken_mwaura1/optimizing-github-actions-performance-enhance-workflows-with-caching-4hla)
+— but only when the cache key actually matches a previous run. A `key`
+scoped too narrowly (including a branch name, a commit SHA, anything that
+changes every run) [guarantees a cold cache on every single build](https://tenki.cloud/blog/github-actions-cache-strategy),
+which means paying the full uncached cost every time while still paying the
+overhead of checking for a cache that never hits. The `restore-keys` fallback
+above matters specifically for this: an exact match on the lockfile hash is
+ideal, but a *prefix* match against the last cache for this dependency
+manager is still far better than nothing.
+
+### Deployment strategies: the same rollout, three different risk shapes
+
+**Rolling deployment** replaces instances a few at a time — never all-or-nothing,
+but for a window during the rollout, old and new versions serve traffic
+simultaneously, which is only safe if the two versions are compatible (same
+API contract, same database schema expectations).
+
+**Blue-green deployment** runs the new version ("green") fully alongside the
+old ("blue"), then switches all traffic at once via a load balancer or DNS
+change. No mixed-version window — but it requires double the infrastructure
+during the switch, and a stateful resource (a database) still has to handle
+both versions if the switch isn't instantaneous for every client.
+
+**Canary deployment** routes a small percentage of real traffic to the new
+version first, watches error rates and latency, then ramps up gradually.
+Slower to fully roll out than either alternative, but it bounds the blast
+radius of a bad deploy to whatever percentage of traffic the canary stage was
+sized for — the closest thing to testing in production without testing on
+everyone.
+
+```yaml
+# canary shape, expressed as a weighted traffic split
+- service: orders-api-v42
+  weight: 5   # 5% of traffic
+- service: orders-api-v41
+  weight: 95
+```
+
+### Rollback: the step that has to be as automatic as the deploy
+
+A deployment pipeline that can push a new version but has no equally fast,
+equally automatic path to revert to the last known-good version has only
+solved half the problem — the half that matters when everything goes right.
+The rollback path needs the same rigor: it should not require someone to
+remember the previous version's identifier under pressure at 2am, and it
+should be exercised (tested, or at minimum reviewed) before it's needed for
+real.
+
+## Cost & limits
+
+**Compute minutes on hosted CI runners are billed, and a slow pipeline
+compounds that cost across every commit, every pull request, every
+contributor** — a pipeline that takes 15 minutes and runs on every push
+costs meaningfully more, in both compute minutes and contributor wait time,
+than the same pipeline cut to 3 minutes through effective caching and
+parallelization.
+
+**Canary and blue-green both cost infrastructure the rolling strategy
+doesn't** — blue-green needs double capacity during the switch window;
+canary needs the observability tooling to actually detect a regression
+during the canary stage, or the strategy provides no real protection, just
+delay.
+
+## When NOT to use it
+
+**Do not adopt canary deployments without first having the monitoring in
+place to actually detect a regression during the canary window.** A canary
+stage that nobody is watching, with no automated rollback trigger on an
+error-rate threshold, delays the full rollout without providing the
+protection the strategy exists for — it's observability dressed up as a
+deployment strategy, and without the observability half, it's just a slower
+rolling deploy.
+
+**Do not skip CI on a change because "it's small" or "I tested it locally."**
+The entire value of continuous integration is that every change goes through
+the same automated check, with no judgment call about which changes are
+small enough to skip it — the changes people are most confident skipping CI
+for are disproportionately represented in production incidents, because
+confidence and correctness aren't the same thing.
+
+**Do not build a deployment pipeline with no tested rollback path.** A
+pipeline that only goes forward is a pipeline that turns every bad deploy
+into an incident requiring a manual, improvised fix under pressure, instead
+of a routine, rehearsed revert.
+
+## Real-world usage
+
+Most production systems run continuous integration on every pull request
+(build, test, lint, at minimum) as a hard gate before merge, and continuous
+delivery to a staging environment automatically on merge to the main branch,
+with production deployment either fully automatic (continuous deployment) or
+gated behind a single approval click (continuous delivery) — the distinction
+between the two is usually a business or compliance decision, not a
+technical one, since the pipeline mechanics are identical either way.
+Rolling deployments are the default for most stateless services; canary and
+blue-green are reserved for services where a bad deploy is expensive enough
+to justify the extra infrastructure and tooling.
+
+## Failure modes
+
+**The pipeline that was green and still shipped a broken deploy.** Tests
+passing doesn't guarantee the deployed version behaves correctly under real
+production traffic and data shapes that the test suite doesn't cover — this
+is exactly the gap canary deployments and post-deploy monitoring exist to
+close, and a pipeline with no production-facing verification step is trusting
+the test suite further than it should be trusted alone.
+
+**The rollback that took longer than the outage would have.** A team
+discovers, mid-incident, that reverting requires manually finding the last
+known-good artifact, re-running a deploy pipeline not designed for reverse
+traversal, and coordinating a database migration rollback nobody had
+scripted — the incident's duration is dominated by an unrehearsed rollback
+process, not by the original bug.
+
+**The cache that silently stopped helping.** A cache key tied to something
+that changes on every run (a timestamp, a commit SHA baked in by habit)
+means every build is a cold-cache build, and because the pipeline still
+"works," nobody notices the caching step has been providing zero benefit for
+months — only a direct before/after timing comparison would reveal it.
+
+## Practice problems
+
+**1. A GitHub Actions cache key is `${{ github.sha }}`. Why does this
+guarantee the cache never helps, and what should it be instead?**
+
+Every commit has a unique SHA, so the cache key is different on every single
+run — there's never a previous run with a matching key to restore from. It
+should key on something that changes only when the *cached content* should
+change — for a dependency cache, the hash of the lockfile
+(`hashFiles('package-lock.json')`), so the cache is reused across every
+commit that doesn't change dependencies, and only invalidated when
+dependencies actually change.
+
+**2. A team wants to reduce the blast radius of a bad production deploy
+without doubling their infrastructure cost. Which deployment strategy fits,
+and what does it require to actually work?**
+
+Canary deployment — it routes a small percentage of traffic to the new
+version rather than requiring a full parallel environment, keeping
+infrastructure cost close to the rolling-deployment baseline. It only
+provides real protection if there's monitoring in place during the canary
+window that can detect a regression (error rate, latency) and either alert a
+human or automatically halt the rollout — without that, it's a slower deploy
+with no actual safety benefit.
+
+**3. An incident retrospective finds that rolling back a bad deploy took 40
+minutes, longer than the outage the deploy caused would have lasted on its
+own. What's the systemic fix, independent of what caused this specific
+incident?**
+
+Build and rehearse a rollback path with the same rigor as the deploy path —
+an automated or single-command revert to the last known-good version,
+including any required reverse database migration, tested before it's needed
+under real pressure. The specific bug that caused this incident matters less
+than the fact that the team's only tested path was forward.
+
+<Quiz
+  client:visible
+  id="cicd-canary-monitoring"
+  kind="concept"
+  question="A team adds a canary deployment stage that routes 5% of traffic to new versions before full rollout, but has no automated alerting on error rate during that stage. What's the actual protection this provides?"
+  options={[
+    { label: "Full protection -- canary deployments are inherently safe regardless of monitoring" },
+    { label: "Little to none -- without monitoring to detect a regression during the canary window, it only delays the full rollout without actually catching bad deploys", correct: true },
+    { label: "It automatically rolls back any deploy that has bugs" },
+    { label: "It doubles the infrastructure cost but provides no benefit" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>A canary stage limits the blast radius of a bad deploy only if something is actually watching the canary traffic and can trigger a halt or rollback based on what it sees. Without that observability and automated (or promptly manual) response, routing 5% of traffic to a broken version for a while before rolling it out to everyone else doesn't prevent the bad deploy -- it just delays it while collecting no actionable signal.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between rolling, blue-green, and canary
+deployments?"** Rolling replaces instances gradually with a mixed-version
+window; blue-green runs the full new version alongside the old and switches
+all traffic at once, avoiding mixed versions but needing double capacity;
+canary routes a small percentage of traffic to the new version first,
+bounding the blast radius of a bad deploy before ramping up. The caveat that
+shows real deployment experience: canary is only as good as the monitoring
+watching it — without an automated or promptly manual response to a
+regression during the canary window, it's a slower rollout with no actual
+safety benefit, not a strategy that's inherently safer on its own.
+
+**"How would you design a CI/CD pipeline's caching strategy?"** Key the
+cache on a hash of whatever actually determines the cached content — a
+lockfile for dependencies, source file hashes for build outputs — never on
+something that changes every run like a commit SHA or timestamp, which
+guarantees a permanent cache miss. The caveat: a cache key scoped too broadly
+is also wrong — it can serve stale content across builds that should have
+invalidated it — so the key needs to capture exactly the inputs that
+determine correctness, no more and no less.

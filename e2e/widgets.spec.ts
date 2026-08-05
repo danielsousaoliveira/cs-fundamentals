@@ -494,3 +494,23 @@ test('PartitionKeyExplorer trades distribution against query routing', async ({
     .innerText();
   expect(Number(routableAfter)).toBe(1);
 });
+
+test('TerraformPlanDiff flips between update and replace by attribute', async ({
+  page,
+}) => {
+  await page.goto('9-cloud-infra/terraform/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  // aws_instance is the default resource; instance_type is mutable.
+  await widget.getByRole('button', { name: 'instance_type' }).click();
+  await expect(widget.locator('.viz-counters__value')).toHaveText('update in-place');
+  await expect(widget.locator('.tfplan__plan')).not.toContainText('forces replacement');
+
+  // Switching to ami (ForceNew) flips the verb to a replace.
+  await widget.getByRole('button', { name: 'ami' }).click();
+  await expect(widget.locator('.viz-counters__value')).toHaveText(
+    'destroy and recreate',
+  );
+  await expect(widget.locator('.tfplan__plan')).toContainText('forces replacement');
+  await expect(widget.locator('.tfplan__warning')).toBeVisible();
+});

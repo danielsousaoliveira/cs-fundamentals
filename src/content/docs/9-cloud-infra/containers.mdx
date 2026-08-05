@@ -1,0 +1,247 @@
+---
+title: Containers — layers, caching, and what isolation actually means
+description: >-
+  A container is a process, not a VM — namespaces and cgroups instead of a
+  hypervisor, and image layers as a cache Docker computes from, which is why
+  Dockerfile instruction order is a real performance decision.
+sidebar:
+  order: 6
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/cloud-fundamentals
+tags: [docker, containers, namespaces, cgroups, oci, layers]
+languages: [bash, yaml]
+roles: [cloud, backend, fullstack]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A container is **a normal process on the host kernel**, made to look isolated
+by two Linux kernel features — namespaces (it sees its own filesystem,
+network, and process tree, not the host's) and cgroups (its CPU and memory
+usage is capped and accounted for separately). This is the single fact that
+explains almost everything else about containers: they start in milliseconds
+because there's no OS to boot (unlike a VM, which virtualizes hardware and
+boots a real kernel), and they share the host kernel, which is both the
+source of their speed and the boundary of their isolation — a kernel
+vulnerability can, in principle, be exploited across the container boundary
+in a way a hypervisor boundary is architected to resist more strongly.
+
+## Mechanics
+
+### What a container actually is: not a lightweight VM
+
+```
+VM:        hardware → hypervisor → guest kernel → guest OS → process
+Container: hardware → host kernel → namespaced process
+```
+
+There is no guest kernel in a container. `docker run ubuntu:24.04 bash`
+doesn't boot Ubuntu's kernel — it runs `bash` inside a filesystem that
+*looks* like Ubuntu, on top of whatever kernel the host is already running.
+This is why a container starts in well under a second and a VM takes tens of
+seconds: a container has no kernel to boot, because it isn't booting one.
+
+### Image layers: a cache, not just a packaging format
+
+```dockerfile
+FROM node:22-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+CMD ["node", "server.js"]
+```
+
+Each instruction produces a **layer** — a diff on top of the previous one —
+and Docker caches layers by the hash of the instruction plus its inputs. This
+is why instruction *order* is a real performance decision, not a style
+preference: `COPY package.json` then `RUN npm ci` *before* `COPY . .` means
+changing application code (which touches `COPY . .` and everything after it)
+doesn't invalidate the `npm ci` layer — the dependency install, usually the
+slowest step, is reused from cache. Reverse the order (`COPY . .` before
+`npm ci`) and *any* code change invalidates the dependency-install layer too,
+turning a five-second rebuild into a multi-minute one on every change.
+
+```bash
+docker build -t orders-api:v42 .
+# => [3/5] RUN npm ci                    CACHED
+# => [4/5] COPY . .
+# => [5/5] RUN node -e "..."
+```
+
+### Multi-stage builds: shipping the output, not the toolchain
+
+```dockerfile
+FROM node:22 AS build
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build
+
+FROM node:22-slim
+COPY --from=build /app/dist /app/dist
+CMD ["node", "/app/dist/server.js"]
+```
+
+The first stage has the full build toolchain (compilers, dev dependencies);
+the final image only contains what `COPY --from=build` explicitly pulls
+across. This is the mechanism that keeps a production image small and free of
+build-time tooling that's both dead weight and unnecessary attack surface —
+a `node_modules` full of devDependencies, a compiler, test fixtures, none of
+it ships.
+
+### The isolation boundary, precisely
+
+A container's namespace isolation means it has its own view of the process
+tree, network interfaces, and mount points — `ps aux` inside a container
+doesn't show host processes, and `localhost` inside a container isn't the
+host's `localhost` unless the network namespace is explicitly shared. Cgroups
+enforce resource limits — `docker run --memory=512m` caps what the container
+can consume, and the kernel kills the process if it tries to exceed it (the
+same mechanism Kubernetes builds pod memory limits on top of, covered next).
+What neither mechanism provides: a separate kernel. Every container on a host
+shares that host's kernel, patch level, and kernel-level vulnerabilities.
+
+## Cost & limits
+
+**Image size is a real, compounding cost** — a larger image takes longer to
+push, pull, and start, and at scale (a fleet autoscaling under load, a CI
+pipeline pulling on every run) that latency multiplies across every instance.
+Multi-stage builds and a slim base image are the standard levers.
+
+**Layer caching only helps when the build environment reuses the cache** — a
+CI runner that starts from a clean environment on every run gets no benefit
+from local layer caching unless the pipeline explicitly persists and restores
+the Docker layer cache between runs, which is exactly the gap covered on the
+[CI/CD](/cs-fundamentals/9-cloud-infra/cicd/) page.
+
+## When NOT to use it
+
+**Do not containerize a workload purely out of habit when a managed
+serverless platform already covers the need with less operational surface.**
+A container gives you full control over the runtime; that control is a cost
+(you own patching the base image, sizing resource limits, health checks) as
+much as a benefit, and a workload with no need for that control pays the
+cost without using the flexibility.
+
+**Do not run a container as root inside the image unless there's a specific
+reason.** The default in many base images is root, and a process compromised
+inside a root container has more reach within that container's namespace than
+the same compromise under a non-root user — `USER node` (or equivalent) in
+the Dockerfile is close to free and closes off a real category of escalation.
+
+**Do not treat container isolation as equivalent to VM-level isolation for
+genuinely untrusted, multi-tenant workloads.** Containers share a kernel;
+running code you don't trust at all (a customer-submitted script, in a
+multi-tenant SaaS) alongside your own workloads on the same container runtime
+is a materially weaker boundary than a VM per tenant, or a sandboxed runtime
+purpose-built for untrusted code (gVisor, Firecracker microVMs).
+
+## Real-world usage
+
+Containerized deployment is close to the default for backend services today,
+specifically because the same image that runs on a developer's laptop runs
+identically in CI and in production — "works on my machine" stops being a
+category of bug once the machine and production are running the same
+container image against the same base layer. Multi-stage builds are standard
+practice for compiled or bundled languages (Go binaries, TypeScript builds)
+where the build toolchain is large and the runtime artifact is small.
+
+## Failure modes
+
+**The image that grew from 120 MB to 1.4 GB over six months, unnoticed.**
+Accumulated `apt-get install` layers never cleaned up, devDependencies that
+migrated into the final stage by accident, a base image upgrade that pulled
+in more than expected — none of it fails a build, and the growing pull time
+shows up as "deploys feel slower" long before anyone traces it to image size.
+
+**The container that ran fine locally and OOM-killed in production.** A
+memory limit set in the deployment manifest lower than what the application
+actually needs under real load — locally, with no limit set, it never hit
+the ceiling; in production, cgroups enforce it and the kernel kills the
+process the moment it's crossed, with a log line that looks like a crash
+rather than a sizing problem.
+
+**The Dockerfile instruction order that made every CI build slow.**
+`COPY . .` placed before the dependency install means every single code
+change — including a one-line fix — invalidates the dependency layer and
+forces a full reinstall on every build, turning what should be a
+cache-accelerated pipeline into one that pays the slowest step's full cost
+every time.
+
+## Practice problems
+
+**1. A Dockerfile copies the entire application directory before running
+`npm ci`. Builds are slow even for one-line code changes. What's wrong, and
+what's the fix?**
+
+Copying all application code before installing dependencies means any code
+change invalidates the layer cache from that `COPY` onward — including the
+dependency install, which then reruns from scratch every time. Reorder: copy
+only `package.json`/`package-lock.json` and run `npm ci` first, then copy the
+rest of the application code — code changes now only invalidate the layers
+after the (usually much slower) dependency install.
+
+**2. A container in production is repeatedly OOM-killed under load that ran
+fine in local development. What's the likely cause, and how would you
+confirm it?**
+
+Local development likely ran without a memory limit, or with a much higher
+one, while the production deployment sets a `--memory` / resource limit
+that's too low for real traffic. Confirm by checking the container runtime's
+or orchestrator's event log for an OOM-kill event correlated with the
+crash, and compare the configured memory limit against the application's
+actual peak usage under representative load.
+
+**3. Why does a multi-stage Dockerfile typically produce a smaller and more
+secure final image than a single-stage build with the same application?**
+
+The final stage only contains what's explicitly copied across with
+`COPY --from=<stage>` — the build toolchain (compilers, devDependencies, test
+fixtures) that lived in the earlier stage never makes it into the final
+image. Smaller because none of that build-time weight ships; more secure
+because none of it is available as attack surface or accidental information
+disclosure (build secrets, source maps, test data) in the running container.
+
+<Quiz
+  client:visible
+  id="containers-layer-caching"
+  kind="concept"
+  question="A Dockerfile runs `COPY . .` before `RUN npm ci`. What's the consequence for build speed on repeated builds?"
+  options={[
+    { label: "No consequence -- Docker always caches the dependency install layer regardless of instruction order" },
+    { label: "Every code change invalidates the COPY layer and everything after it, including the dependency install, forcing a full reinstall on every build", correct: true },
+    { label: "It makes the final image larger but doesn't affect build speed" },
+    { label: "It only matters for images larger than 1 GB" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Docker caches layers based on the hash of the instruction and its inputs, and invalidates that layer and every layer after it once something changes. Copying all application code before installing dependencies means the dependency-install layer sits after a layer that changes on every commit -- so it never gets to reuse the cache, even though the dependencies themselves haven't changed.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the actual difference between a container and a VM?"** A VM
+virtualizes hardware and boots a full guest kernel; a container is a normal
+process on the host, isolated by kernel namespaces (its own view of
+filesystem, network, process tree) and resource-limited by cgroups, with no
+separate kernel. The caveat that shows real production understanding: this
+is exactly why containers start faster and pack more densely than VMs, and
+also exactly why container isolation is weaker — every container on a host
+shares that host's kernel, so a kernel-level exploit has a larger blast
+radius than it would across a hypervisor boundary.
+
+**"Why does Dockerfile instruction order matter?"** Docker builds and caches
+each instruction as a layer, keyed on the instruction and its inputs, and
+invalidates a layer plus everything after it once any input changes.
+Ordering instructions from least-frequently-changing (base image, dependency
+manifests) to most-frequently-changing (application source) maximizes cache
+reuse. The caveat: this only pays off in CI if the build environment actually
+persists the layer cache between runs — a clean-environment CI runner gets no
+benefit from careful layer ordering unless the pipeline explicitly restores a
+cache first.

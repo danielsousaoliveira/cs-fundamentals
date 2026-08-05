@@ -1,0 +1,233 @@
+---
+title: Cloud fundamentals — regions, IAM, and the shared responsibility model
+description: >-
+  The vocabulary every cloud provider assumes you already have: regions and
+  availability zones as a blast-radius decision, IAM as default-deny, and the
+  shared responsibility line that determines who gets paged for a breach.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs: []
+tags: [cloud, regions, availability-zones, iam, shared-responsibility]
+languages: [yaml]
+roles: [cloud, backend, fullstack]
+sources:
+  - shared-responsibility-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Every cloud provider's documentation assumes four ideas before it gets to any
+specific service: a **region** is a real, physically separate place with its
+own power grid and network; an **availability zone** is an isolated
+sub-location inside a region, sharing the region's network but not its power
+or cooling; **IAM** is a system that starts by denying everything and grants
+narrow, additive permissions; and the **shared responsibility model** draws a
+line — often invisible until an incident — between what the provider secures
+and what you do.
+
+None of these are AWS-specific, Azure-specific, or GCP-specific ideas, even
+though each provider names them slightly differently (AWS "regions and AZs",
+Azure "regions and availability zones", GCP "regions and zones" — same shape).
+Learning them once, generically, is what makes the next three pages fast to
+read instead of three separate vocabularies.
+
+## Mechanics
+
+### Regions and availability zones are a blast-radius decision, not a latency one
+
+A region groups multiple availability zones, each a physically distinct
+data center (or cluster of them) with independent power, cooling, and
+networking, connected to the other AZs in the region by low-latency private
+links. The reason this structure exists: a AZ can fail — power outage, cooling
+failure, a fiber cut — without taking down the others, because the failure
+domains genuinely don't share infrastructure.
+
+```
+Region: eu-west-1
+├── AZ eu-west-1a  (data center cluster, own power/cooling)
+├── AZ eu-west-1b  (physically separate)
+└── AZ eu-west-1c  (physically separate)
+```
+
+Deploying across multiple AZs within one region is how most systems get
+resilience without paying cross-region latency (single-digit milliseconds
+between AZs, versus tens to low-hundreds of milliseconds between regions).
+Deploying across multiple *regions* is a different, larger decision — it
+protects against a whole region going down (rare, but it has happened to
+every major provider), and it costs real engineering: data now has to be
+replicated across a link with real latency, and "which region is authoritative
+for this write" becomes a question the application has to answer.
+
+### IAM: default-deny, and permissions that compose
+
+Every major cloud's identity system starts from the same posture: nothing is
+allowed until a policy explicitly grants it. A policy is a set of
+`(effect, action, resource)` statements, and multiple policies attached to the
+same identity are unioned — the identity can do anything any attached policy
+allows, unless an explicit `Deny` overrides it (an explicit deny always wins
+over an allow, in every major provider).
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject"],
+  "Resource": "arn:aws:s3:::reports-bucket/2026/*"
+}
+```
+
+This one statement grants read access to objects under one prefix in one
+bucket — nothing else. The habit this is meant to build: **name the resource
+and the action as narrowly as the task needs**, not `"Resource": "*"` because
+it's faster to write and the demo works either way.
+
+### The shared responsibility model: where the line actually falls
+
+[Every major provider draws the same shape of line](https://www.wiz.io/academy/cloud-security/shared-responsibility-model):
+the provider secures **the cloud** — physical data centers, the hypervisor,
+the network hardware, and (for managed services) the underlying OS and
+patching. You secure **what you put in the cloud** — access policies,
+encryption configuration, network rules, and, for anything you run yourself
+(a VM, a container), the OS and application inside it.
+
+Where the line falls **moves with the service model**, and that movement is
+the part worth internalizing rather than memorizing per-service:
+
+| You use | Provider secures | You secure |
+|---|---|---|
+| A VM (EC2, Azure VM, GCE) | Hypervisor, physical host, network fabric | Guest OS patching, firewall rules, app code, data |
+| A managed database (RDS, Cosmos, Cloud SQL) | OS patching, DB engine patching, physical redundancy | Access policies, encryption keys, query-level access, schema |
+| A serverless function (Lambda, Cloud Functions) | Runtime, OS, scaling infrastructure | Code, IAM permissions the function assumes, secrets |
+
+The higher up this table you go, the more the provider does — and the less
+visible your own remaining responsibility becomes, which is exactly why
+misconfigured IAM (not a provider outage) is the dominant cause of real cloud
+security incidents: the provider's half of the line was secure the whole time.
+
+## Cost & limits
+
+**Cross-AZ data transfer is usually cheap or free within a region; cross-region
+transfer is billed per GB and adds real latency** — a system spanning regions
+pays both a network bill and a consistency cost (replication lag) that a
+single-region, multi-AZ deployment does not.
+
+**IAM has no natural ceiling that stops overly broad grants from
+accumulating** — a policy with `"Resource": "*"` costs nothing extra today and
+becomes the permission an attacker needed after any single credential leaks.
+The cost is deferred and invisible until it isn't.
+
+## When NOT to use it
+
+**Do not deploy across multiple regions before multiple AZs.** Multi-AZ
+resilience is close to free (built into most managed services by toggling a
+setting) and handles the failure modes that actually happen most often — a
+single data center problem. Multi-region is a genuinely harder, more
+expensive project that should be justified by a specific requirement
+(regulatory data residency, or a measured SLA that multi-AZ can't meet), not
+adopted by default because "more redundant" sounds strictly better.
+
+**Do not grant broad IAM permissions "to unblock" a deploy, intending to
+narrow them later.** The narrowing step is the one that gets skipped under
+time pressure, and a permission granted once tends to stay granted — audits
+find these grants years later, still active, usually with nobody able to say
+why they were needed.
+
+## Real-world usage
+
+Nearly every production system on a major cloud provider is deployed across
+at least two AZs within a region as a baseline, with multi-region reserved for
+systems with an explicit compliance or availability requirement that
+justifies it. IAM policy design is the single most common source of both
+over-permissioning (a security review finding) and under-permissioning (a
+production incident when a service can't do something it needs), which is why
+most organizations converge on a small number of standardized role templates
+rather than hand-writing a bespoke policy per service.
+
+## Failure modes
+
+**The IAM policy that was "temporary" for three years.** A broad grant added
+under deploy pressure, meant to be narrowed later, that nobody ever revisits —
+discovered in a security audit, or worse, discovered because it's the
+permission an attacker used after a leaked credential.
+
+**The single-AZ deployment that looked fine until one data center had a bad
+day.** A service deployed to one AZ "because multi-AZ seemed like premature
+complexity" goes down entirely when that AZ has any issue — power, cooling,
+network — that a multi-AZ deployment would have absorbed by routing around it.
+
+**The cross-region architecture that nobody costed before building.** A
+system replicating data across regions "for safety" without first computing
+the data-transfer bill and the replication-lag consistency cost discovers
+both only after the first invoice or the first stale-read bug report.
+
+## Practice problems
+
+**1. A service is deployed to a single availability zone in one region. What's
+the cheapest, most standard first step to improve its resilience, and what
+does it not protect against?**
+
+Deploy across multiple AZs within the same region — cheap, usually a
+configuration toggle on managed services, and protects against a single data
+center failure. It does not protect against an entire region going down
+(rare, but real), which requires multi-region — a substantially bigger
+project that should be justified by a specific requirement, not adopted
+reflexively.
+
+**2. An IAM policy for a reporting service has `"Resource": "*"` on
+`s3:GetObject`. What's wrong, and what should it be instead?**
+
+It grants read access to every object in every bucket, when the service
+almost certainly only needs a specific bucket and prefix. It should be scoped
+to `arn:aws:s3:::<specific-bucket>/<prefix>/*` — narrow enough that a leaked
+credential for this service can only read what the service actually needs,
+not everything in the account.
+
+**3. A team is deciding whether a new feature needs multi-region deployment.
+What question would you ask before answering?**
+
+What specific requirement is driving it — a measured availability target that
+multi-AZ can't meet, or a data-residency regulation — versus "more redundant
+sounds better." Multi-region adds real cost (cross-region transfer, replication
+lag, consistency complexity) that should be paid for a concrete reason, not
+by default.
+
+<Quiz
+  client:visible
+  id="cloud-fundamentals-shared-responsibility"
+  kind="concept"
+  question="You run an application on a managed serverless platform (like AWS Lambda). Who is responsible for patching the underlying operating system?"
+  options={[
+    { label: "You are -- it's always the customer's job to patch the OS" },
+    { label: "The provider -- serverless shifts OS and runtime patching to them, leaving you responsible for your code and its permissions", correct: true },
+    { label: "Nobody -- serverless platforms don't run on an operating system" },
+    { label: "It depends on which region you deploy to" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>The shared responsibility line moves up the stack as you use more managed services. On serverless, the provider handles the runtime, OS, and scaling infrastructure; your remaining responsibility is your code and the IAM permissions it assumes. This is exactly why the line is worth understanding as a sliding scale tied to service model, not a fixed rule per provider.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between a region and an availability zone?"** A
+region is a geographic area with multiple physically independent data
+center clusters; an availability zone is one of those clusters — isolated
+power and cooling, but connected to the other AZs in the region by
+low-latency private network links. The caveat: multi-AZ protects against a
+single data center failure and is close to free to adopt; multi-region
+protects against an entire region failing and is a genuinely bigger
+architectural commitment, so the two shouldn't be reached for on the same
+justification.
+
+**"Explain the shared responsibility model."** The provider secures the
+physical infrastructure and, for managed services, the underlying OS and
+runtime; the customer secures access policies, data, and — for anything
+self-managed — the guest OS and application. The caveat that shows real
+understanding: the line moves depending on the service model (IaaS vs
+managed database vs serverless), and the most common real-world security
+incidents happen entirely on the customer's side of that line — a
+misconfigured IAM policy, not a provider breach.

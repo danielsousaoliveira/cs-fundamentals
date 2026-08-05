@@ -1,0 +1,261 @@
+---
+title: AWS — the services that show up in most stacks
+description: >-
+  EC2, S3, RDS, Lambda and IAM roles as the five services almost every AWS
+  architecture is built from, and the mental model — instance vs managed
+  service vs event-driven function — that generalizes to any provider.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/cloud-fundamentals
+tags: [aws, ec2, s3, rds, lambda, iam]
+languages: [bash, yaml]
+roles: [cloud, backend, fullstack]
+sources:
+  - aws-pricing-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+AWS has hundreds of services and most engineers use a stable core of five:
+**EC2** (a VM you manage), **S3** (object storage), **RDS** (a managed
+relational database), **Lambda** (code that runs on an event, with no server
+to manage), and **IAM** (who can do what). The reason this small set covers so
+much ground is that they represent three genuinely different operating
+models — "you manage the OS" (EC2), "the provider manages everything below
+your data" (RDS, S3), and "there is no server, only an event and a function"
+(Lambda) — and almost every other AWS service is a variation on one of those
+three shapes.
+
+## Mechanics
+
+### EC2: a VM, billed by the second, in a size you choose
+
+```bash
+aws ec2 run-instances \
+  --image-id ami-0abcdef1234567890 \
+  --instance-type t3.medium \
+  --subnet-id subnet-0123456789abcdef0 \
+  --iam-instance-profile Name=web-role
+```
+
+You choose an AMI (the disk image), an instance type (vCPU/RAM/network
+tradeoff), and a subnet (which determines the VPC and AZ it lands in). From
+that point on, the OS, patching, and everything running on it is yours to
+manage — this is the "you secure what's inside" half of the shared
+responsibility line from [cloud fundamentals](/cs-fundamentals/9-cloud-infra/cloud-fundamentals/).
+
+### S3: object storage, addressed by key, not a filesystem
+
+```bash
+aws s3 cp report.csv s3://reports-bucket/2026/08/report.csv
+aws s3 ls s3://reports-bucket/2026/08/
+```
+
+S3 stores objects under a flat key namespace per bucket — `2026/08/report.csv`
+*looks* like a directory path, but S3 has no real directories; the `/`
+characters are just part of the key string, and tools render them as folders
+for convenience. This matters because "listing a folder" is really a
+prefix-filtered key scan, and a bucket with millions of keys under one prefix
+lists slower than the folder metaphor suggests it should.
+
+### RDS: the database engine you already know, with the operational parts managed
+
+```bash
+aws rds create-db-instance \
+  --db-instance-identifier prod-orders \
+  --engine postgres --engine-version 18.1 \
+  --db-instance-class db.r6g.large \
+  --allocated-storage 100 \
+  --multi-az
+```
+
+RDS runs a real Postgres (or MySQL, MariaDB, SQL Server, Oracle) engine — the
+same SQL, the same `EXPLAIN`, the same tuning knobs covered in
+[Postgres](/cs-fundamentals/8-databases-storage/postgres/) — but automates
+patching, backups, and (with `--multi-az`) synchronous replication to a
+standby that promotes automatically on failure. What you give up: OS-level
+access, and some extensions that need superuser privileges RDS doesn't grant.
+
+### Lambda: no server, a function that runs on an event
+
+```python
+def handler(event, context):
+    order_id = event["order_id"]
+    # ... do work ...
+    return {"status": "processed", "order_id": order_id}
+```
+
+A Lambda function has no persistent process — it starts on an event
+(an API call, an S3 upload, a queue message), runs, and stops. Billing is
+per-invocation and per-millisecond of execution, not per hour of an idle
+server. The genuine cost of this model is a **cold start**: the first
+invocation after idle time pays a real, measurable latency penalty (typically
+tens to low-hundreds of milliseconds for a small runtime, more for a large
+dependency tree) to initialize the execution environment before your code
+runs at all.
+
+### IAM roles: how a service authenticates to another service without a password
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": { "Service": "lambda.amazonaws.com" },
+  "Action": "sts:AssumeRole"
+}
+```
+
+An IAM **role** (distinct from an IAM user) is not tied to a person — it's
+assumed by a service, and the service gets short-lived, automatically-rotated
+credentials rather than a long-lived key sitting in an environment variable.
+A Lambda function's execution role, an EC2 instance profile, and an ECS task
+role are all the same mechanism: **grant the workload a role, not a key.**
+
+## Cost & limits
+
+**Data transfer out to the internet is the cost that catches people off
+guard.** [The first 100 GB/month is free, then roughly $0.09/GB up to 10 TB,
+dropping in tiers as volume grows](https://www.usage.ai/blogs/aws/networking-cost/data-transfer-costs/)
+— a service returning large payloads to many users can accumulate a real
+egress bill that never shows up in compute or storage line items, because
+it's billed separately and easy to overlook until the invoice.
+
+**Reserved capacity trades commitment for a genuinely large discount.**
+[1–3 year Reserved Instances or Savings Plans can cut EC2 cost by up to
+72% versus on-demand](https://www.usage.ai/blogs/aws/compare/on-demand-vs-reserved-vs-spot/)
+for steady-state workloads — the trade is a financial commitment against
+future usage, which is the wrong instrument for anything whose size isn't
+known yet.
+
+**Lambda's per-invocation billing means cost scales with call volume, not
+with server-hours** — cheap at low, spiky traffic; at sustained high volume,
+a fleet of always-on EC2 or ECS instances is often cheaper, because Lambda
+carries a per-invocation overhead that a warm, long-running process doesn't.
+
+## When NOT to use it
+
+**Do not reach for EC2 when a managed service (RDS, Lambda, ECS Fargate)
+covers the need.** Managing an OS is real, ongoing work — patching,
+monitoring, capacity planning — and every hour spent on it is an hour not
+spent on the application. EC2 earns its place when you need something a
+managed service genuinely can't give you: a specific OS-level dependency, a
+licensing requirement, or fine-grained control over the runtime.
+
+**Do not use Lambda for a workload with sustained, predictable, high-volume
+traffic and low latency tolerance for cold starts.** A function invoked
+continuously at high volume pays repeated cold-start risk (mitigated but not
+eliminated by provisioned concurrency, which itself costs money to keep
+warm) for a workload that a long-running service handles more predictably
+and, past a certain volume, more cheaply.
+
+**Do not commit to Reserved Instances or Savings Plans before you have a
+stable baseline of usage to commit against.** Locking in a 1–3 year
+commitment for a workload whose size is still changing month to month trades
+flexibility for a discount you might not get to use in full.
+
+## Real-world usage
+
+A typical production AWS stack layers these five: EC2 or ECS/Fargate running
+the application, RDS for the primary relational store, S3 for file uploads
+and static assets, Lambda for event-driven glue (image thumbnailing on
+upload, a nightly cleanup job, a webhook handler), and IAM roles wiring all
+of them together with least-privilege grants instead of shared credentials.
+Most architecture diagrams that look complex are this same core set, repeated
+with different service names for different concerns (a queue here, a CDN
+there).
+
+## Failure modes
+
+**The egress bill nobody saw coming.** A service returning large files or
+API responses at scale accrues a data-transfer cost that's invisible in
+compute/storage dashboards and shows up as a surprise line item at the end of
+the month — the fix (CDN caching, smaller payloads, S3-to-CloudFront which is
+free) is usually simple once someone notices, but the noticing is the hard
+part.
+
+**The Lambda function that times out under load because of cold starts
+stacking up.** A traffic spike that scales past the warm-instance pool
+triggers many simultaneous cold starts, and if the function's timeout is
+tuned for the warm-path latency, the cold-start-affected requests fail —
+symptom: a spike in 5xx errors that correlates with a traffic spike, not with
+any code change.
+
+**The IAM role scoped so broadly that a single compromised function became an
+account-wide incident.** A Lambda execution role granted `s3:*` on `*`
+"to get it working," never narrowed, is the permission an attacker uses if
+that function has any other vulnerability — the blast radius of the compromise
+is set by the IAM policy, not by the bug that let the attacker in.
+
+## Practice problems
+
+**1. A team is deciding between EC2 and Lambda for a new service with
+unpredictable, spiky traffic (mostly idle, occasional bursts). Which fits
+better, and why?**
+
+Lambda — its per-invocation billing means idle time costs nothing, and it
+scales automatically with the burst without needing pre-provisioned capacity.
+EC2 would either sit idle (paying for unused capacity) or need autoscaling
+tuned to react fast enough for spiky traffic, which is more operational work
+for the same outcome.
+
+**2. An application's S3 bucket has a `PutObject` bill that's fine, but the
+data-transfer-out bill is unexpectedly large. What's the likely cause, and
+what's one fix?**
+
+The application is likely serving files directly from S3 to end users over
+the internet, paying full egress rates. Fronting the bucket with a CDN
+(CloudFront) is a common fix — S3-to-CloudFront transfer is free, and the CDN
+caches repeated requests, so most of the actual egress happens from
+CloudFront's edge (billed differently and often cheaper) rather than from S3
+on every request.
+
+**3. A Lambda function's IAM execution role has `"Action": "s3:*"` on
+`"Resource": "*"`. The function only needs to read from one bucket. What's
+the risk, and what should the policy be instead?**
+
+Any vulnerability in the function's code (or a leaked credential from its
+environment) gives an attacker full read/write/delete access to every S3
+bucket in the account, not just the one the function needs. The policy should
+scope both the action (`s3:GetObject`, not `s3:*`) and the resource (the
+specific bucket ARN, not `*`) to exactly what the function does.
+
+<Quiz
+  client:visible
+  id="aws-managed-vs-self-managed"
+  kind="concept"
+  question="A team needs a Postgres database and doesn't need OS-level access or unusual extensions. What's the main operational tradeoff of choosing RDS over running Postgres on EC2?"
+  options={[
+    { label: "RDS is always slower than self-managed Postgres on EC2" },
+    { label: "RDS gives up OS-level access and some superuser-only extensions in exchange for automated patching, backups, and failover", correct: true },
+    { label: "There's no difference -- RDS is just Postgres on EC2 with a different name" },
+    { label: "RDS only supports MySQL, not Postgres" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>RDS runs the real database engine you'd run yourself, but automates the operational work around it -- patching, backups, multi-AZ failover -- at the cost of OS-level access and some extensions that need superuser privileges RDS doesn't grant. For a team that doesn't need those, RDS trades a small amount of control for a large amount of avoided operational work.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"When would you choose Lambda over EC2 for a new service?"** When the
+workload is event-driven or has unpredictable, spiky traffic where
+per-invocation billing and automatic scaling outweigh the cold-start latency
+cost. The caveat that shows real experience: at sustained high volume with
+tight latency requirements, a warm, long-running service on EC2 or ECS is
+often both cheaper and more predictable — Lambda's advantage is specifically
+in the idle-to-bursty traffic shape, not universally.
+
+**"What's the difference between an IAM user and an IAM role?"** A user is
+tied to a person or a fixed application, typically with long-lived
+credentials; a role is assumed — by a service, another AWS account, or a
+federated identity — and grants short-lived, automatically-rotated
+credentials for the duration of the assumption. The caveat: workload-to-workload
+authentication (a Lambda function calling S3, an EC2 instance calling RDS)
+should always use a role, never a long-lived access key embedded in
+configuration — the rotation alone closes off an entire class of leaked-credential
+incident.

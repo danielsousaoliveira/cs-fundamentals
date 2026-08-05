@@ -1,0 +1,247 @@
+---
+title: Cloud security — where incidents actually come from
+description: >-
+  Almost no real cloud security incident is the provider's infrastructure
+  failing — it's a misconfiguration on the customer's side of the shared
+  responsibility line: a public bucket, an over-broad role, a leaked
+  long-lived credential.
+sidebar:
+  order: 11
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/cloud-fundamentals
+  - 9-cloud-infra/kubernetes
+tags: [cloud-security, iam, least-privilege, secrets, misconfiguration]
+languages: [bash, yaml]
+roles: [cloud, backend]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+The [shared responsibility model](/cs-fundamentals/9-cloud-infra/cloud-fundamentals/)
+draws a line between what the provider secures and what you secure, and the
+uncomfortable pattern in real cloud security incidents is how consistently
+they land on the customer's side of that line. A provider's physical data
+center, hypervisor, and network fabric being compromised is vanishingly rare
+in practice. A misconfigured S3 bucket left publicly readable, an IAM role
+scoped far broader than the workload needs, or a long-lived credential
+committed to a public repository — these are common, and they're all
+entirely within the customer's half of the line. Cloud security, in
+practice, is mostly about not making these specific mistakes rather than
+defending against the provider's infrastructure failing.
+
+## Mechanics
+
+### Least privilege: narrow at creation, not narrowed later
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject"],
+  "Resource": "arn:aws:s3:::invoices-bucket/2026/*"
+}
+```
+
+covered in [cloud fundamentals](/cs-fundamentals/9-cloud-infra/cloud-fundamentals/)
+as a concept, the operational discipline is: **grant exactly what a workload
+needs, at the moment it's created**, not a broad grant meant to be narrowed
+once things "settle down." The narrowing step is the one that reliably gets
+skipped — under deploy pressure, a broad grant unblocks the immediate problem
+and there's no forcing function to revisit it, so it becomes permanent by
+default rather than by decision.
+
+### Secrets: never in code, never long-lived if avoidable
+
+```bash
+# wrong: a long-lived key, committed to version control
+export AWS_ACCESS_KEY_ID="AKIA..."
+
+# right: a workload identity, assumed at runtime, auto-rotated
+aws sts assume-role --role-arn arn:aws:iam::123456789:role/orders-api-role
+```
+
+A secret committed to a git repository is compromised the moment it's
+pushed, regardless of whether the repository is later made private or the
+commit is reverted — history retains it, and any automated secret-scanning
+tool (increasingly run by the platforms themselves) will find it. The
+structural fix, covered in [AWS](/cs-fundamentals/9-cloud-infra/aws/) as IAM
+roles: workloads should authenticate via a role assumed at runtime, yielding
+short-lived, automatically-rotated credentials that were never typed into a
+file at all, rather than a static key that has to be manually rotated and can
+leak from anywhere it's stored.
+
+### Network security: default-deny, same principle as IAM
+
+```
+Security group: web-sg
+  Inbound:  443 from 0.0.0.0/0 (public HTTPS)
+  Inbound:  22 from 10.0.0.0/8 (SSH, internal only)
+  Outbound: all
+```
+
+Security groups and network ACLs apply the same default-deny posture as IAM:
+nothing is reachable until a rule explicitly allows it. The habit that
+matters here mirrors IAM's: scope inbound rules to the specific port and
+source range a service actually needs — `0.0.0.0/0` on port 22 (SSH open to
+the entire internet) is a specific, common, and avoidable misconfiguration,
+distinct from `0.0.0.0/0` on 443 for a public web service, which is
+appropriate because the service is meant to be publicly reachable.
+
+### Encryption: at rest and in transit, both, by default
+
+Data at rest (in S3, in a database, on a disk) should be encrypted by
+default — most managed services offer this as a checkbox with no performance
+cost worth avoiding it over. Data in transit (between services, to end
+users) should be encrypted via TLS, universally today. Neither of these is
+sophisticated advice — they're close to free to enable and cover a real class
+of exposure (a stolen disk, a network intercept) that costs nothing to close
+off and a great deal to explain after the fact if it wasn't.
+
+## Cost & limits
+
+**Least-privilege IAM has a real ongoing maintenance cost** — a workload's
+actual needs change over time, and a policy that's precisely scoped today
+needs periodic review to stay accurate as the workload evolves, rather than
+either drifting broader (permissions added but never removed) or breaking
+(a legitimate new need blocked by a policy nobody remembered to update).
+
+**Secret rotation and workload identity setup have real implementation
+cost up front** — moving from static keys to assumed roles is genuine
+engineering work, not a configuration toggle, which is exactly why static
+keys persist in older systems even after the team knows better.
+
+## When NOT to use it
+
+**Do not treat a security review as a one-time setup step.** IAM policies,
+security group rules, and secret inventories all drift from their original
+intent as a system evolves — a policy that was correctly scoped at launch is
+not guaranteed to still be correctly scoped a year later, and periodic review
+is the only mechanism that catches the drift.
+
+**Do not rely on a private repository as a substitute for not committing
+secrets at all.** "Private" is an access control on the repository, not a
+guarantee about who has ever had access, whether a fork exists, or whether
+the platform itself has been compromised — a secret shouldn't be committed
+regardless of repository visibility, because the fix (revoke and rotate) is
+the same either way once it's discovered, and "it was private" doesn't
+change what has to happen next.
+
+## Real-world usage
+
+Organizations running production cloud infrastructure at any meaningful
+scale run automated scanning for the specific misconfigurations named
+above — public storage buckets, overly permissive security groups, secrets
+in version control — as a continuous, automated check (both platform-native
+tools and third-party cloud security posture management products), because
+these are common enough and consequential enough that manual review alone
+reliably misses instances of them. IAM policy design at scale typically
+converges on a small number of standardized role templates per workload
+type, rather than a bespoke hand-written policy per service, specifically
+because hand-written policies are where scope creep and copy-paste
+over-permissioning accumulate fastest.
+
+## Failure modes
+
+**The public S3 bucket that was public "just for a demo."** A bucket
+configured with public read access for a one-off need, never reverted,
+discovered months later either by an internal audit or — worse — by someone
+outside the organization who found it first. This specific misconfiguration
+is common enough that most providers now surface a warning banner directly
+in the console when a bucket policy makes an object publicly accessible.
+
+**The leaked credential from a public repository, found and used within
+minutes.** Automated scanners (both defensive tools and, notably, attackers'
+own scanning bots) actively search public repositories for credential
+patterns — a key committed even briefly to a public repo has a realistic
+window measured in minutes, not days, before it's found and potentially
+used, which is why the response has to be immediate revocation and rotation,
+not "we'll deal with it later."
+
+**The IAM policy audit that found permissions nobody could explain.** A
+security review surfaces a role with broad access granted 18 months earlier
+for a project that's since been decommissioned, still active, with nobody
+remaining on the team who remembers granting it — the access itself may
+never have been misused, but its mere existence is the exposure, discovered
+only because someone finally looked.
+
+## Practice problems
+
+**1. A developer commits an AWS access key to a public GitHub repository,
+then immediately deletes the commit and force-pushes. Is the key still
+compromised?**
+
+Yes — the key was pushed and publicly visible, however briefly, and
+automated scanners (both security tools and attackers') routinely detect
+credentials within minutes of a push, independent of what happens
+afterward. Force-pushing removes it from the current history but doesn't
+undo any access that already occurred, and doesn't guarantee no scanner or
+cached view captured it first. The correct response is immediate revocation
+and rotation of the key, treating it as compromised regardless of whether
+misuse is confirmed.
+
+**2. A security group has an inbound rule allowing port 22 (SSH) from
+`0.0.0.0/0`. What's the risk, and what should the rule be instead?**
+
+This exposes SSH to the entire internet, making the instance a target for
+automated brute-force and credential-stuffing attempts against every
+internet-facing SSH port. The rule should be scoped to a specific, narrow
+source — the organization's VPN range, a bastion host's IP, or (if using a
+provider's session-manager-style access) removed entirely in favor of a
+mechanism that doesn't require an open SSH port at all.
+
+**3. An IAM audit finds a role with `AdministratorAccess` attached to a
+service that only reads from one DynamoDB table. What's the likely history
+here, and what's the fix?**
+
+Almost certainly a broad grant made to unblock development quickly, intended
+to be narrowed later, that was never revisited — the common failure mode
+named in this page. The fix is replacing the broad policy with one scoped to
+exactly the actions and table the service uses (`dynamodb:GetItem`,
+`dynamodb:Query` on the specific table ARN), and treating the audit finding
+as a prompt to check whether other roles have the same pattern, not just
+this one.
+
+<Quiz
+  client:visible
+  id="cloud-security-shared-responsibility-incidents"
+  kind="concept"
+  question="In practice, what's the most common root cause of real cloud security incidents?"
+  options={[
+    { label: "The cloud provider's physical infrastructure or hypervisor being compromised" },
+    { label: "A misconfiguration on the customer's side of the shared responsibility line -- an over-broad IAM policy, a public bucket, a leaked credential", correct: true },
+    { label: "A zero-day vulnerability in the cloud provider's network hardware" },
+    { label: "Insufficient encryption algorithms used by the provider" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Provider-side infrastructure compromise is vanishingly rare in practice -- the shared responsibility model's provider half is generally solid. The dominant real-world pattern is customer-side misconfiguration: a bucket left publicly readable, an IAM role scoped far broader than needed, a credential committed to version control. This is exactly why cloud security work in practice is mostly about not making these specific, well-known mistakes rather than defending against provider infrastructure failure.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Where do most real cloud security incidents actually come from?"**
+Overwhelmingly from misconfiguration on the customer's side of the shared
+responsibility line — a publicly accessible storage bucket, an IAM policy
+scoped far broader than the workload needs, or a long-lived credential
+leaked from version control — rather than the provider's underlying
+infrastructure being compromised. The caveat that shows real security
+experience: this means the highest-leverage security work is usually
+unglamorous and continuous — automated scanning for these specific
+misconfiguration patterns, and periodic IAM policy review — not a one-time
+hardening pass.
+
+**"How would you design credential management for a set of microservices
+calling each other and calling cloud APIs?"** Workload identity — each
+service assumes a role at runtime and gets short-lived, automatically-rotated
+credentials scoped to exactly what it needs — rather than static, long-lived
+keys distributed to each service's configuration. The caveat: this requires
+real upfront engineering (setting up the role-assumption infrastructure),
+which is exactly why static keys persist in older systems even after a team
+knows the risk — the fix isn't free, but the ongoing exposure of static keys
+sitting in configuration or environment variables, waiting to leak, is a
+larger and more open-ended cost than the setup work to remove them.

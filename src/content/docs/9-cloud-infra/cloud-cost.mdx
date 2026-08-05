@@ -1,0 +1,233 @@
+---
+title: Cloud cost — where the bill actually comes from
+description: >-
+  Egress, idle capacity, and commitment discounts as the three levers that
+  move a cloud bill the most, with real 2026 pricing tiers worked through
+  as arithmetic rather than asserted as a rule of thumb.
+sidebar:
+  order: 10
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/aws
+  - 9-cloud-infra/kubernetes
+tags: [finops, cloud-cost, egress, reserved-instances, savings-plans]
+languages: [bash]
+roles: [cloud]
+sources:
+  - aws-pricing-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A cloud bill is rarely dominated by the thing engineers spend the most time
+optimizing (raw compute efficiency). It's usually dominated by three levers
+that are easy to overlook precisely because none of them show up as "slow
+code": **data transfer out to the internet**, billed per GB and easy to
+forget because it's a separate line item from compute or storage;
+**provisioned-but-idle capacity**, paid for whether or not it's used; and
+**commitment discounts left on the table**, because on-demand pricing is the
+default and switching requires a deliberate decision. Understanding these
+three moves the needle more than most line-by-line code optimization, and
+none of them require touching application code.
+
+## Mechanics
+
+### Egress: the cost that's invisible until the invoice
+
+```
+first 100 GB/month:  free
+next 9.999 TB:        $0.09/GB
+next 40 TB:            $0.085/GB
+next 100 TB:            $0.07/GB
+above 150 TB:            $0.05/GB
+```
+
+[This is AWS's actual public tiered egress pricing structure as of
+2026](https://www.usage.ai/blogs/aws/networking-cost/data-transfer-costs/) —
+transfer *out* to the internet is billed; transfer *into* AWS is free;
+transfer *within* the same region between most services is free or
+cheap. The arithmetic that makes this concrete: a service returning 2 TB of
+data to end users over the internet in a month, past the free tier, costs
+roughly `2,000 GB × $0.09 ≈ $180` — not a huge number for one service, but
+one that scales linearly with traffic and is easy to miss because it never
+appears next to the compute cost that generated the response.
+
+The lever that actually moves this: **S3-to-CloudFront transfer is free**,
+and CDN-cached responses mean most repeat requests never reach the origin at
+all — fronting a service with a CDN is frequently the single highest-leverage
+egress optimization available, more effective than trying to shrink payload
+sizes by a few percent.
+
+### Idle capacity: paying for a shape, not for usage
+
+A provisioned VM, a database sized for peak load, a Kubernetes node pool
+sized with headroom — all of these are paid for continuously, whether or not
+they're doing work. This is the direct cost consequence of the [requests
+covered on the Kubernetes page](/cs-fundamentals/9-cloud-infra/kubernetes/):
+capacity reserved by a request (or provisioned by a fixed instance count) is
+billed as committed, independent of actual utilization. The fix isn't
+usually "use less" — it's matching the provisioning model to the traffic
+shape: autoscaling for variable load, serverless (Lambda, Cloud Run) for
+genuinely spiky or idle-heavy workloads, and fixed provisioning reserved for
+genuinely steady, predictable load where the always-on cost is justified by
+avoided cold-start latency.
+
+### Commitment discounts: a real, large discount for a real commitment
+
+```
+on-demand:               $0.1920/hr  (m5.xlarge, us-east-1, illustrative)
+1-year reserved:         $0.1344/hr  (~30% off)
+3-year all-upfront:      $0.0710/hr  (~63% off)
+```
+
+[Reserved Instances and Savings Plans can cut EC2 cost by up to 72% versus
+on-demand for a 3-year, all-upfront commitment](https://www.usage.ai/blogs/aws/compare/on-demand-vs-reserved-vs-spot/) —
+a genuinely large discount, and [most cost-optimized production environments
+run a blend](https://www.usage.ai/blogs/aws/compare/on-demand-vs-reserved-vs-spot/):
+reserved capacity for the steady-state baseline load that's predictable
+month to month, on-demand for the variable portion above that baseline, and
+spot instances (spare capacity at a steep discount, reclaimable by the
+provider with short notice) for fault-tolerant batch work that can handle
+interruption. The blend, not any single pricing model, is what production
+FinOps practice converges on.
+
+## Cost & limits
+
+**The commitment in a reserved instance or savings plan is a real financial
+obligation against future usage** — committing 1–3 years of spend against a
+workload whose size isn't yet stable trades a discount for inflexibility,
+and a commitment sized larger than actual future usage turns into paying for
+capacity that goes unused anyway, defeating the purpose.
+
+**Sampling and caching reduce cost by reducing what's actually measured or
+served, which is a real tradeoff, not a free discount** — aggressive log or
+trace sampling (covered on the [observability page](/cs-fundamentals/9-cloud-infra/observability/))
+trades some debugging fidelity for cost; aggressive caching trades some data
+freshness for reduced compute and egress.
+
+## When NOT to use it
+
+**Do not commit to reserved capacity for a workload whose size is still
+changing month to month.** The discount is real, but it's a bet against a
+usage level you don't yet know — commit against the stable baseline once
+you have months of data showing what that baseline actually is, not against
+a guess made before launch.
+
+**Do not chase small compute optimizations before checking whether egress or
+idle capacity is the larger cost.** A week spent shaving 10% off a service's
+CPU usage is a smaller win than fronting the same service with a CDN if
+egress is the dominant line item — check the cost breakdown before deciding
+where to spend optimization effort, rather than optimizing whatever is
+easiest to measure.
+
+## Real-world usage
+
+Most organizations running production cloud infrastructure at meaningful
+scale designate cost visibility as an explicit, ongoing practice (often
+called FinOps) rather than a one-time audit — a monthly or weekly review of
+spend by service, with egress, idle capacity, and commitment coverage as the
+three standing questions asked of every line item that grew. Reserved
+capacity purchasing is typically centralized (one team manages commitments
+across the organization) specifically because it requires visibility into
+aggregate, cross-team usage patterns that no single service team has on its
+own.
+
+## Failure modes
+
+**The service whose compute bill looked fine and whose egress bill didn't.**
+A service serving large payloads directly to end users at scale, with no CDN
+in front of it, accrues an egress cost that scales with traffic and is easy
+to overlook because it's a separate line item from the compute that generated
+the response — discovered, typically, only when someone reviews the full
+cost breakdown rather than just the compute dashboard.
+
+**The reserved capacity purchased for a workload that shrank.** A 3-year
+commitment sized against a growth projection that didn't materialize means
+paying for reserved capacity substantially larger than actual usage for the
+remainder of the term — the discount rate no longer matters once the
+absolute spend on unused capacity exceeds what on-demand pricing for the
+smaller actual workload would have cost.
+
+**The autoscaling group that never scaled down.** A minimum instance count
+set during a launch, meant to be revisited once real traffic patterns were
+known, left unchanged for years — paying for peak-adjacent capacity around
+the clock for a workload whose actual off-peak traffic would support running
+a fraction of that.
+
+## Practice problems
+
+**1. A service's monthly AWS bill shows $400 in compute and $1,200 in data
+transfer out. What's the highest-leverage next step, and why?**
+
+Investigate fronting the service with a CDN (CloudFront) before optimizing
+compute — egress is the dominant cost here by 3x, and S3-to-CloudFront
+transfer is free while CDN-cached responses avoid re-serving identical data
+from the origin on every request. Optimizing the smaller compute line first
+would be solving the less impactful problem.
+
+**2. A team is considering a 3-year all-upfront Reserved Instance commitment
+for a service currently costing $2,000/month on-demand, expecting up to 63%
+savings. What should they check before committing?**
+
+Whether the service's usage level has been stable for long enough to trust
+that the committed capacity will actually be used for the full 3 years — a
+commitment sized against current usage that later shrinks (a feature
+deprecated, traffic declining) means paying for unused reserved capacity,
+which can erase the discount's value entirely. A shorter commitment term or a
+savings plan with more flexibility might be the better trade if usage
+patterns are still evolving.
+
+**3. An autoscaling group has a minimum instance count of 10, set at launch
+two years ago. Current off-peak traffic could be served by 3 instances. What's
+the cost consequence, and what's the fix?**
+
+The group runs 10 instances around the clock regardless of actual demand,
+paying for roughly 7 instances of unused capacity during every off-peak
+period — likely the majority of most days. The fix is lowering the minimum
+(and tuning the autoscaling policy) to match actual measured off-peak
+traffic, keeping headroom for genuine peak demand without paying for it
+continuously.
+
+<Quiz
+  client:visible
+  id="cloud-cost-egress-vs-compute"
+  kind="concept"
+  question="A service's cost breakdown shows compute and storage costs that look reasonable, but the total bill is much higher than expected. What's a commonly overlooked line item worth checking first?"
+  options={[
+    { label: "The number of IAM policies attached to the service's role" },
+    { label: "Data transfer out to the internet (egress) -- billed separately from compute and storage, and easy to overlook", correct: true },
+    { label: "The number of git commits made to the service's repository" },
+    { label: "The service's uptime percentage" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Egress is billed as a separate line item from compute and storage, scales directly with traffic volume and response size, and has no natural place in most engineers' mental model of "what does this service cost" the way CPU and memory usage do. A service returning large payloads at scale can accrue a substantial egress bill that never shows up when someone checks only the compute dashboard -- checking the full cost breakdown, not just compute, is the standard first step.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What are the biggest levers for reducing cloud cost, beyond optimizing
+application code?"** Data transfer/egress (often reducible with a CDN),
+matching provisioning to actual traffic shape (autoscaling or serverless
+instead of fixed over-provisioned capacity), and commitment discounts
+(reserved instances or savings plans) for the stable baseline portion of
+usage. The caveat that shows real FinOps experience: none of these are free
+— commitment discounts trade flexibility for savings and are a real bet
+against future usage, so the right first step is usually a full cost
+breakdown to find which lever the specific bill is actually dominated by,
+rather than applying all three reflexively.
+
+**"When would you recommend against committing to Reserved Instances?"**
+When the workload's size is still changing — growing, shrinking, or not yet
+established — because the commitment is a financial bet against future usage
+staying at or above the committed level, and a workload that shrinks below
+what was committed means paying for unused reserved capacity for the
+remainder of the term. The caveat: this isn't an argument against commitment
+discounts in general — they're a real, large discount (up to ~72% at 3-year
+all-upfront) for the portion of usage that genuinely is stable; it's an
+argument for waiting until there's enough usage history to commit against
+with confidence.

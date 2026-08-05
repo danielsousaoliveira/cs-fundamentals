@@ -2082,3 +2082,74 @@ svg[id^='mermaid-'] {
   color: var(--viz-role-compare-fg);
   border-radius: var(--viz-radius);
 }
+
+/* TerraformPlanDiff */
+
+.tfplan__resources,
+.tfplan__attrs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.tfplan__resource,
+.tfplan__attr {
+  padding: 0.3rem 0.6rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-family: var(--viz-font-mono);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tfplan__resource--on,
+.tfplan__attr--on {
+  background: var(--viz-role-active-bg);
+  border-color: var(--viz-role-active-border);
+  color: var(--viz-role-active-fg);
+}
+
+.tfplan__attr--forcenew {
+  border-color: var(--viz-role-swap-border);
+}
+
+.tfplan__badge {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+}
+
+.tfplan__plan {
+  margin: 0.6rem 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--viz-radius);
+  background: var(--viz-surface-sunken, var(--viz-surface));
+  border: 1px solid var(--viz-border);
+  font-family: var(--viz-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.tfplan__verb--replace {
+  color: var(--viz-role-swap-fg);
+}
+
+.tfplan__warning {
+  margin: 0.7rem 0 0;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  border-left: 3px solid var(--viz-role-swap-border);
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+  border-radius: var(--viz-radius);
+}

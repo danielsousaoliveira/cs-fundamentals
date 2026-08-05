@@ -1,0 +1,249 @@
+---
+title: Observability — logs, metrics, traces, and what each can't tell you
+description: >-
+  Three signal types that answer different questions, why none of them
+  substitutes for the others, and SLOs as the mechanism that turns "is it
+  slow" into a number someone can page on.
+sidebar:
+  order: 9
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/kubernetes
+tags: [observability, opentelemetry, logs, metrics, traces, slo]
+languages: [yaml, bash]
+roles: [cloud, backend]
+sources:
+  - opentelemetry-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+**Monitoring** tells you a known failure mode is happening — "CPU is above
+90%," a dashboard someone built for a problem they already anticipated.
+**Observability** is the ability to answer a question you didn't anticipate,
+by exploring the system's actual output rather than checking a pre-built
+dashboard for it. [The conventional answer for what output to collect is
+three signal types — logs, metrics, and traces](https://dev.to/young_gao/the-three-pillars-of-observability-logs-metrics-and-traces-in-practice-4537)
+— and the discipline worth internalizing is that they answer genuinely
+different questions. Having excellent metrics and no traces means you can see
+*that* p99 latency spiked at 14:32 and have no way to see *which specific
+request* was slow or why.
+
+## Mechanics
+
+### Logs: what happened, one event at a time
+
+```json
+{"ts": "2026-08-05T14:32:01Z", "level": "error", "service": "orders-api",
+ "trace_id": "7a3f...", "msg": "payment gateway timeout", "order_id": 88213}
+```
+
+A log is a discrete, timestamped event — the highest-detail, highest-volume
+signal. Structured logging (JSON, not free-text) is what makes logs queryable
+at scale rather than something you `grep` and hope; the `trace_id` field
+above is the detail that connects a log line back to the request it happened
+during, which matters the moment you have more than one thing happening
+concurrently.
+
+### Metrics: numbers over time, cheap to store, blind to individual events
+
+```
+http_request_duration_seconds{route="/orders", status="200"} 0.084
+http_requests_total{route="/orders", status="500"} 143
+```
+
+A metric is a number (a counter, a gauge, a histogram) aggregated over time —
+cheap to store and query at high resolution because it discards individual
+event detail in exchange for a stable, low-cardinality shape. This is exactly
+the tradeoff: metrics tell you *that* the error rate on `/orders` jumped to
+143 in the last minute; they cannot tell you which 143 requests, what their
+payloads were, or what request each was chained from. That's what logs and
+traces are for.
+
+### Traces: one request, followed across every service it touched
+
+```
+orders-api        [========================================] 420ms
+├─ auth-service    [====] 15ms
+├─ inventory-db    [==========] 95ms
+└─ payment-gateway [===============================] 310ms  <- the actual cause
+```
+
+A trace is a tree of **spans** — one span per unit of work, nested to show
+which service called which, with the timing of each — following a single
+request across every service boundary it crossed. This is the signal that
+answers "why was *this specific* request slow," which a metric (aggregate)
+and most logs (per-service, not cross-service) structurally cannot answer on
+their own. In the example above, the aggregate latency metric would just say
+"420ms" — the trace is what shows the payment gateway call is where nearly
+all of it went.
+
+### OpenTelemetry: one instrumentation standard, many backends
+
+[Every major observability vendor now supports OpenTelemetry
+natively](https://zeonedge.com/blog/opentelemetry-2026-complete-guide-unified-observability)
+— a vendor-neutral standard for emitting all three signal types (traces,
+metrics, logs, and, increasingly, a fourth: continuous profiling) from an
+application, then routing them to whichever backend (Datadog, Grafana,
+Honeycomb, a self-hosted stack) actually stores and visualizes them. The
+practical benefit: instrument once, and changing observability vendors later
+is a backend configuration change, not a full re-instrumentation of the
+application.
+
+```yaml
+# same OTel SDK, different export destination
+exporters:
+  otlp:
+    endpoint: "https://collector.internal:4317"
+```
+
+### SLOs: turning "is it slow" into a number someone can page on
+
+A **Service Level Objective** is a target expressed against a **Service
+Level Indicator** — "99.9% of requests to `/orders` complete in under 300ms,
+measured over a rolling 30-day window" — and an **error budget** is the
+inverse: the 0.1% of requests allowed to violate that target before the team
+treats it as an incident requiring action rather than routine noise. This is
+the mechanism that turns a vague feeling ("the site seems slow lately") into
+an actionable, page-worthy signal: burn through the error budget faster than
+the window allows, and that's the trigger — not a gut feeling, not a single
+slow request.
+
+## Cost & limits
+
+**Trace and log volume scale with request volume, and at high traffic that
+becomes a genuine storage and query cost** — most production systems apply
+**sampling** (recording a representative fraction of traces, or all traces
+for errors and slow requests but a small percentage of fast, successful ones)
+specifically because storing every trace at full fidelity is expensive at
+scale and mostly redundant, since most fast successful requests look alike.
+
+**Metrics are cheap per-datapoint but cardinality is the hidden cost** — a
+metric labeled with a high-cardinality dimension (a user id, a full URL with
+query parameters) multiplies the number of distinct time series the backend
+has to store, and can silently turn a cheap metric into an expensive one, or
+one the backend simply refuses to accept past a cardinality limit.
+
+## When NOT to use it
+
+**Do not add distributed tracing to a single-service, non-distributed
+application before it needs it.** Tracing's value is specifically in
+following a request *across service boundaries* — a monolith with no service
+calls to trace gets little from it beyond what structured logging with
+request-scoped context already provides, at lower operational cost.
+
+**Do not set an SLO before you have a Service Level Indicator you can
+actually, reliably measure.** An SLO target against a metric nobody is
+collecting, or one collected inconsistently, produces a number that looks
+authoritative and means nothing — the SLI has to exist and be trustworthy
+first.
+
+## Real-world usage
+
+Production systems beyond a single service typically run all three signal
+types together, correlated by a shared identifier (a `trace_id` propagated
+through logs and linked from the trace view) — the workflow in practice is
+usually "a metric alert fires (something's wrong), a trace shows which
+service and request pattern is affected (where), and logs from that specific
+span show the actual error detail (why)." SLOs and error budgets are the
+standard mechanism SRE teams use to decide when to prioritize reliability
+work over feature work — a team that has burned its error budget stops
+shipping new features and fixes reliability until the budget resets.
+
+## Failure modes
+
+**The incident where the dashboard was green and users were still affected.**
+A metric-only monitoring setup with no tracing can show aggregate latency
+and error rate both looking normal while a specific, high-value user segment
+or request pattern is broken — the aggregate hides the local problem, which
+is exactly the blind spot traces (and well-chosen log queries) exist to
+close.
+
+**The trace backend bill that scaled faster than traffic.** A system
+recording 100% of traces at full fidelity, with no sampling strategy, finds
+that trace storage cost grows linearly with request volume even though most
+traces look identical and are never individually inspected — the fix
+(sampling, keeping full fidelity only for errors and outliers) is standard
+practice specifically because this is a common and avoidable cost.
+
+**The SLO nobody could actually measure.** An SLO defined against a Service
+Level Indicator that turns out to be inconsistently instrumented — some
+services report it, some don't, the definition of "success" varies by
+service — produces a compliance number that looks precise and isn't
+trustworthy, discovered usually when someone tries to use it to justify a
+reliability-versus-features tradeoff and the number doesn't hold up to
+scrutiny.
+
+## Practice problems
+
+**1. An alert fires: error rate on `/checkout` spiked to 8%. The dashboard
+shows this but nothing else. What's the next signal to look at, and why?**
+
+Traces for the failing requests — the metric confirms *that* something's
+wrong and roughly *when*, but not *why* or *where* in the request path the
+failure originates. A trace for a sample of the failing requests shows which
+downstream service or span the errors correlate with, narrowing the
+investigation from "the whole checkout flow" to a specific service call.
+
+**2. A team wants to reduce their tracing backend bill without losing the
+ability to debug production incidents. What's the standard approach?**
+
+Sampling — record all traces for errors and unusually slow requests (the
+ones actually useful for debugging) but only a small percentage of fast,
+successful requests, which mostly look alike and provide little debugging
+value at full volume. This keeps the traces that matter for incident
+investigation while cutting storage cost roughly proportional to how
+aggressively the successful-request sampling rate is reduced.
+
+**3. An SLO is defined as "99.9% of API requests complete in under 300ms"
+but different services report latency inconsistently — some measure from
+request receipt, others from after auth completes. What's wrong with this
+SLO, and what has to happen before it's trustworthy?**
+
+The underlying Service Level Indicator isn't measured consistently, so the
+SLO compliance number mixes apples and oranges — a service that excludes
+auth latency from its measurement will look artificially compliant compared
+to one that includes it. The SLI's measurement boundary needs to be
+standardized across every service reporting into the SLO before the
+resulting number means anything.
+
+<Quiz
+  client:visible
+  id="observability-three-signals"
+  kind="concept"
+  question="A metric shows p99 latency spiked at 14:32. What question can a metric alone NOT answer, that a trace can?"
+  options={[
+    { label: "Whether the spike happened at all" },
+    { label: "Which specific request was slow, and which downstream service call within that request caused most of the latency", correct: true },
+    { label: "How many requests were affected in total" },
+    { label: "Whether the spike is still ongoing" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Metrics aggregate over time and discard individual event detail by design -- that's what makes them cheap to store at high resolution. A metric can tell you that latency spiked and roughly how many requests were affected, but it can't show you one specific request's path through the system or which downstream call within that request consumed most of the time. That's exactly the gap a trace closes.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between logs, metrics, and traces, and why do you
+need all three?"** Logs are discrete timestamped events with full detail but
+high volume; metrics are aggregated numbers over time, cheap to query at
+high resolution but blind to individual events; traces follow one request
+across every service it touched, showing where time was actually spent. The
+caveat that shows real production experience: they're not redundant with each
+other — a metric tells you something's wrong, a trace tells you where, and
+logs (correlated by trace id) tell you why — losing any one of the three
+leaves a specific class of question unanswerable.
+
+**"How would you design an SLO for a service?"** Start from a Service Level
+Indicator you can measure consistently and trust, define a target against it
+over a rolling window (not a single point in time), and derive an error
+budget from the gap between 100% and the target — the budget is what turns
+the SLO into an actionable trigger rather than an abstract goal. The caveat:
+an SLO is worthless if the underlying SLI is measured inconsistently across
+the services that feed it — get the measurement right and consistent before
+setting the target, not after.

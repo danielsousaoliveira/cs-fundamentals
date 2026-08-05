@@ -1,0 +1,230 @@
+---
+title: GCP — projects, IAM inheritance, and Cloud Run
+description: >-
+  What's genuinely different about GCP once you already know AWS and Azure —
+  the project hierarchy IAM inherits down through, and Cloud Run's per-request
+  billing as a distinct point between Lambda and a always-on container.
+sidebar:
+  order: 4
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/azure
+tags: [gcp, iam, projects, cloud-run, bigquery]
+languages: [bash, yaml]
+roles: [cloud, backend, fullstack, data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+GCP's core service vocabulary again maps onto what the last two pages already
+covered — Compute Engine is EC2/Azure VMs, Cloud Storage is S3/Blob Storage,
+Cloud SQL is RDS/Azure SQL. Two things are genuinely distinct enough to learn
+on their own terms: the **project → folder → organization** hierarchy that
+IAM permissions inherit down through by default, and **Cloud Run**, whose
+billing model sits at a point between Lambda's pure per-invocation model and
+an always-on container.
+
+## Mechanics
+
+### The resource hierarchy: organization, folders, projects, and IAM inheritance
+
+```
+Organization: example.com
+├── Folder: production
+│   ├── Project: orders-prod
+│   └── Project: billing-prod
+└── Folder: staging
+    └── Project: orders-staging
+```
+
+Every GCP resource belongs to a **project** — the closest analog to an AWS
+account or Azure subscription, and the unit billing is metered against.
+Projects can be grouped into **folders**, folders into an **organization**,
+and IAM role bindings applied at any level **inherit down** to everything
+below it by default: a role granted at the `production` folder applies to
+every project inside it, and every resource inside those projects.
+
+```bash
+gcloud projects add-iam-policy-binding orders-prod \
+  --member="serviceAccount:orders-app@orders-prod.iam.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+```
+
+This inheritance is the GCP-specific thing worth internalizing: a grant made
+at the folder level is easy to make and easy to under-appreciate the reach
+of, because it applies to every project underneath — including ones created
+after the grant, with no additional step required.
+
+### Cloud Run: containers, billed like Lambda
+
+```bash
+gcloud run deploy orders-api \
+  --image gcr.io/orders-prod/orders-api:v42 \
+  --region europe-west1 \
+  --min-instances 0 \
+  --max-instances 20
+```
+
+Cloud Run runs an arbitrary container (not a function in a specific runtime,
+the way Lambda requires) and bills per-request, scaling instances up and down
+including to zero — the same idle-costs-nothing property as Lambda, but with
+the flexibility of "any container that listens on a port" rather than a
+handler function in a supported language runtime. `--min-instances 1` trades
+that idle-cost-nothing property away in exchange for eliminating cold starts,
+which is the same tradeoff Lambda's provisioned concurrency makes, phrased
+differently.
+
+### BigQuery: the analytics warehouse with no cluster to size
+
+BigQuery is worth naming even outside a data-focused page because its billing
+model is distinctive: queries are billed by **bytes scanned**, not by a
+provisioned cluster size — there is no cluster to size at all. A query
+against a well-partitioned table that scans 2 GB costs a small, predictable
+amount regardless of how large the underlying table is; the same query
+against an unpartitioned table might scan the whole thing. This makes table
+partitioning and clustering a direct cost lever in a way that's less visible
+in a system where compute is provisioned separately from storage.
+
+## Cost & limits
+
+**IAM inheritance means a grant's actual reach is determined by where in the
+hierarchy it's made, not just what role it grants** — the same role bound at
+a project versus a folder versus the organization root has a reach that
+differs by orders of magnitude, and the binding itself looks identical in a
+quick review unless the scope is checked.
+
+**Cloud Run's scale-to-zero is only free when traffic is genuinely idle** — a
+service with `min-instances: 0` serving intermittent but never-fully-idle
+traffic pays repeated cold-start latency on every gap longer than the
+platform's idle-instance retention window, the same tradeoff Lambda makes.
+
+**BigQuery cost scales with bytes scanned, so an unpartitioned table charges
+for scanning data a query doesn't need** — partitioning by the column most
+queries filter on (commonly a date) is often the single highest-leverage cost
+optimization available, more effective than tuning the query itself.
+
+## When NOT to use it
+
+**Do not bind IAM roles at the organization or folder level as a default
+habit.** It's less typing than binding per-project, and it's exactly the
+kind of grant that outlives its justification — bind at the narrowest level
+(ideally the resource itself, otherwise the project) unless there's a
+specific reason a whole folder of projects needs the same access.
+
+**Do not choose Cloud Run for a workload that needs a guaranteed-warm,
+consistently low-latency response and can't tolerate any cold start** — a
+service with `min-instances 0` will cold-start on the first request after an
+idle gap; if that's unacceptable, either set a nonzero minimum (paying for
+the always-warm instances) or use a platform designed to stay warm by
+default.
+
+## Real-world usage
+
+Teams already using BigQuery for analytics frequently adopt the rest of GCP
+around it — Cloud Storage as BigQuery's most natural ingestion source, Cloud
+Run or Cloud Functions for the pipelines that populate it — because keeping
+the analytics workload and its surrounding infrastructure on one platform
+avoids cross-cloud data-transfer costs and simplifies the IAM story to one
+hierarchy. Cloud Run specifically is a common choice for a containerized API
+that has genuinely variable traffic and no in-house Kubernetes operational
+capacity — the container flexibility of Kubernetes with none of the cluster
+management.
+
+## Failure modes
+
+**The organization-level IAM grant nobody remembered was that broad.** A role
+bound at the folder or organization root during initial setup, meant to be
+temporary, silently applies to every project created afterward too —
+discovered in a security review, or after an incident, as access nobody can
+account for.
+
+**The BigQuery bill that tracked a forgotten unpartitioned table.** A table
+that grows large without ever being partitioned turns every query against it
+into a full-table scan, and the bill scales with the table's growth even
+though most queries only ever wanted last week's data — the fix (adding
+partitioning) is straightforward once identified, but the cost accrues
+undetected until someone looks at the billing breakdown by query.
+
+**The Cloud Run service that looked broken under a traffic spike.** A service
+scaling from zero under a sudden burst pays cold-start latency on every new
+instance spinning up to meet demand, and if `max-instances` is set too low
+for the burst, requests queue or fail — symptom: latency and error-rate
+spikes that correlate with traffic spikes, easily misread as a code
+regression.
+
+## Practice problems
+
+**1. A role is bound at the organization root, granting `roles/viewer` to a
+contractor's service account. Six months later, a new project is created.
+Does the contractor have access to it, and why might this be a problem?**
+
+Yes — IAM bindings at the organization level inherit down to every project
+underneath, including ones created after the binding, with no additional
+step required. This is a problem because access is granted implicitly and
+invisibly to future projects nobody explicitly decided the contractor should
+see; the fix is binding at the specific project level instead, so access has
+to be a deliberate decision each time.
+
+**2. A BigQuery table storing five years of event data isn't partitioned.
+Most queries only need the last 7 days. What's the cost consequence, and the
+fix?**
+
+Every query, regardless of the date range it actually needs, scans the whole
+table — since BigQuery bills by bytes scanned, this means paying to scan five
+years of data for a query that only needs a week. Partitioning the table by
+date lets a 7-day query scan only the relevant partitions, cutting the bytes
+scanned (and the bill) by roughly the same ratio as the date range narrows.
+
+**3. A Cloud Run service set to `min-instances: 0` serves a support tool used
+sporadically during business hours, with occasional multi-minute gaps between
+requests. Users report the first request after a gap feels slow. Why, and
+what's one fix?**
+
+Each gap longer than the platform's idle-instance retention triggers a cold
+start on the next request — the container has to be provisioned and started
+before it can serve. Setting `min-instances: 1` keeps one instance warm at
+all times, trading a small always-on cost for eliminating the cold-start
+latency on the sporadic but time-sensitive requests.
+
+<Quiz
+  client:visible
+  id="gcp-iam-inheritance"
+  kind="concept"
+  question="A role is granted at the folder level in GCP's resource hierarchy. What does that binding apply to?"
+  options={[
+    { label: "Only the folder itself, not anything inside it" },
+    { label: "Every project inside the folder, and every resource inside those projects -- including projects created later", correct: true },
+    { label: "Only projects that existed in the folder at the time the binding was made" },
+    { label: "Nothing -- roles can only be bound at the project level" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>GCP's IAM bindings inherit down the organization -> folder -> project hierarchy by default. A binding at the folder level applies to every project inside it and everything inside those projects, including projects created after the binding was made -- which is exactly what makes folder- or organization-level grants easy to make and easy to under-appreciate the reach of.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How does GCP's IAM model differ from AWS's?"** GCP has an explicit
+resource hierarchy — organization, folders, projects — and IAM bindings
+inherit down through it by default; AWS's IAM is scoped to a single account
+unless you explicitly set up cross-account roles or an organization-wide
+service control policy. The caveat: this inheritance is powerful for
+managing access across many projects consistently, and it's also the source
+of most GCP over-permissioning incidents, because a binding made at the
+folder level is easy to make without fully registering how far it reaches.
+
+**"When would you choose Cloud Run over Lambda or over a Kubernetes
+deployment?"** Cloud Run fits a containerized workload with variable traffic
+that doesn't justify the operational overhead of running Kubernetes, and
+needs more flexibility than a function-runtime model like Lambda provides —
+any container that listens on a port, not just a supported language handler.
+The caveat: it makes the same idle-vs-cold-start tradeoff Lambda does
+(`min-instances: 0` is free when idle, costs cold-start latency on the first
+request after a gap), so it's not a free upgrade over either — it's a
+different point on the same tradeoff curve, chosen for the container
+flexibility specifically.

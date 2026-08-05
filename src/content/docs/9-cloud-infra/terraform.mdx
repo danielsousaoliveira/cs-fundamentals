@@ -1,0 +1,256 @@
+---
+title: Terraform — plan, state, and when an edit becomes a replacement
+description: >-
+  Real terraform plan output showing the distinction that matters more than
+  any HCL syntax — update in place versus destroy-and-recreate — plus state
+  as the thing that makes any of this safe to run twice.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/aws
+tags: [terraform, iac, hcl, state, forcenew]
+languages: [hcl, bash]
+roles: [cloud]
+sources:
+  - captured-terraform-1.15
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+import { TerraformPlanDiff } from '../../../components/viz/widgets/TerraformPlanDiff.tsx';
+
+## Intuition
+
+Terraform's whole value proposition is one sentence: **describe the
+infrastructure you want, and it computes the difference between that and what
+actually exists, then shows you the difference before doing anything.** The
+description is HCL; the computed difference is `terraform plan`; the "before
+doing anything" part — showing a diff you can read and reject — is the entire
+reason infrastructure-as-code is safer than a script that just runs commands.
+
+The one distinction that matters more than any specific HCL syntax: **not
+every change is the same kind of change.** Some edits update a resource in
+place — same resource, new value. Others force Terraform to destroy the
+resource and create a brand new one with a new id. Both can look like a
+one-line diff. Only one of them is safe to run against a database at 2pm on a
+Tuesday.
+
+## Mechanics
+
+### A real plan, captured against a running provider
+
+```hcl
+resource "local_file" "config" {
+  filename        = "${path.module}/generated/app.conf"
+  content         = "server_name=${random_pet.server_name.id}\nport=8080\n"
+  file_permission = "0777"
+}
+```
+
+Changing `file_permission` from `"0777"` to `"0600"` and re-running `terraform
+plan` against a real, applied `hashicorp/local` provider produces this —
+captured directly, not invented:
+
+```text
+# local_file.config must be replaced
+-/+ resource "local_file" "config" {
+      ~ file_permission      = "0777" -> "0600" # forces replacement
+        # (3 unchanged attributes hidden)
+    }
+
+Plan: 1 to add, 0 to change, 1 to destroy.
+```
+
+`-/+` is Terraform's marker for "destroy this, then create a new one" — as
+opposed to `~`, which means "update in place, same resource, same id." The
+comment `# forces replacement` is doing the real work here: it tells you
+*why* this specific attribute triggered a replace, which is not something you
+can infer from the attribute's name. `file_permission` sounds like a metadata
+tweak. It is not one — on this provider, changing it means a new file object
+entirely.
+
+### Why some attributes force a replacement and others don't
+
+Every attribute in a provider's schema carries a `ForceNew` flag, set by
+whoever wrote the provider, based on whether the underlying API actually
+supports updating that field in place. `aws_instance.ami` is `ForceNew` — you
+cannot swap an EC2 instance's machine image without a new instance, because
+the AMI *is* the instance's disk at creation time. `aws_instance.tags.Name` is
+not — a tag is metadata the API lets you update on the existing instance with
+no disruption.
+
+This is a fact about the target API, laundered through the provider's schema,
+not a Terraform design decision — which is why it doesn't generalize the way
+you'd hope. There's no rule like "config attributes are safe, identity
+attributes force replacement" that holds across every provider and resource.
+You have to know the specific resource, or read the plan output and trust the
+`# forces replacement` comment.
+
+<TerraformPlanDiff client:visible />
+
+### State: what makes "plan" possible at all
+
+Terraform doesn't inspect your infrastructure fresh on every run — it reads a
+**state file**, a JSON record of what it believes exists and what values it
+last set, then compares your HCL against that record (and, depending on
+configuration, a live refresh) to compute the plan. State is why running
+`terraform apply` twice with the same config is a no-op the second time,
+rather than trying to create the same resource again.
+
+```bash
+terraform state list
+# local_file.config
+# random_pet.server_name
+
+terraform show
+# shows the current recorded state of every resource
+```
+
+The corollary that surprises people: **if state is lost, wrong, or out of
+sync with reality**, Terraform's picture of the world is wrong, and its next
+plan is computed against a fiction. A resource created manually in the
+console, outside Terraform, doesn't exist as far as state is concerned —
+Terraform will happily plan to create a duplicate.
+
+## Cost & limits
+
+**Every `terraform apply` on a shared state file is a critical section** — two
+people (or two CI runs) applying concurrently against the same state can
+corrupt it or silently overwrite each other's intended changes, which is why
+production Terraform always uses a remote backend with locking (S3+DynamoDB,
+Terraform Cloud, an equivalent), never a local state file for anything beyond
+a personal experiment.
+
+**A `terraform destroy` computed against stale or drifted state can destroy
+more, or less, than intended** — state that hasn't been refreshed against
+reality, or that's missing a resource someone created out-of-band, produces a
+plan that's confidently wrong rather than visibly uncertain.
+
+## When NOT to use it
+
+**Do not run `terraform apply` in production without reading the plan
+output first**, specifically checking the count of `to destroy` and any
+`-/+` line. The plan is the entire safety mechanism — skipping straight to
+apply, or `-auto-approve`-ing a plan nobody read, throws it away.
+
+**Do not treat every replacement as equally risky, and do not treat every
+in-place update as automatically safe.** A replaced stateless web server
+behind a load balancer might be invisible to users; an in-place update to a
+database's storage size is generally safe but an in-place update that quietly
+changes a security group's rules is not something to wave through just
+because the plan says `~` instead of `-/+`.
+
+**Do not manage a resource with Terraform and also modify it by hand in a
+cloud console.** The moment reality and state disagree, the next plan is
+built on a false premise — either commit to Terraform as the only way changes
+happen to that resource, or accept that its state is unreliable.
+
+## Real-world usage
+
+Terraform (or an equivalent — Pulumi, CloudFormation, Bicep) is close to
+universal for provisioning production cloud infrastructure specifically
+because the plan-before-apply workflow gives a team a reviewable diff before
+anything changes — the same discipline as a pull request, applied to
+infrastructure instead of code. CI pipelines commonly run `terraform plan` on
+every pull request (posting the output as a comment) and gate `terraform
+apply` behind a human approval or a merge to a protected branch, so no
+infrastructure change happens without a visible diff someone signed off on.
+
+## Failure modes
+
+**The "innocuous" one-line change that took down a production database.**
+Someone renames an RDS instance's `identifier` — looks like a label change —
+and the plan says `-/+ must be replaced`, because `identifier` is `ForceNew`
+on that resource. Applied without reading the plan carefully, this destroys
+the database and creates an empty one with the new name. The data isn't in
+the diff; the diff only shows attribute changes, not the consequence of the
+operation.
+
+**The state file two people applied against at the same time.** Without
+remote state and locking, two concurrent `apply` runs can each read the same
+starting state, compute a plan against it, and then both write conflicting
+results — the last write wins, silently discarding whatever the first apply
+did, with no error to signal it happened.
+
+**The resource created by hand that Terraform doesn't know about.** A quick
+manual fix in the AWS console, meant to be temporary, is invisible to
+Terraform's state. The next `terraform apply` either tries to create a
+duplicate (if the manual resource isn't imported) or, worse, silently drifts
+further from what the HCL describes with every run that doesn't account for
+it.
+
+## Practice problems
+
+**1. A plan shows `~ resource "aws_instance" "web" { ~ instance_type =
+"t3.medium" -> "t3.large" }`. Is this safe to apply during business hours?**
+
+Generally yes for the instance itself — `instance_type` is typically mutable
+in place on `aws_instance`, meaning Terraform will resize the existing
+instance rather than replace it. The caveat worth checking: some instance
+type changes require the instance to be *stopped* to resize, which is itself
+a form of downtime even though the plan shows `~` rather than `-/+` — the
+plan verb tells you about the resource's identity, not about whether the
+operation is disruptive.
+
+**2. A team wants to rename a resource in their HCL from `aws_s3_bucket.data`
+to `aws_s3_bucket.uploads` without recreating the underlying bucket. What
+would the naive rename produce, and what's the fix?**
+
+A naive rename makes Terraform see the old address as removed and the new
+address as a new resource — the plan would show a destroy of `data` and a
+create of `uploads`, which for an S3 bucket means data loss unless the bucket
+name itself is unique enough to survive. The fix is `terraform state mv
+aws_s3_bucket.data aws_s3_bucket.uploads`, which renames the resource's
+address in state without touching the actual infrastructure.
+
+**3. Two engineers both run `terraform apply` against the same project
+within a minute of each other, using only local state (no remote backend).
+What can go wrong?**
+
+Without locking, both applies can read the same starting state concurrently,
+each compute a plan against it, and then each write their result back — the
+second write overwrites the first, silently discarding part of what the
+first apply did, with no error raised. The fix is a remote backend with
+locking, so the second `apply` either waits for the first to finish or is
+explicitly told the state is locked.
+
+<Quiz
+  client:visible
+  id="terraform-forcenew"
+  kind="concept"
+  question="A terraform plan shows `-/+ resource ... must be replaced` after a one-line attribute change. What determines whether an attribute change forces a replacement rather than an in-place update?"
+  options={[
+    { label: "Whether the attribute name sounds important, like 'id' or 'identifier'" },
+    { label: "The ForceNew flag set in the provider's schema for that attribute, based on whether the underlying API supports updating it in place", correct: true },
+    { label: "How many characters changed in the value" },
+    { label: "Terraform always replaces a resource if any attribute changes" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>ForceNew is a property the provider author sets per attribute, reflecting a real fact about the target API -- whether that field can be updated on the existing resource or only set at creation. It has nothing to do with how the edit looks in the diff; a one-character change to a ForceNew attribute forces a full replace, while a much larger change to a mutable attribute updates in place.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between `terraform plan` showing `~` versus
+`-/+`?"** `~` means Terraform will update the resource in place — same
+resource id, changed attribute value. `-/+` means it will destroy the
+existing resource and create a new one, because the changed attribute is
+`ForceNew` in the provider's schema — the underlying API doesn't support
+updating that field without recreating the resource. The caveat that shows
+real production experience: the size of the diff has nothing to do with
+which one happens — a one-character change to a `ForceNew` field forces a
+full replace exactly as much as a completely different value would.
+
+**"Why does Terraform need a state file at all — why can't it just inspect
+the cloud provider directly every time?"** State lets Terraform compute a
+plan without a full live inventory of every resource on every run, and it's
+what makes `apply` idempotent — running the same config twice is a no-op
+because state records what was already applied. The caveat: this is also
+Terraform's biggest operational risk — state that's lost, corrupted by a
+concurrent write, or out of sync with a resource someone changed by hand
+outside Terraform means every subsequent plan is computed against a wrong
+picture of reality, which is why remote state with locking is close to
+mandatory for anything beyond solo, local experimentation.

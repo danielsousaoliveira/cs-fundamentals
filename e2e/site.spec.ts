@@ -39,6 +39,8 @@ test('the sidebar is auto-derived and covers all six sections', async ({ page })
     ['dbt', '7-data-engineering/dbt'],
     ['Postgres', '8-databases-storage/postgres'],
     ['CosmosDB', '8-databases-storage/cosmosdb'],
+    ['Terraform', '9-cloud-infra/terraform'],
+    ['Kubernetes', '9-cloud-infra/kubernetes'],
   ] as const) {
     const link = page.locator(`a[href$="/${page_}/"]:visible`).first();
     await expect(link, `${section} should be reachable from the nav`).toBeVisible();
@@ -91,6 +93,7 @@ test('no page throws a hydration error', async ({ page }) => {
     '8-databases-storage/postgres/',
     '8-databases-storage/indexes-and-query-plans/',
     '8-databases-storage/cosmosdb/',
+    '9-cloud-infra/terraform/',
   ]) {
     await page.goto(url);
 

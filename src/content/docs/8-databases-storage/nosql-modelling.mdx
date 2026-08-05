@@ -1,0 +1,245 @@
+---
+title: NoSQL data modelling
+description: >-
+  Model by access pattern, not by entity — why a NoSQL schema starts from the
+  queries you'll run rather than the things you're storing, and what breaks
+  when a new query arrives that the model didn't anticipate.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs:
+  - 2-data-structures/hash-tables
+  - 8-databases-storage/mongodb
+tags: [nosql, data-modelling, single-table-design, access-patterns, dynamodb]
+languages: [typescript]
+roles: [backend, data, cloud]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A relational schema starts from the entities and their relationships, and the
+queries fall out of joining them however you need to at read time — the model
+doesn't need to anticipate the query, because the join can reshape the data on
+demand. A key-value or wide-column NoSQL store (DynamoDB, CosmosDB, Cassandra,
+HBase) removes the join, and removing the join removes the flexibility that
+made "model the entities, worry about queries later" work.
+
+So NoSQL modelling inverts the order: **list every access pattern you need to
+serve first, then design keys that make each one a direct lookup.** The
+question is never "what does a User look like" — it's "what are the exact five
+queries this application runs against users, and what key shape answers all
+five without a join." A schema designed this way looks alien to anyone coming
+from relational modelling, because it's often one table holding several
+different entity types, denormalised and duplicated specifically to make the
+known query set cheap.
+
+## Mechanics
+
+### Single-table design, by example
+
+A relational schema for orders and their line items:
+
+```sql
+-- three tables, joined at read time
+CREATE TABLE orders (id, customer_id, status, created_at);
+CREATE TABLE order_items (id, order_id, sku, quantity, price);
+CREATE TABLE customers (id, name, email);
+```
+
+The same data modelled for a key-value store, driven by two access patterns —
+"get an order with its items" and "get a customer's orders" — collapses into
+one table with a composite key:
+
+```text
+PK              SK              Type      Attributes
+CUSTOMER#123    METADATA        Customer  { name, email }
+CUSTOMER#123    ORDER#456       Order     { status, createdAt }
+CUSTOMER#123    ORDER#456#ITEM#1 Item     { sku, quantity, price }
+CUSTOMER#123    ORDER#789       Order     { status, createdAt }
+```
+
+A single query for `PK = CUSTOMER#123` returns the customer, every order, and
+every item in one request — no join, because the "join" was performed once,
+at write time, by choosing keys that colocate everything a common query needs.
+`PK = CUSTOMER#123, SK begins_with ORDER#456` isolates one order and its items.
+
+### The access pattern that wasn't anticipated
+
+The cost of this design shows up the moment a new requirement arrives that
+the key structure doesn't serve. "Find all orders with status = 'pending'
+across every customer" has no direct key path in the table above — the
+partition key is `CUSTOMER#...`, so answering this means either scanning
+every partition (expensive, and the thing this modelling style exists to
+avoid) or adding a secondary index that duplicates the data under a new key
+shape (`STATUS#pending` as a new partition key, maintained on every status
+change).
+
+This is not a mistake in the original design — the original design correctly
+served the access patterns it was built for. It's the structural cost of the
+approach: **every new query pattern that wasn't in the original list is a
+schema change, not a new `WHERE` clause.**
+
+### Denormalisation as the default, not the exception
+
+Because there's no cheap join, data that a relational schema would store once
+and join to is routinely duplicated across items. A customer's name might be
+copied onto every order item so that "list a customer's orders with their
+name" needs no second lookup — at the cost of every rename requiring an
+update across every duplicated copy, which needs its own explicit
+consistency strategy (a background job, an event-driven update, or accepting
+staleness) rather than being enforced structurally the way a foreign key
+enforces it.
+
+## Cost & limits
+
+**A scan (reading every item, filtering in application code) costs
+proportional to the table's total size, not to the result size.** It is the
+mechanism a well-modelled NoSQL schema is designed to never need — reaching
+for one routinely is the clearest sign the access patterns weren't fully
+enumerated before the schema was built.
+
+**Every access pattern not served by the primary key needs its own index,
+and every index is data duplicated and kept in sync.** A secondary index in
+DynamoDB (GSI) or a materialized view in Cassandra is a second copy of
+relevant attributes under a different key, updated asynchronously — there is
+a real cost, in both storage and eventual-consistency lag, per additional
+query shape supported.
+
+**Hot partition risk applies here exactly as it does in
+[CosmosDB](/cs-fundamentals/8-databases-storage/cosmosdb/)** — a partition
+key chosen without checking the traffic distribution behind it can
+concentrate load the same way, for the same underlying reason: throughput
+divides by partition, traffic doesn't.
+
+## When NOT to use it
+
+**Do not adopt single-table design for an application whose query patterns
+are still changing.** Early-stage products where the questions being asked of
+the data are still being discovered benefit from a relational schema's
+flexibility to answer new questions with a new join — locking into a NoSQL key
+structure before the access patterns stabilise means frequent, costly
+re-modelling.
+
+**Do not use a document or key-value store for data with genuine
+many-to-many relationships that need ad-hoc querying.** Reporting, analytics,
+and anything requiring "query by any of several unrelated attributes" is
+better served by a relational database or a dedicated analytical store —
+forcing it into a key-value shape means building and maintaining a secondary
+index for every dimension you might filter by.
+
+**Do not skip writing down the access pattern list before designing keys.**
+A NoSQL schema designed from the entities (the relational habit) rather than
+from an explicit, exhaustive list of queries tends to serve none of them
+efficiently — the discipline of listing patterns first is not optional
+ceremony, it's the actual design method.
+
+## Real-world usage
+
+Session stores, shopping carts, and user-profile lookups by id are the
+purest fit: one key, one access pattern, no relationships to model. Serverless
+backends built on DynamoDB commonly use single-table design specifically
+because DynamoDB doesn't support joins at all — the modelling technique isn't
+optional there the way it is in a document database with a `$lookup` escape
+hatch.
+
+Event-sourced systems often use a wide-column store (Cassandra, HBase) with
+a partition key of entity id and a clustering key of event timestamp,
+because "get all events for this entity in order" is the one access pattern
+that dominates, and the model is built around serving exactly that pattern
+as a fast sequential range read.
+
+## Failure modes
+
+**The scan that worked in development and times out in production.** A
+missing access pattern gets patched with an application-level filter over a
+full table scan — fast enough on a thousand test rows, and an outage on a
+production table with millions. Symptom: a specific endpoint's latency scales
+with total table size rather than with anything about the specific request,
+which is the tell that a scan is hiding behind a `WHERE`-clause-shaped API.
+
+**The denormalised field that silently goes stale.** A customer's name
+duplicated across a thousand order items, updated via a background job that
+fails silently or falls behind under load — the failure isn't an error, it's
+old orders quietly showing an old name indefinitely. Detection needs an
+explicit consistency check (a periodic reconciliation job comparing the
+source of truth to its duplicates), because there's no database-level
+foreign key to catch the drift.
+
+**The GSI that costs more than the base table.** Adding a secondary index for
+every new access pattern is individually reasonable and collectively
+expensive — a table with the base key plus four GSIs pays for five copies of
+relevant attributes and five sets of write amplification, and that
+accumulated cost is easy to lose track of because each index was added for a
+locally reasonable reason.
+
+## Practice problems
+
+**1. List the access patterns for a chat application (send message, get
+recent messages in a conversation, list a user's conversations) and sketch a
+key structure.**
+
+- `PK = CONVERSATION#<id>, SK = MESSAGE#<timestamp>` — recent messages in a
+  conversation, in order, via a range query.
+- `PK = USER#<id>, SK = CONVERSATION#<id>` — a user's conversations, via a
+  prefix query.
+- Sending a message writes to the first key shape; listing conversations
+  reads the second. Two access patterns, two key shapes on (potentially) one
+  table.
+
+**2. A new requirement arrives: "search messages by content." Why doesn't the
+key structure above serve it, and what would you add?**
+
+Content search isn't a key-prefix query against either key shape above — no
+range or equality on message text. This needs a separate index built for
+search specifically (a full-text search service like Elasticsearch/OpenSearch
+fed by the same write path, or a secondary index if the store supports one),
+not a modification to the existing keys.
+
+**3. A table modelled with `PK = CUSTOMER#id` needs to support "top 10
+customers by lifetime spend." Why is this expensive, and what would you change?**
+
+No key path aggregates across all customers — this needs either a full scan
+with application-side aggregation (expensive, gets worse as the table grows)
+or a maintained aggregate (a separate item updated on every order,
+`PK = LEADERBOARD, SK = SPEND#<amount>#<customerId>`, kept current via the
+same write path that creates orders).
+
+<Quiz
+  client:visible
+  id="nosql-modelling-a-nosql-table-serves"
+  kind="concept"
+  question="A NoSQL table serves every known query pattern efficiently. A new feature needs a query pattern nobody anticipated. What is the typical cost?"
+  options={[
+    { label: "None -- NoSQL stores support arbitrary ad-hoc queries as efficiently as SQL" },
+    { label: "A schema change: a new secondary index or a key restructuring, not just a new query", correct: true },
+    { label: "The whole table must be migrated to a relational database" },
+    { label: "NoSQL stores automatically generate an index for any new query pattern" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Because the key structure IS the query plan in most NoSQL stores, an unanticipated access pattern needs a new index or a restructured key -- a schema-level change, not a query-level one. This is the structural tradeoff for skipping joins.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How is NoSQL data modelling different from relational modelling?"**
+Relational modelling starts from entities and their relationships and defers
+query flexibility to join-time; NoSQL modelling starts from an explicit list
+of access patterns and designs keys so each one is a direct lookup, because
+there's no cheap join to fall back on. The caveat: this means a NoSQL schema
+is only as good as the completeness of the access pattern list it was
+designed from — a missing pattern isn't a slow query, it's a missing index or
+a schema change.
+
+**"When would you use single-table design?"** When the application's access
+patterns are well understood and stable, and minimizing the number of
+round-trips per request matters — colocating related entities under one
+partition key turns several relational queries into one. The caveat that
+signals real use: it trades that efficiency for schema rigidity, so it's the
+wrong choice early in a product's life when the questions being asked of the
+data are still being discovered.

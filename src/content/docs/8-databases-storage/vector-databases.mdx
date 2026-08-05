@@ -1,0 +1,234 @@
+---
+title: Vector databases compared
+description: >-
+  Pinecone, Qdrant, and Weaviate implement the same ANN algorithms pgvector
+  does — what actually differs is operations, filtering, and how each one
+  degrades at the corpus size pgvector stops being comfortable.
+sidebar:
+  order: 7
+difficulty: core
+status: complete
+prereqs:
+  - 10-ai-engineering/vector-search
+  - 8-databases-storage/pgvector
+tags: [vector-database, pinecone, qdrant, weaviate, hnsw]
+languages: [typescript]
+roles: [ai, backend, cloud]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+[pgvector](/cs-fundamentals/8-databases-storage/pgvector/) makes the point
+that HNSW inside Postgres is the same HNSW covered on the [vector
+search](/cs-fundamentals/10-ai-engineering/vector-search/) page — the
+algorithm doesn't change when it moves to a dedicated system. What changes is
+everything *around* the algorithm: how filtering interacts with the index,
+how the system scales past what one machine holds, and what operational
+surface you own versus what a managed service owns for you.
+
+So this page isn't "which vector database is best" — it's the axes that
+actually differentiate them, because the marketing material for all three
+converges on "fast, accurate, scalable" and the real differences are more
+specific than that.
+
+## Mechanics
+
+### The same index, different filtering strategies
+
+Every one of these stores builds an HNSW (or a close variant) graph, same as
+pgvector. Where they diverge is **pre-filtering versus post-filtering** when
+a query combines a metadata condition with a similarity search — "similar
+products, but only in stock":
+
+- **Post-filtering**: run the ANN search first, then discard results that
+  fail the metadata filter. Cheap to implement, and it can return fewer than
+  `LIMIT` results — or none — if the filter is selective enough that most of
+  the nearest neighbours fail it.
+- **Pre-filtering**: apply the metadata filter first, then search only within
+  the surviving subset. Correct result count, but naively implemented it can
+  degrade toward exact search if the filter is very selective, because the
+  graph structure built for the *whole* corpus doesn't help much when only
+  1% of it is eligible.
+
+Qdrant's filterable HNSW and Weaviate's pre-filtering both attempt to build
+indexes that stay efficient under selective filters rather than falling back
+to one of the two naive strategies above; the practical difference between
+vendors often comes down to how well this specific case is engineered, more
+than to which one has the "better" core algorithm.
+
+### Where the boundary with pgvector actually sits
+
+Not a hard cutover — a widening gap. Rough shape, informed by the constraints
+[pgvector](/cs-fundamentals/8-databases-storage/pgvector/) already covers
+(shared resource budget, index-build cost competing with transactional load):
+
+| Corpus size | Where it's comfortable |
+|---|---|
+| Under ~1M vectors | pgvector, if the data is already relational |
+| ~1M–50M vectors | Either, depending on filter complexity and query volume |
+| 50M+ vectors, high QPS | Dedicated vector database |
+
+Filter complexity and query volume move the boundary more than raw count
+does — a 500k-vector corpus queried a thousand times a second with complex
+metadata filters can be a worse pgvector fit than a 5M-vector corpus queried
+rarely with simple filters.
+
+### Managed versus self-hosted
+
+Pinecone is managed-only — no self-hosted option, which removes an entire
+category of operational work (capacity planning, index rebuild scheduling,
+replica management) at the cost of no control over the underlying
+infrastructure and a pricing model based on it. Qdrant and Weaviate offer
+both self-hosted (open source) and managed options, trading the same
+operational work for control and, for the self-hosted path, the ability to
+run inside your own network boundary — often the deciding factor for data
+residency or compliance requirements a managed multi-tenant service can't
+satisfy.
+
+## Cost & limits
+
+**Pricing models differ enough to change the right choice at different
+scales, and none of them are simple per-vector costs.** Pod-based or
+serverless-request-based pricing (common on managed services) means cost
+scales with a different variable than corpus size alone — query volume,
+index size class, or both — so the same corpus can cost meaningfully
+different amounts across vendors depending on your query pattern, not just
+your data size. Get current numbers from each vendor before committing; this
+is exactly the kind of figure that rots between when it's read and when it's
+acted on.
+
+**Replication and consistency models differ.** Some default to eventual
+consistency between a write and that write being reflected in a subsequent
+search — fine for most retrieval-augmented generation use cases, where a
+few-hundred-millisecond staleness window on newly indexed content is
+invisible, and wrong for a use case that needs a write to be immediately
+searchable (a user editing content and expecting to find it right after).
+
+## When NOT to use it
+
+**Do not migrate off pgvector to a dedicated vector database before hitting
+an actual constraint.** "We might need to scale eventually" is not a reason
+to add a second datastore and its associated operational surface today —
+migrate when query latency, index build time, or resource contention with
+transactional load actually becomes a measured problem, not preemptively.
+
+**Do not choose a vector database based on benchmark numbers alone.**
+Published recall/QPS benchmarks are run on specific hardware, specific
+dimensionality, and specific filter complexity that may not resemble your
+workload — the filtering strategy (pre- vs. post-filter, and how well each
+implementation handles selective filters) usually matters more for your
+actual latency than the raw ANN benchmark number.
+
+**Do not pick a fully-managed service if data residency or network isolation
+requirements rule it out.** This is a compliance and contractual question
+that needs answering before a technical evaluation, not after — the best
+managed vector database is not an option if your data cannot leave your VPC.
+
+## Real-world usage
+
+Startups and small teams building a RAG feature on top of an existing
+Postgres-backed product commonly start with pgvector specifically to avoid
+standing up a second system, and migrate to a dedicated store only once
+either the corpus or the query volume outgrows what's comfortable — which
+for many products never actually happens within the product's lifetime.
+Larger-scale search and recommendation systems — the kind serving many
+concurrent low-latency requests against tens of millions of vectors with
+complex filters — are where the dedicated stores' investment in filtered-ANN
+performance actually pays for itself.
+
+## Failure modes
+
+**The post-filter that returns fewer results than requested.** A similarity
+search with `LIMIT 10` and a selective metadata filter, implemented as
+post-filtering, can return 3 results instead of 10 if most of the nearest
+neighbours fail the filter — not an error, just a quietly incomplete result
+set that a caller expecting exactly 10 results doesn't handle.
+
+**The eventual-consistency window that looks like a bug.** A document
+indexed and immediately searched for, in a system with eventually-consistent
+indexing, can fail to appear for a window measured in hundreds of
+milliseconds to seconds — reported as "search is broken" when it's actually
+the documented consistency model, and the fix (retry with backoff, or switch
+to a consistency mode that waits for indexing) depends on which the vendor
+actually offers.
+
+**The migration that changes ranking, not just infrastructure.** Moving a
+corpus from one vector store to another with a different default distance
+metric, a different HNSW parameter tuning, or a different filtering strategy
+can change which documents rank highest for the same query — a migration
+framed as "same functionality, different infrastructure" that quietly
+changes user-visible behavior. Compare ranking output before and after on a
+representative query set, not just uptime and latency.
+
+## Practice problems
+
+**1. A similarity search with a selective metadata filter (matching 2% of
+the corpus) sometimes returns zero results even though matching documents
+exist. What's the likely cause, and what's the fix?**
+
+Post-filtering: the ANN search found its nearest neighbours from the *whole*
+corpus, and none of them happened to pass the 2% filter. Fix: use a
+pre-filtering or filterable-index approach if the vendor supports one, or
+widen the ANN search's candidate count (`ef_search`-equivalent) enough that
+survivors after filtering still meet the requested `LIMIT`.
+
+**2. Your team has a 200k-vector corpus, currently in pgvector, queried
+roughly 50 times per second with simple filters. A colleague proposes
+migrating to a dedicated vector database "to be safe." How would you
+evaluate that?**
+
+At this scale and query pattern, pgvector is comfortably within its
+range — this doesn't match either driver (corpus size or filter complexity)
+that would justify a dedicated store. Ask what specific constraint is
+motivating the proposal; if none is measured yet, the migration adds
+operational surface (a second system, a second consistency model) without a
+corresponding measured benefit.
+
+**3. Two candidate vector databases publish similar recall/QPS benchmarks.
+What would you check before choosing between them?**
+
+Whether the benchmark's filter complexity matches your actual workload
+(many production queries combine similarity with metadata filters, and
+benchmarks often test unfiltered search), the consistency model for new
+writes, and — separately from the algorithm — the operational and pricing
+model that fits your team's constraints (managed vs. self-hosted, data
+residency).
+
+<Quiz
+  client:visible
+  id="vector-databases-a-similarity-search-with"
+  kind="concept"
+  question="A similarity search with a selective metadata filter sometimes returns fewer results than the requested LIMIT, even though enough matching documents exist. What is the most likely cause?"
+  options={[
+    { label: "The HNSW index is corrupted and needs to be rebuilt" },
+    { label: "The system is post-filtering: it ran ANN search first and discarded results that failed the filter, rather than filtering before or during the search", correct: true },
+    { label: "The corpus is too small for the requested LIMIT" },
+    { label: "The distance metric is misconfigured" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Post-filtering runs the nearest-neighbour search against the whole corpus first, then discards results that fail the metadata filter -- if a selective filter eliminates most of the nearest neighbours, fewer than LIMIT results survive, silently. Pre-filtering or a filterable index avoids this at some engineering cost.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"When would you use a dedicated vector database instead of pgvector?"**
+Once corpus size, query volume, or filter complexity outgrows what a shared
+Postgres instance handles comfortably — not preemptively. The signal is
+usually measured: index build time competing with transactional load, or
+filtered-query latency that doesn't meet requirements. The caveat: this
+threshold is not a fixed vector count, it moves with how selective your
+filters are and how many queries per second you're actually running.
+
+**"What differentiates the major vector database vendors?"** Less the core
+ANN algorithm — most implement variants of HNSW — and more how they handle
+filtered search (pre-filter versus post-filter, and how gracefully each
+degrades under a selective filter), their consistency model for new writes,
+and their managed-vs-self-hosted options. The caveat that signals real
+evaluation experience: published recall/QPS benchmarks often test unfiltered
+search, which is rarely the actual production query shape, so they should
+inform a shortlist, not a final decision.

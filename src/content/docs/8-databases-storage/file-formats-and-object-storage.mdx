@@ -1,0 +1,245 @@
+---
+title: File formats and object storage
+description: >-
+  Row-oriented versus column-oriented storage, why Parquet reads 10x less data
+  for an analytical query than CSV, and what Delta and Iceberg add on top that
+  a folder of Parquet files can't do alone.
+sidebar:
+  order: 8
+difficulty: core
+status: complete
+prereqs:
+  - 1-complexity/big-o
+tags: [parquet, delta-lake, iceberg, object-storage, columnar]
+languages: [python, sql]
+roles: [data, cloud, backend]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A row-oriented format — CSV, JSON, a Postgres heap page — stores every field
+of one record next to each other, because the common access pattern is "read
+this whole record." An analytical query almost never wants a whole record: `SELECT
+AVG(amount_cents) FROM orders` touches one column across every row and
+ignores the other five. Reading a row-oriented file for that query means
+reading every byte of every field just to throw away the ones you didn't ask
+for.
+
+**Column-oriented formats — Parquet is the dominant one — store each column
+contiguously instead.** The same query now reads only the bytes belonging to
+`amount_cents`, skipping everything else entirely. That single reorientation
+is most of why analytical workloads moved to columnar storage, and everything
+else on this page — compression ratios, predicate pushdown, the table formats
+built on top — follows from it.
+
+## Mechanics
+
+### Why columnar compresses better, not just reads less
+
+A column of `status` values (`complete`, `complete`, `pending`, `complete`,
+...) sitting contiguously compresses far better than the same values
+scattered across rows interleaved with unrelated fields, because a
+compressor exploits *local* repetition, and a column is locally repetitive in
+a way a row never is. Parquet applies column-appropriate encodings —
+dictionary encoding for low-cardinality strings, run-length encoding for
+repeated values, delta encoding for sorted-ish integers — on top of general
+compression, and the combination routinely gets 5-10x smaller than the
+equivalent CSV, which compounds with reading fewer columns in the first
+place.
+
+### Predicate and projection pushdown
+
+Parquet stores per-column statistics (min, max, null count) per **row group**
+— a chunk of rows, typically covering tens of thousands to a few million rows
+depending on file size. A query with `WHERE created_at > '2026-01-01'` can
+skip an entire row group without reading it if that group's stored maximum
+`created_at` is below the filter — this is **predicate pushdown**, and it
+turns a filter from "read everything, discard most of it" into "read only
+the row groups that could possibly match." Column selection working the same
+way — reading only the columns a query names — is **projection pushdown**.
+Together they're most of why a well-organized Parquet dataset can answer a
+selective analytical query while touching a small fraction of the data on
+disk.
+
+### Why "a folder of Parquet files" isn't enough
+
+Parquet solves the encoding problem. It says nothing about **which files
+currently make up a table** — and that gap is what Delta Lake and Iceberg
+exist to close:
+
+- **No atomic multi-file writes.** A query that writes 50 new Parquet files
+  as part of one logical update, and fails after 30, leaves the table in a
+  state no reader should see — but a folder of files has no concept of "these
+  50 belong together" to roll back.
+- **No schema evolution tracking.** Adding a column, or changing a type,
+  across files written by different pipeline runs at different times needs
+  every reader to agree on how to reconcile it — a bare folder has no record
+  of what schema which file was written under.
+- **No time travel or concurrent-write isolation.** Two jobs writing to the
+  same table concurrently, or a need to query "the table as it looked
+  yesterday," both need a transaction log — which a folder of immutable files
+  doesn't provide on its own.
+
+Delta Lake and Iceberg both add a **transaction log** — an ordered, append-only
+record of which files constitute which version of the table — layered on top
+of plain Parquet files sitting in object storage. Delta Lake's log is a
+sequence of JSON/Parquet action files; Iceberg's is a tree of metadata and
+manifest files. Different implementations, same problem: turn "a folder of
+files" into "a table with atomic commits, schema history, and consistent
+snapshots."
+
+## Cost & limits
+
+**Row group size trades scan efficiency against pushdown granularity.**
+Larger row groups mean fewer, larger reads (efficient for bulk scans) and
+coarser skip decisions (a filter that would skip a small row group can't skip
+a large one containing even one matching row) — there's no single correct
+size, only a trade tuned to the query pattern.
+
+**Small files are the most common Parquet cost in practice.** Streaming
+writes that flush frequently, or overly aggressive partitioning, produce many
+small files instead of fewer large ones — and per-file overhead (opening a
+file, reading its footer metadata, scheduling the read) dominates for a
+dataset made of thousands of small files, often costing more than the
+predicate-pushdown savings the format was chosen for. This is usually fixed
+with periodic file **compaction**: a background job that rewrites many small
+files into fewer larger ones.
+
+**Object storage (S3, GCS, ADLS) is priced per operation as well as per byte
+stored and egressed** — a query pattern making many small requests (common
+with poorly-sized row groups or excessive partitioning) can cost meaningfully
+more in request charges than the storage itself, independent of how much data
+is actually being read.
+
+## When NOT to use it
+
+**Do not use Parquet for a workload dominated by single-row reads and
+writes** — an OLTP application fetching one order by id. Columnar formats
+optimize for scanning many rows across few columns; reconstructing one full
+row means reading from every column file, which is the opposite of what the
+format is good at. That workload belongs in a row-oriented database, not a
+columnar file format.
+
+**Do not adopt Delta Lake or Iceberg for a small, single-writer, batch-only
+dataset with no concurrency and no schema evolution needs.** The transaction
+log adds real operational complexity — metadata management, log compaction of
+its own — that pays for itself once concurrent writers or schema evolution
+are actually in play, and is pure overhead when they aren't.
+
+**Do not partition a dataset by a high-cardinality column expecting it to
+help pruning.** Partitioning by something like a user id, rather than a
+coarser dimension like date, produces enormous numbers of tiny partitions —
+the small-files problem, structural rather than incidental.
+
+## Real-world usage
+
+Data lakes feeding BI tools and ad-hoc analytical queries are the core use
+case — a data warehouse's external tables, a Spark or DuckDB job scanning
+event logs, an analytics dashboard querying Athena or BigQuery over
+externally-stored Parquet. Delta Lake and Iceberg specifically show up
+wherever a lakehouse architecture needs the reliability guarantees of a
+warehouse (ACID writes, schema enforcement) without giving up the flexibility
+and cost profile of files in object storage rather than a managed warehouse's
+proprietary storage.
+
+## Failure modes
+
+**The query that reads 10x more data than expected because of small files.**
+A dataset accumulated from frequent small streaming writes, never compacted,
+turns a query that should touch a few large row groups into one opening
+thousands of small files — symptom: query latency dominated by request count
+and file-open overhead rather than by bytes scanned, visible in a query
+engine's per-file metrics if you look, invisible in a simple "bytes read"
+summary.
+
+**The schema drift that breaks readers silently.** A pipeline writing to a
+bare folder of Parquet files (no Delta/Iceberg log) changes a column's type
+partway through — say, an integer id becoming a string — and every reader
+written against the old schema either errors or, worse, silently
+misinterprets values, because nothing enforced schema consistency across
+writes. A table format's schema enforcement exists specifically to convert
+this from a silent data-correctness bug into an explicit, visible schema
+migration.
+
+**The predicate that doesn't prune anything because statistics weren't
+collected, or the data isn't sorted by the filtered column.** Row-group
+min/max statistics only help if the filtered column's values cluster within
+row groups — a table sorted by `user_id` but filtered by `created_at`
+provides no pruning benefit on that filter, because every row group likely
+spans the entire date range. Symptom: predicate pushdown "should" apply and
+query profiling shows every row group being read anyway.
+
+## Practice problems
+
+**1. A query filters `WHERE order_date = '2026-08-01'` against a Parquet
+dataset partitioned by `customer_region` and sorted by `customer_id`. Why
+doesn't predicate pushdown help here, and what would fix it?**
+
+Neither the partitioning nor the sort order relates to `order_date`, so every
+partition's row groups likely span every date — no row group's max/min
+`order_date` excludes it from the filter. Fix: partition or sort by
+`order_date` (or a coarser bucket of it, like month) if this filter is
+common, accepting the trade against whatever query pattern the current
+layout was optimized for.
+
+**2. A streaming pipeline writes one small Parquet file every 30 seconds. A
+downstream analytical query over a day's data is much slower than expected.
+Diagnose it.**
+
+Roughly 2,880 files per day from a 30-second flush interval — the small-files
+problem: per-file overhead (opening, reading footer metadata) dominating
+over actual bytes-scanned cost. Fix: a compaction job merging small files
+into larger ones on a schedule, or increasing the flush interval if latency
+requirements allow it.
+
+**3. Two teams query the same table format built on Iceberg. One needs "the
+table as it looked before yesterday's bad pipeline run" for a rollback. What
+Iceberg feature makes this possible, and why doesn't a bare folder of Parquet
+files support it?**
+
+Iceberg's transaction log records every committed snapshot, so time-travel
+querying (`SELECT * FROM table FOR VERSION AS OF <snapshot>` or by
+timestamp) reads exactly the file set that constituted the table at that
+point. A bare folder has no record of "these are the files this table
+consisted of on Tuesday" — files may have been deleted, overwritten, or
+added since, with no snapshot to travel back to.
+
+<Quiz
+  client:visible
+  id="file-formats-and-object-storage-an-analytical-query-with"
+  kind="concept"
+  question="An analytical query with `SELECT AVG(amount) FROM orders` runs against both a CSV file and a Parquet file containing the same data. Why is the Parquet version typically much faster?"
+  options={[
+    { label: "Parquet files are always smaller on disk regardless of query" },
+    { label: "Parquet stores columns contiguously, so the query reads only the amount column's bytes instead of every field of every row", correct: true },
+    { label: "Parquet queries always run in parallel while CSV queries never do" },
+    { label: "CSV files cannot be compressed" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>The core reorientation columnar formats make: storing each column contiguously means a query touching one column reads only that column's bytes, skipping every other field entirely. A row-oriented format like CSV has to read the whole row to get to any one field.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Why would you choose Parquet over CSV or JSON for a data lake?"**
+Analytical queries typically touch few columns across many rows, and a
+columnar format lets the engine read only the columns and row groups a query
+actually needs — via projection and predicate pushdown — instead of scanning
+every byte of every record. The caveat: this is optimizing for the opposite
+access pattern of an OLTP workload, so Parquet is the wrong choice for a
+system dominated by single-row point reads and writes.
+
+**"What problem do Delta Lake and Iceberg solve that Parquet alone
+doesn't?"** Parquet defines how a single file is encoded; it says nothing
+about which set of files currently constitutes a table, so a bare folder of
+Parquet files has no atomic multi-file commits, no schema history, and no
+consistent snapshot to query concurrently with writes. Both add a
+transaction log on top of ordinary Parquet files to provide those. The
+caveat: that log is real operational complexity, worth paying for once
+concurrent writers or schema evolution are actually happening, and pure
+overhead for a small single-writer batch dataset.

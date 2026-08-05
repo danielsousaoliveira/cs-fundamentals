@@ -1,0 +1,243 @@
+---
+title: pgvector
+description: >-
+  Vector search inside Postgres — what you gain by not standing up a second
+  datastore, what HNSW costs in index build time and memory, and when the
+  "one less service" argument stops being the right trade.
+sidebar:
+  order: 6
+difficulty: core
+status: complete
+prereqs:
+  - 8-databases-storage/postgres
+  - 10-ai-engineering/vector-search
+tags: [pgvector, postgres, vector-search, hnsw, embeddings]
+languages: [sql]
+roles: [ai, backend, data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+[Vector search](/cs-fundamentals/10-ai-engineering/vector-search/) covers
+approximate nearest-neighbour search and the recall-versus-latency dial that
+makes it work. `pgvector` is that same ANN machinery — HNSW and IVFFlat —
+implemented as a Postgres extension, so vectors live in a column next to your
+relational data instead of in a separate, purpose-built vector database.
+
+The argument for it is operational, not algorithmic: **the index structures
+and the trade-offs are the same ones covered on the vector search page** —
+pgvector doesn't reinvent HNSW, it hosts it. What you actually gain is one
+fewer system to run, back up, secure, and keep consistent with your source of
+truth. A `JOIN` between a similarity search and a relational filter — "find
+similar products, but only in stock, only in this region" — is one SQL query
+instead of a similarity search against a vector store followed by an
+application-code filter against a second one.
+
+That convenience has a ceiling, and the ceiling is what this page is about.
+
+## Mechanics
+
+### Adding a vector column and an index
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE products (
+  id serial PRIMARY KEY,
+  name text,
+  region text,
+  in_stock boolean,
+  embedding vector(1536)  -- e.g. OpenAI text-embedding-3-small
+);
+
+-- HNSW: same structure covered on the vector search page, built inside Postgres
+CREATE INDEX ON products USING hnsw (embedding vector_cosine_ops);
+```
+
+### Similarity search fused with a relational filter
+
+```sql
+SELECT id, name
+FROM products
+WHERE in_stock AND region = 'EU'
+ORDER BY embedding <=> $1  -- cosine distance operator
+LIMIT 10;
+```
+
+This is the whole value proposition in one query: an approximate nearest-
+neighbour search that also enforces a relational constraint, planned and
+executed by the same engine, with no second network hop to a separate vector
+store and no risk of the two systems disagreeing about which products are
+currently in stock.
+
+### The distance operators
+
+pgvector exposes three, and picking the wrong one silently changes what
+"similar" means:
+
+- `<->` — Euclidean (L2) distance.
+- `<=>` — cosine distance (`1 - cosine similarity`).
+- `<#>` — negative inner product, for models trained to compare via dot
+  product rather than a normalized angle.
+
+The operator must match what the embedding model was trained against. Most
+current embedding APIs (OpenAI, Cohere) are trained for cosine similarity;
+using `<->` against vectors intended for cosine comparison produces results
+that are ranked plausibly — nothing errors — and ranked wrong, because
+Euclidean distance and cosine distance only agree when every vector has the
+same magnitude.
+
+## Cost & limits
+
+**HNSW index build time and memory both scale with corpus size, inside the
+same resource budget as the rest of your database.** A dedicated vector
+database can scale its indexing tier independently of anything else; a
+Postgres HNSW index competes for the same CPU, memory, and I/O as every other
+table and index in the same instance. Building or rebuilding a large HNSW
+index is a maintenance operation that can degrade unrelated queries running
+against the same database while it happens.
+
+**The same recall/latency dial the vector search page covers still applies,
+now tuned via `ef_construction` (build-time) and `ef_search` (query-time)
+parameters** — higher values buy better recall at the cost of slower builds
+and slower queries respectively, same trade, different knob names.
+
+**Filtered vector search doesn't always use the vector index efficiently.**
+A query combining a highly selective relational filter (`region = 'EU'`,
+matching 2% of rows) with a vector similarity search can end up doing more
+work than expected, because the planner has to decide whether to filter first
+and rank the small remainder, or search the vector index broadly and filter
+after — and that decision is subject to the exact same estimate-quality
+issues covered on the [Postgres](/cs-fundamentals/8-databases-storage/postgres/)
+page. Check the actual plan with `EXPLAIN ANALYZE` rather than assuming the
+combination is free.
+
+## When NOT to use it
+
+**Do not use pgvector for a corpus in the hundreds of millions of vectors with
+demanding recall and latency requirements.** A purpose-built vector database
+(Pinecone, Qdrant, Weaviate — see the [vector
+databases](/cs-fundamentals/8-databases-storage/vector-databases/) page) is
+built to scale the indexing and search tier independently of transactional
+load, with tuning options pgvector doesn't expose. pgvector is strong up to
+low millions of vectors on well-provisioned hardware; past that, the
+"one less service" argument starts costing more in degraded query performance
+than it saves in operational simplicity.
+
+**Do not add pgvector to a system with no existing Postgres database, purely
+to get vector search.** If there's no relational data to join against and no
+existing operational investment in Postgres, a dedicated vector database is
+simpler to reason about and to scale — pgvector's advantage is specifically
+the fusion with relational data you already have.
+
+**Do not skip capacity planning for HNSW index build time on a large,
+already-loaded table.** Building an HNSW index on an existing table with
+millions of rows can take a meaningfully long time and hold significant
+memory, and doing it against a live production database without planning the
+maintenance window is a common source of unplanned load spikes.
+
+## Real-world usage
+
+RAG systems built on an application that already stores its source documents
+in Postgres are the strongest fit — the embedding lives in the same table as
+the document metadata, permissions, and any relational filters the retrieval
+step needs, and a single query does retrieval and access control together
+instead of coordinating two systems. Recommendation features bolted onto an
+existing product database follow the same pattern: "similar items, but only
+ones this user is entitled to see" is naturally one query when the entitlement
+data and the embeddings are colocated.
+
+## Failure modes
+
+**The wrong distance operator, silently.** Using `<->` (Euclidean) against
+vectors normalized for cosine comparison doesn't error — it returns a
+plausible-looking ranked list that's subtly wrong, and "subtly wrong
+similarity ranking" is one of the hardest classes of bug to notice, because
+there's no crash and no obviously malformed output to trigger investigation.
+
+**The HNSW build that stalls unrelated queries.** Building or rebuilding a
+large HNSW index consumes memory and I/O that the rest of the database is
+also competing for — symptom: unrelated query latency degrading during an
+index build with no code change, traceable only by correlating the timing
+against `pg_stat_progress_create_index`.
+
+**The filtered search that quietly falls back to a full scan.** A highly
+selective relational filter combined with a vector search can push the
+planner toward filtering first and computing distance only on survivors —
+correct, and potentially much slower than expected if the filter is not as
+selective as assumed. Always confirm with `EXPLAIN ANALYZE`; do not assume the
+combination executes the way the SQL reads.
+
+## Practice problems
+
+**1. A similarity search using `<->` returns results that "feel" wrong
+compared to the same query in the embedding provider's own playground. What's
+the first thing to check?**
+
+The distance operator against the model's trained comparison metric — most
+current embedding models are trained for cosine similarity, and `<->` is
+Euclidean. Confirm which the embedding model expects and switch to `<=>` (or
+`<#>` for dot-product-trained models) if there's a mismatch.
+
+**2. An HNSW index build on a 50-million-row table is degrading other query
+latency in production. What are two ways to address it, and what does each
+trade away?**
+
+Build during a low-traffic maintenance window (delays availability of the
+new index, doesn't reduce the resource cost) or build on a replica and
+promote it (avoids production impact entirely, costs the operational
+complexity of managing a replica-and-promote workflow). A third option worth
+naming: this table size is close to where a dedicated vector database's
+independent scaling starts to be worth the added operational surface.
+
+**3. `WHERE region = 'EU' ORDER BY embedding <=> $1 LIMIT 10` is slow, and
+`region = 'EU'` matches only 3% of rows. What would you check in the plan?**
+
+Whether the planner is filtering by region first (cheap, since it's
+selective) and computing distance only on the 3% that survive, versus
+searching the HNSW index broadly and filtering region afterward
+(expensive if the vector index scan isn't itself constrained). `EXPLAIN
+ANALYZE` shows which; the fix, if it's choosing the expensive path, may be a
+composite approach (a partial index, or restructuring the query) rather than
+tuning `ef_search` alone.
+
+<Quiz
+  client:visible
+  id="pgvector-a-vector-similarity-search"
+  kind="concept"
+  question="A vector similarity search using pgvector's <-> operator returns plausible-looking but subtly wrong results. What is the most likely cause?"
+  options={[
+    { label: "The HNSW index is corrupted" },
+    { label: "The embedding model was trained for cosine similarity, but <-> computes Euclidean distance", correct: true },
+    { label: "pgvector does not support the <-> operator" },
+    { label: "The vectors need to be re-normalized to unit length before any query works" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>pgvector exposes three distance operators and none of them error if you use the wrong one for your model. A cosine-trained model queried with Euclidean distance (<code>{'<->'}</code>) instead of cosine distance (<code>{'<=>'}</code>) produces a ranked-but-wrong result with no crash to signal the mismatch.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Why would you use pgvector instead of a dedicated vector database?"**
+When the vectors need to be queried alongside existing relational data —
+permissions, inventory, region — in the same request, and the corpus size is
+within what a well-provisioned Postgres instance can index efficiently
+(comfortably into the low millions). The gain is one fewer system to operate
+and consistency by construction between the vectors and the relational data
+they're filtered against. The caveat: it shares Postgres's resource budget
+with everything else running there, so index builds and searches compete
+with transactional load in a way a dedicated vector database's independently
+scaled indexing tier doesn't.
+
+**"What's a subtle pgvector bug you'd watch for?"** Using the wrong distance
+operator for the embedding model — `<->` (Euclidean) against vectors trained
+for cosine comparison. It doesn't error; it returns a plausible ranked list
+that's quietly mis-ordered, which is worse than a crash because nothing
+flags it for investigation. The caveat that shows real use: confirming this
+requires knowing what the specific embedding model was trained against, which
+is a fact about the model, not something inferable from the schema.

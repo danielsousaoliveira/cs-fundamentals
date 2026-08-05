@@ -1,0 +1,248 @@
+---
+title: MongoDB
+description: >-
+  Embed or reference, why a document's growth pattern decides the schema more
+  than the query pattern does, and the write-amplification bug that only
+  appears once an array stops being small.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/databases
+tags: [mongodb, document-database, schema-design, embedding, denormalisation]
+languages: [typescript]
+roles: [backend, fullstack, data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+[Databases](/cs-fundamentals/5-systems/databases/) covers normalisation: split
+data into tables connected by foreign keys, join at read time, avoid
+duplication. MongoDB's document model inverts the default — **denormalise by
+embedding related data inside the same document**, and join (via `$lookup`)
+only when you have to.
+
+The reason to invert it is that MongoDB's atomicity boundary is the document.
+A single-document write is atomic without a transaction; a write spanning two
+documents needs an explicit multi-document transaction, which costs more and
+which most schemas are built to avoid needing. So the schema design question
+in MongoDB is not "what's the normalised form" — it's **"what has to be
+consistent together, and does that fit in one document."**
+
+That single decision — embed or reference — is the whole subject of this page,
+because getting it wrong doesn't fail loudly. A document that embeds an
+unbounded array works perfectly in every test you write, because tests don't
+run long enough for the array to grow.
+
+## Mechanics
+
+### Embed when it's bounded and read together
+
+```js
+// A blog post with its comments embedded -- if comments are capped or rare
+{
+  _id: ObjectId("..."),
+  title: "...",
+  body: "...",
+  comments: [
+    { author: "...", text: "...", at: ISODate("...") },
+    // ...
+  ]
+}
+```
+
+One read fetches the post and every comment, atomically, with no join. This is
+the right shape when the embedded list has a natural ceiling — a handful of
+line items on an order, the days of a week's schedule — and when you virtually
+always read parent and children together.
+
+### Reference when it's unbounded or read separately
+
+```js
+// posts
+{ _id: ObjectId("post1"), title: "...", body: "..." }
+
+// comments -- referencing the post, not embedded in it
+{ _id: ObjectId("c1"), postId: ObjectId("post1"), author: "...", text: "..." }
+```
+
+A popular post can accumulate an unbounded number of comments. Embedding them
+means the document keeps growing, and MongoDB's storage engine (WiredTiger)
+has to move a document to a new location on disk when it outgrows the space
+it was allocated — an operation that gets more expensive as the document gets
+bigger, not less. Referencing trades away the single-read atomicity for a
+document that stays small and a query pattern (`find({ postId })`, indexed)
+that scales independently of any one post's popularity.
+
+### The 16 MB ceiling, and why it arrives quietly
+
+Every BSON document has a hard limit: **16 MB**. An embedded array with no
+natural ceiling — comments on a popular post, events in a long-lived audit
+log, messages in a long-running chat thread — will hit it eventually, and the
+failure is a write that suddenly starts erroring on a document that has been
+working for months. Nothing in the schema warned you; the array just grew
+past the point where it fit.
+
+### Write amplification from a growing array
+
+Even below 16 MB, an unbounded embedded array degrades before it errors.
+Every `$push` onto an array that has outgrown its originally allocated disk
+space forces WiredTiger to relocate the whole document — so append cost, which
+looks $O(1)$ in isolation, becomes proportional to the document's current
+size as the array grows. A chat thread with 10 messages appends in constant
+time; the same thread with 50,000 messages embedded pays to move an
+increasingly large document on every single new message, and average append
+latency creeps upward with no code change and no traffic change — just time
+and a growing array.
+
+## Cost & limits
+
+**Index selectivity works the same as any B-tree index, but compound index
+order in MongoDB follows the ESR rule**: **E**quality fields first, then
+**S**ort fields, then **R**ange fields. A query filtering on `status`
+(equality), sorting by `createdAt`, and ranging on `amount` wants the compound
+index `{ status: 1, createdAt: 1, amount: 1 }` — reordering it, even though
+all three fields are still indexed together, can force a full index scan
+instead of a seek.
+
+**A `$lookup` is not a SQL join and does not have SQL's optimizer behind it.**
+It is comparatively expensive, does not benefit from statistics-driven
+planning the way a mature relational planner does, and is the clearest signal
+that a schema has drifted away from the access pattern it was designed for —
+reaching for `$lookup` routinely is usually a sign the embed/reference
+decision should be revisited, not a normal query tool to lean on.
+
+**16 MB per document is a hard ceiling with no override.** Anywhere an
+embedded structure could plausibly be unbounded — user-generated lists,
+audit trails, anything with "and more get added over time" in its
+description — needs a plan for referencing instead of embedding before it's
+needed, because migrating a live collection off an embedded pattern after the
+fact is a full data migration, not a schema tweak.
+
+## When NOT to use it
+
+**Do not choose MongoDB because the data is "relational-adjacent" and you
+want to avoid writing joins.** If your data has many stable many-to-many
+relationships (users to roles to permissions, products to categories), a
+relational database's join is the right tool, and forcing that shape into
+documents via referencing plus `$lookup` gives you the join's cost without
+its optimizer.
+
+**Do not embed an array whose growth is driven by user behaviour rather than
+by a fixed schema.** Comments, likes, event logs, chat messages — anything
+where "more could always be added" describes the field — is a reference, not
+an embed, from day one. The migration cost of discovering this after the
+16 MB ceiling is hit in production is far higher than designing for it up
+front.
+
+**Do not use multi-document transactions as your default consistency
+mechanism.** They exist and they work, but reaching for them routinely is
+usually a sign the schema is fighting the document model rather than working
+with it — a schema well-matched to MongoDB needs them rarely, for genuine
+cross-entity invariants, not as the normal way to keep two documents in sync.
+
+## Real-world usage
+
+Content-management and catalog systems are a strong fit: a product document
+embedding its variants, images, and current price is read as one atomic unit
+on every product page view, and variants/images/price change together rarely
+enough that embedding's write cost is negligible. Event-sourced and
+audit-log systems are the opposite fit and a common mistake — "append an
+event to this entity's history" is exactly the unbounded-array pattern this
+page warns about, and those systems are almost always better served by a
+separate, referenced events collection indexed on the entity id.
+
+## Failure modes
+
+**The document that suddenly can't be written to.** An embedded array with no
+practical ceiling in development (a few comments, a handful of test users)
+crosses 16 MB in production after enough real usage, and the failure is a
+write error on a document that was working fine an hour before — with no
+warning as the document approached the limit.
+
+**The append that got slower for no code reason.** Write-amplification from
+document relocation is invisible until the array is large enough for
+relocation cost to show up in p99 latency, and by the time it's visible in a
+dashboard, the fix (migrate to a referenced pattern) is a data migration on a
+live system rather than a design decision on paper.
+
+**The `$lookup` that doesn't scale like the SQL join it resembles.** A schema
+migrated from a relational mental model, using `$lookup` the way you'd use a
+`JOIN`, tends to perform acceptably at low data volumes and then degrades
+non-linearly as collections grow — because MongoDB's cross-collection query
+planning is not as mature as a relational optimizer's, and the query pattern
+that made this necessary is usually evidence the schema should be redesigned
+rather than the query rewritten.
+
+## Practice problems
+
+**1. A social app embeds a user's posts as an array inside the user document.
+What breaks first as a user becomes popular, and what's the fix?**
+
+The array is unbounded by user behaviour (post count grows without limit),
+so it will eventually hit the 16 MB ceiling and will show write-amplification
+latency creep well before that. Fix: reference posts in a separate collection
+keyed on `userId`, indexed for the common query (`find({ userId }).sort({
+createdAt: -1 })`).
+
+**2. An order document embeds its line items (bounded, ~1-20 per order) and
+its shipment tracking events (unbounded over the order's lifetime). What
+schema change would you make, and why only to one of the two arrays?**
+
+Line items stay embedded — bounded, always read with the order, no
+justification to split them out. Tracking events move to a referenced
+collection keyed on `orderId` — unbounded in principle (retries, carrier
+updates, exceptions can all add events over a long-lived shipment) and rarely
+need to be read alongside the full order document.
+
+**3. A compound index is `{ createdAt: 1, status: 1 }` and a common query
+filters `status = 'active'` and sorts by `createdAt`. Why might this index
+not be used efficiently, and what would you change?**
+
+Violates ESR ordering — the query needs an equality field (`status`) before
+the sort field (`createdAt`), but the index has them reversed. Reorder to
+`{ status: 1, createdAt: 1 }` so the equality filter narrows the index range
+before the sort is applied within it.
+
+<Quiz
+  client:visible
+  id="mongodb-a-document-embeds-an"
+  kind="concept"
+  question="A document embeds an array that has no natural ceiling -- for example, every event in an entity's history. What is the main risk?"
+  options={[
+    { label: "MongoDB automatically converts it to a reference once it grows large" },
+    { label: "It will eventually hit the 16 MB document limit, and writes degrade from relocation cost well before that", correct: true },
+    { label: "Nothing -- MongoDB documents can grow indefinitely without cost" },
+    { label: "The array becomes read-only once it exceeds a few hundred entries" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Unbounded embedded arrays are the classic MongoDB schema mistake: they work fine at small scale, then hit write-amplification as WiredTiger relocates a growing document, and eventually the hard 16 MB per-document ceiling with no override.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"When would you choose MongoDB over Postgres?"** When the natural unit of
+consistency is a single entity with a variable, semi-structured shape read
+and written as a whole — a product catalog entry, a user profile with
+flexible attributes — and where the alternative would be either a wide table
+with many nullable columns or a normalized structure requiring a join on
+every read. The caveat: if the data has stable many-to-many relationships
+that need genuine cross-entity consistency, that's a relational database's
+strength, and forcing it into documents usually means re-deriving joins by
+hand.
+
+**"How do you decide embed vs. reference?"** Ask whether the field can grow
+without a practical bound driven by user behaviour rather than the schema
+itself, and whether it's read together with its parent nearly every time. If
+either answer is "it could grow unboundedly" or "it's often read
+separately," reference it. The caveat that signals real experience: the
+16 MB limit is not the operative constraint in practice — write-amplification
+from document relocation degrades performance well before any document gets
+close to that ceiling, so "it's nowhere near 16 MB" is not the same
+reassurance as "this array is bounded."

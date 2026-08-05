@@ -1,0 +1,266 @@
+---
+title: Indexes, joins, and reading a query plan
+description: >-
+  Why a LEFT JOIN can return more rows than either table has, how the four
+  join types relate as sets, and where the selectivity crossover actually sits
+  — measured, not assumed.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 8-databases-storage/postgres
+  - 5-systems/databases
+tags: [sql, joins, indexes, query-plans, fan-out]
+languages: [sql]
+roles: [backend, data, fullstack]
+sources:
+  - captured-postgres-18
+---
+
+import { JoinVisualiser } from '../../../components/viz/widgets/JoinVisualiser.tsx';
+import { QueryPlanExplorer } from '../../../components/viz/widgets/QueryPlanExplorer.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+[Postgres](/cs-fundamentals/8-databases-storage/postgres/) covers reading a
+single-table plan. Joins are where a plan stops being a lookup strategy and
+becomes a claim about how two sets of rows combine — and the most expensive
+misunderstanding in SQL is treating a join as if it can only ever combine rows
+one-to-one.
+
+It cannot. A join multiplies wherever the join key is not unique on the side
+being joined onto, and that includes the completely ordinary case of a
+one-to-many relationship joined the "wrong" way round. **`LEFT JOIN` does not
+mean "return every row from the left table." It means "return every row from
+the left table at least once."** Those are different guarantees, and the gap
+between them is where a `SUM` computed after a join silently inflates.
+
+## Mechanics
+
+### The four joins as one operation, four filters
+
+<JoinVisualiser client:visible />
+
+The two source tables above are deliberately not unique on the join key —
+department `10` appears twice — and deliberately contain a NULL and an
+unmatched value on each side, so all four traps are visible in one dataset:
+
+- **Fan-out.** Ana's department id matches two rows in `departments`, so she
+  appears twice in the joined output. Four employees, five rows, from the join
+  type that is supposed to "keep every employee." Any aggregate computed after
+  this join — a headcount, a sum — is now wrong for exactly the employees who
+  matched more than once, and the wrong number is still a plausible integer.
+  Nothing about it looks broken.
+- **NULL never matches.** `NULL = NULL` is not `true` in SQL, it is
+  **unknown**, and `WHERE unknown` behaves like `WHERE false`. An employee with
+  no department is excluded from an inner join even if the departments table
+  also contained a row with a NULL id.
+- **Unmatched on either side.** A department nobody works in only survives a
+  `RIGHT JOIN` or `FULL OUTER JOIN`; an employee whose department id points at
+  nothing only survives `LEFT` or `FULL`.
+
+Read the five join types as one operation — match rows where the predicate
+holds — plus a rule for what happens to the leftovers:
+
+| Join | Unmatched left rows | Unmatched right rows |
+|---|---|---|
+| `INNER` | dropped | dropped |
+| `LEFT` | kept, padded with NULL | dropped |
+| `RIGHT` | dropped | kept, padded with NULL |
+| `FULL OUTER` | kept, padded with NULL | kept, padded with NULL |
+| `CROSS` | every pairing, predicate ignored | every pairing, predicate ignored |
+
+`INNER` is the intersection of `LEFT` and `RIGHT`; `FULL OUTER` is their
+union. That relationship is worth checking by eye in the widget above — it
+holds for any two tables, not just this one.
+
+### Fan-out in a real query
+
+The bug this produces reads innocuously:
+
+```sql
+-- "total revenue per customer" -- except customers can have multiple addresses
+SELECT c.id, c.name, SUM(o.amount_cents) AS total
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+JOIN addresses a ON a.customer_id = c.id   -- the mistake
+GROUP BY c.id, c.name;
+```
+
+If a customer has two addresses, every one of their orders is duplicated once
+per address before the `SUM` runs — the `addresses` join was meant to fetch a
+shipping city, not to multiply order rows, and nothing in the syntax warns you.
+The fix is either to aggregate `addresses` down to one row per customer before
+joining, or to move the address lookup into a separate query entirely. The
+detection technique is the one the widget demonstrates: count rows *per left-side
+key* after the join and check for any count above what you expect.
+
+### The selectivity crossover, swept
+
+<QueryPlanExplorer client:visible />
+
+Scroll to the sweep table inside the widget. It answers a question "add an
+index" folklore gets only approximately right: **at what selectivity does the
+planner stop using the index?** Measured on the captured 500,000-row table by
+sweeping a range predicate from 1% to 60% of the value range:
+
+- A query that must **read the table** (`sum(customer_id)`, which is not in
+  the index) abandons the index between **28% and 29%** selectivity.
+- A query answerable **entirely from the index** (`count(*)` on the indexed
+  column) never abandons it — not even at 60%.
+
+The rule of thumb "indexes stop paying past roughly 10% selectivity" is a rule
+about heap access specifically, folded into a rule about indexes generally.
+An index-only workload has a much wider useful range than that folklore
+implies, and a workload that must touch the table has a narrower one — the
+single number hides both facts.
+
+## Cost & limits
+
+**A join's cost is dominated by the smaller side's plan, not the join
+algorithm's name.** Postgres picked `Hash Join` for the 500k×20k order/customer
+join in the capture (build a hash table from the 20k customers, probe it with
+every order) and `Nested Loop` for a heavily-filtered version of the same join
+(loop 61 times over an index, rather than building a hash table for a handful
+of rows). Neither algorithm is "the fast one" in general; each is cheaper for
+the row counts it was chosen for.
+
+**Fan-out multiplies whatever you compute downstream, including cost.** A join
+that inflates 500,000 rows to 2 million rows because of a one-to-many
+relationship costs every subsequent sort, aggregate, and network transfer four
+times over — the multiplication is not free even when the final `SUM` is
+correct.
+
+## When NOT to use it
+
+**Do not add a join to a query whose real need is a lookup on one field.** If
+you only need a department's name for display and don't need to filter or
+aggregate by anything in that table, a follow-up point lookup (or a
+denormalised column) can be simpler and avoid fan-out risk entirely — a join
+is right when you are filtering or aggregating across the relationship, not
+merely displaying a field from it.
+
+**Do not join before aggregating when the join is one-to-many on the side
+you're summing.** Aggregate the many-side down to one row per key first (a
+subquery or CTE with its own `GROUP BY`), then join the pre-aggregated result.
+It is more code and it is correct; joining first and summing after is less
+code and silently wrong exactly when the relationship isn't one-to-one.
+
+**Do not assume `DISTINCT` fixes fan-out.** `SELECT DISTINCT` after a fanned-out
+join removes exact-duplicate rows, which happens to fix the simplest fan-out
+case — but any query selecting a column that differs per duplicate (an
+address id, an order line number) defeats it, because the rows are no longer
+identical. It is a coincidence when `DISTINCT` fixes fan-out, not a mechanism
+for fixing it.
+
+## Real-world usage
+
+Reporting queries — "revenue by customer," "orders by status by day" — are
+where fan-out most often reaches production, because they tend to join several
+one-to-many relationships to pull everything onto one row before aggregating.
+An ORM's `.includes()` or `.with()` eager-loading a `hasMany` association and
+then summing a related field in application code has the identical bug with
+the multiplication happening in a loop instead of a `GROUP BY`.
+
+The selectivity crossover matters most in APIs backing autocomplete or filter
+UIs, where the same query runs with wildly different selectivity depending on
+what the user typed — few characters typed, low selectivity, index declined;
+many characters typed, high selectivity, index used. The same endpoint is
+fast and slow by turns and neither state is a bug.
+
+## Failure modes
+
+**The revenue report that's too high, and nobody notices for a quarter.**
+Fan-out from a forgotten many-to-one join inflates a sum by a factor equal to
+the average fan-out — often a small multiplier (1.1×, 1.3×) that looks like
+normal quarter-over-quarter growth rather than a bug, especially if the
+underlying cardinality (addresses per customer, tags per order) grows slowly
+over time and the error grows with it.
+
+**The query that's fast until the ninth character.** An autocomplete endpoint
+backed by a `LIKE 'prefix%'` query is fast when the index is used (few
+characters, low selectivity, or a leading-anchor pattern the index can use
+directly) and can fall off a cliff once selectivity crosses the point where
+the planner switches strategy — symptom: p50 latency is fine, p99 has a
+step-function jump correlated with query length, not with load.
+
+**The `CROSS JOIN` from a dropped `ON` clause.** A missing or mistyped join
+condition silently becomes a cross join rather than an error in most SQL
+dialects. Symptom: a query that used to return thousands of rows suddenly
+returns billions and either times out or, worse, returns a truncated result
+set that looks plausible. Always check `EXPLAIN` for a `Nested Loop` with no
+join condition and an enormous estimated row count before running an
+unfamiliar join in production.
+
+## Practice problems
+
+**1. A report showing "total orders per customer" returns numbers roughly 1.4×
+too high, consistently. What's the first thing you check?**
+
+A consistent multiplicative inflation (not random noise) points at fan-out
+from a one-to-many join upstream of the count — check every join in the query
+for a side that isn't unique on its join key, most likely a join brought in
+purely to filter or display a field from a related table.
+
+**2. Given `EMPLOYEES` and `DEPARTMENTS` as in the widget above, write the
+query that returns departments with zero employees, and explain which join
+type makes it possible.**
+
+```sql
+SELECT d.name
+FROM departments d
+LEFT JOIN employees e ON e.dept_id = d.id
+WHERE e.id IS NULL;
+```
+
+Requires a join that keeps unmatched right-side departments and pads the left
+columns with NULL — swap the table order and use `LEFT JOIN` from
+`departments`, or keep this order and use `RIGHT JOIN`. The `WHERE e.id IS
+NULL` filters down to exactly the padded rows, which only outer joins produce.
+
+**3. Two range predicates on the same column, one on an indexed range and one
+not: which plan would you expect, and how would you confirm it?**
+
+Expect the planner to weigh the selectivity of each predicate independently
+and combine them — run `EXPLAIN (ANALYZE, BUFFERS)` rather than reasoning from
+the SQL alone, and compare `estimated` to `actual` rows at the scan node. This
+page's whole argument is that the plan is a measured cost decision, not a
+readable consequence of the query text.
+
+<Quiz
+  client:visible
+  id="indexes-and-query-plans-four-employees-left-join"
+  kind="concept"
+  question="Four employees, LEFT JOIN onto a departments table where one department id appears twice. How many rows does the join return?"
+  options={[
+    { label: "Exactly 4, one per employee" },
+    { label: "5 -- the employee matching the duplicated department appears twice", correct: true },
+    { label: "3 -- unmatched employees are dropped" },
+    { label: "8 -- every employee is paired with every department" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>LEFT JOIN preserves every left row AT LEAST once, not exactly once. An employee matching two department rows appears twice, so four employees produce five rows when one department id is duplicated.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's wrong with joining before aggregating?"** Nothing, as long as every
+join on the path to the aggregate is one-to-one or many-to-one from the
+aggregated side's perspective. The bug appears when a join is one-to-many
+relative to what you're summing: each match multiplies the row, and the sum
+inflates by the average fan-out. The caveat that shows you've hit this in
+production: the wrong number is still a believable number, so it typically
+survives code review and gets caught by a stakeholder noticing the totals
+don't reconcile, not by a test.
+
+**"How do you know if a query will use an index?"** You don't, from reading
+the SQL — you run `EXPLAIN (ANALYZE, BUFFERS)` and look at what the planner
+actually chose against the real row counts. Selectivity is the first thing to
+check: an index applicable to a predicate matching most of the table is
+routinely and correctly ignored. The caveat: that decision can flip as the
+data's distribution drifts, so a plan captured once is a snapshot, not a
+guarantee.

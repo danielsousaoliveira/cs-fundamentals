@@ -35,6 +35,10 @@ test('the sidebar is auto-derived and covers all six sections', async ({ page })
     ['SOLID', '6-languages/solid'],
     ['Embeddings', '10-ai-engineering/embeddings'],
     ['Agents', '10-ai-engineering/agents'],
+    ['SQL fundamentals', '7-data-engineering/sql-fundamentals'],
+    ['dbt', '7-data-engineering/dbt'],
+    ['Postgres', '8-databases-storage/postgres'],
+    ['CosmosDB', '8-databases-storage/cosmosdb'],
   ] as const) {
     const link = page.locator(`a[href$="/${page_}/"]:visible`).first();
     await expect(link, `${section} should be reachable from the nav`).toBeVisible();
@@ -84,6 +88,9 @@ test('no page throws a hydration error', async ({ page }) => {
     '5-systems/event-loop/',
     '6-languages/typescript/',
     '10-ai-engineering/embeddings/',
+    '8-databases-storage/postgres/',
+    '8-databases-storage/indexes-and-query-plans/',
+    '8-databases-storage/cosmosdb/',
   ]) {
     await page.goto(url);
 

@@ -426,3 +426,71 @@ test('AgentLoopStepper detects a repeated call and stops', async ({ page }) => {
     'stopped: loop detected',
   );
 });
+
+test('QueryPlanExplorer flips between index used and index declined', async ({
+  page,
+}) => {
+  await page.goto('8-databases-storage/postgres/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  // Default state: no index, so every value is a Seq Scan.
+  await expect(widget.locator('.plan__verdict strong')).toHaveText(/Seq Scan/);
+
+  // Toggle the index on while status stays 'complete' (92% selectivity) --
+  // the planner should still decline it.
+  await widget.getByRole('button', { name: 'CREATE INDEX' }).click();
+  await expect(widget.locator('.plan__verdict')).not.toHaveClass(/--index/);
+
+  // Switch to the rare value: same index, opposite decision.
+  await widget.getByRole('button', { name: 'cancelled' }).click();
+  await expect(widget.locator('.plan__verdict')).toHaveClass(/--index/);
+  await expect(widget.locator('.plan__verdict strong')).toHaveText(/Index/);
+});
+
+test('JoinVisualiser shows fan-out inflating the row count', async ({ page }) => {
+  await page.goto('8-databases-storage/indexes-and-query-plans/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  // INNER JOIN is the default: 3 rows from 4 employees, NULL and the
+  // missing department both dropped.
+  await expect(widget.locator('.join__table--result caption')).toContainText('3');
+
+  await widget.getByRole('button', { name: 'LEFT JOIN' }).click();
+
+  // Four employees, five rows -- the headline fan-out fact.
+  await expect(widget.locator('.join__table--result caption')).toContainText('5');
+  await expect(widget.locator('.join__warning')).toContainText('Ana');
+});
+
+test('PartitionKeyExplorer trades distribution against query routing', async ({
+  page,
+}) => {
+  await page.goto('8-databases-storage/cosmosdb/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  // /tenantId is the default: skewed, but routes most sample queries.
+  const skewBefore = await widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'skew' })
+    .locator('.viz-counters__value')
+    .innerText();
+
+  await widget.getByRole('button', { name: '/id' }).click();
+
+  // /id spreads far more evenly...
+  const skewAfter = await widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'skew' })
+    .locator('.viz-counters__value')
+    .innerText();
+  // Rendered as e.g. "5.64×" -- parseFloat stops at the suffix, Number() would not.
+  expect(parseFloat(skewAfter)).toBeLessThan(parseFloat(skewBefore));
+
+  // ...and routes fewer of the sample queries -- the axis it loses on.
+  const routableAfter = await widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'queries routable' })
+    .locator('.viz-counters__value')
+    .innerText();
+  expect(Number(routableAfter)).toBe(1);
+});

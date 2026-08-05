@@ -1,0 +1,242 @@
+---
+title: CosmosDB and partition keys
+description: >-
+  Why the best-distributing partition key is often the wrong one, how RU/s
+  gets divided among partitions you don't control, and the migration you
+  can't avoid once a key choice turns out wrong.
+sidebar:
+  order: 4
+difficulty: core
+status: complete
+prereqs:
+  - 2-data-structures/hash-tables
+  - 8-databases-storage/mongodb
+tags: [cosmosdb, partitioning, ru, azure, hot-partition]
+languages: [typescript]
+roles: [backend, cloud, data]
+sources:
+  - ms-learn-cosmos-partitioning
+---
+
+import { PartitionKeyExplorer } from '../../../components/viz/widgets/PartitionKeyExplorer.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Every document in a CosmosDB container has a partition key, and every
+partition key value hashes to exactly one **logical partition** — a set of
+documents CosmosDB always stores and scales together. Several logical
+partitions share one **physical partition**, and physical partitions are what
+actually get provisioned throughput and disk. You don't choose physical
+partitions; CosmosDB manages them. You choose the partition key, and the
+partition key decides everything downstream of it.
+
+The trap is that throughput is provisioned per **container** and consumed per
+**physical partition** — evenly divided among them, regardless of where
+traffic actually goes. A container "has" 10,000 RU/s the way a restaurant
+"has" fifty seats: fine on average, useless the moment everyone wants the
+same table. Pick a key that concentrates load on one partition and you can be
+throttled while your container-level metrics show 20% utilization, because
+the metric that would explain it is per-partition, and nobody looks there
+until something's already on fire.
+
+Worse: [Microsoft's own
+documentation](https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview)
+states the partition key is immutable. Get it wrong, and the fix is migrating
+every document to a new container with a different key — not a schema change,
+a data migration.
+
+## Mechanics
+
+<PartitionKeyExplorer client:visible />
+
+The widget hashes 2,000 sample documents — one large tenant, several
+mid-sized, and a long tail, with 60% of writes landing on the most recent
+day — across 12 physical partitions, using a real FNV-1a hash (not CosmosDB's
+internal scheme, but the property under test — uniform spread of distinct
+values, none for repeated ones — is a property of hashing generally, not of
+one vendor's implementation).
+
+Two things to try, in order:
+
+**Switch between `/tenantId` and `/id`.** `/id` distributes almost perfectly
+— skew near 1.0, every partition used. It also answers only one of the four
+sample queries without a cross-partition fan-out, because none of the other
+three filter by `id`. This is [named directly in Microsoft's
+guidance](https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview)
+as a common anti-pattern: *"a high-cardinality key isn't enough by itself... if
+you use a random GUID that your queries never filter on, most reads become
+cross-partition queries even though writes distribute well."* Distribution and
+query alignment are two different axes, and the widget deliberately shows both
+at once — there is no key in the list that wins on both.
+
+**Switch to `/day`.** 70% of documents land on one partition. At 10,000
+provisioned RU/s, that partition's real demand exceeds its even 1/12 share,
+and the widget reports the container throttled while using roughly a tenth of
+what's being paid for.
+
+### Cardinality alone doesn't fix skew
+
+Try `/tenantId_day` — a synthetic key composing the two fields. Cardinality
+jumps from 10 distinct tenant values to 50 composite values, and all 12
+partitions get used. Skew barely improves relative to `tenantId` alone,
+because the single biggest tenant's busiest day is *still* one value hashing
+to one partition — composing fields raises cardinality without necessarily
+flattening the underlying traffic shape that caused the skew.
+
+## Cost & limits
+
+Two hard ceilings, from [Microsoft Learn, "Partitioning and horizontal
+scaling in Azure Cosmos
+DB"](https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview)
+(page last updated 2026-06-15, read 2026-08-05 — check the current page before
+relying on these, quotas move):
+
+- **20 GB** per logical partition. All documents sharing one partition key
+  value share this ceiling, no matter how much total throughput or storage
+  the container has.
+- **10,000 RU/s** per physical partition. Because a logical partition maps to
+  exactly one physical partition, this is also a *logical* partition's
+  ceiling — one hot key value cannot be rescued by provisioning more
+  throughput for the container. Past this point, the fix is a different key,
+  not a bigger budget.
+
+**Provisioned throughput divides evenly across physical partitions,
+regardless of where the traffic actually goes.** At 10,000 RU/s across 12
+physical partitions, each gets roughly 833 RU/s of "fair share" — a partition
+demanding more than that throttles with `429` responses even while eight
+other partitions sit nearly idle and the container-level RU consumption graph
+looks unremarkable.
+
+## When NOT to use it
+
+**Do not choose the highest-cardinality field as the partition key without
+checking it against your actual query patterns.** `/id` or a random GUID
+distributes beautifully and answers almost nothing without a cross-partition
+fan-out — appropriate only for workloads that are genuinely point-read/point-write
+dominated with few broader filters.
+
+**Do not choose a low-cardinality field (`status`, `country`, a boolean) as
+the sole key for anything beyond a small container.** [Microsoft's own
+guidance](https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview)
+names this directly: it works "only when data volume is small and traffic per
+value stays well below logical partition limits" — otherwise it's a
+guaranteed hot partition once volume grows.
+
+**Do not use a time-based key (`day`, `hour`) for a write-heavy container.**
+All current writes land on the newest value by construction, concentrating
+100% of write traffic on whichever partition that value hashes to, regardless
+of how many partitions exist.
+
+## Real-world usage
+
+Multi-tenant SaaS backends are the canonical CosmosDB use case and the
+canonical place this goes wrong: `tenantId` looks like the obviously correct
+key (data isolation, natural query boundary), and it is right up until one
+customer's usage outgrows what a single partition can serve — at which point
+the fix is a synthetic key (`tenantId` combined with something that further
+subdivides a large tenant's data) decided before that tenant exists, because
+retrofitting it means a live migration.
+
+IoT and telemetry ingestion is the other common shape, and the trap there is
+usually a device or sensor id as the key: fine until one device (a gateway
+aggregating many sensors, a popular consumer device model) generates
+disproportionate volume, at which point that one logical partition hits its
+20 GB or 10,000 RU/s ceiling while every other partition has headroom.
+
+## Failure modes
+
+**The container that's throttled and "underutilized" at the same time.**
+Container-level RU consumption metrics average across all physical
+partitions, so a single hot partition can be maxed out and returning `429`s
+while the container-wide graph shows 15% utilization. Detect it with
+per-partition metrics (`x-ms-documentdb-partitionkeyrangeid` in diagnostics),
+not the container-level dashboard, which is exactly the metric most teams
+have alerts on.
+
+**The migration nobody budgeted for.** A partition key chosen for
+convenience early on works fine at low volume and becomes unfixable in place
+once one key value's data or traffic outgrows a single partition's ceiling —
+the fix is provisioning a new container with a different key and migrating
+every document, live, with no atomic cutover. Symptom: a "quick schema fix"
+ticket that turns into a multi-week data migration project.
+
+**The query that fans out to every partition and nobody notices until the
+bill arrives.** A query that doesn't filter on the partition key is a valid
+CosmosDB query — it just costs a fan-out request to every physical partition
+plus 2-3 RU per partition of overhead, silently, on every single call.
+Symptom: RU consumption that scales with the number of physical partitions
+the container has grown to, not with the query's actual selectivity — a query
+that cost 5 RU at launch costs 40 RU after the container has grown to 15
+partitions, with no change to the query itself.
+
+## Practice problems
+
+**1. A container partitioned on `/userId` throttles during a flash sale even
+though most users aren't buying anything. What's happening?**
+
+Almost certainly not a `/userId` skew problem specifically — check whether
+the *queries* during the sale filter on something other than `userId` (a
+product id, a sale id), forcing cross-partition fan-out under load that adds
+per-partition overhead on every request, compounding with whatever base load
+already existed.
+
+**2. Given the tenant weights in the widget (one tenant at 45%, a long tail
+below), estimate the RU/s at which that tenant's partition starts throttling,
+if the container is provisioned at 20,000 RU/s across 12 partitions.**
+
+Even share per partition: 20,000 / 12 ≈ 1,667 RU/s. That tenant's real
+demand at 45% of traffic: 20,000 × 0.45 = 9,000 RU/s — over five times its
+even share, so it throttles almost immediately regardless of how much total
+throughput the container has, unless enough of that 45% happens to land on
+other tenants' partitions too (a composite key would need to spread it).
+
+**3. Why doesn't switching from `/tenantId` to `/tenantId_day` fully fix the
+skew in the widget, even though it raises cardinality from 10 to 50?**
+
+The largest tenant's traffic concentrates on the newest day *for that
+tenant too* — so the composite key's hottest value is still "biggest tenant,
+today," which still hashes to one partition. Raising cardinality spreads the
+*tail* of smaller tenant/day combinations across more partitions without
+splitting the concentration at the head.
+
+<Quiz
+  client:visible
+  id="cosmosdb-a-partition-key-spreads"
+  kind="concept"
+  question="A partition key spreads documents almost perfectly across all physical partitions -- skew close to 1.0. What must you still check before adopting it?"
+  options={[
+    { label: "Nothing -- perfect distribution is always the right choice" },
+    { label: "Whether the queries you actually run filter on that key, or fall back to an expensive cross-partition fan-out", correct: true },
+    { label: "Whether the key is a string or a number" },
+    { label: "Whether the container has enough replicas" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Distribution and query routing are separate axes. A key like /id distributes perfectly and answers almost no real query without a fan-out across every physical partition -- Microsoft's own guidance names this as a common anti-pattern.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How do you choose a CosmosDB partition key?"** Score it on two axes:
+whether it spreads storage and RU consumption evenly across logical
+partitions, and whether it appears as an equality filter in the queries you
+actually run most often. Neither alone is sufficient — a key that spreads
+perfectly but that queries never filter on forces cross-partition fan-out on
+every read; a key that matches every query but concentrates traffic on one
+value creates a hot partition no amount of provisioned throughput fixes. The
+caveat that shows real experience: the key is immutable once chosen, so this
+decision has to be made with the traffic shape you'll have at scale in mind,
+not the traffic shape in the first month.
+
+**"What causes a hot partition, and how do you detect it?"** Traffic
+concentrating on one partition key value disproportionately to its 1/N even
+share of provisioned throughput — commonly from a skewed real-world
+distribution (one big customer, one popular item) or a time-based key
+concentrating all current writes. Detect it with per-partition RU metrics,
+not container-level ones, because the container-level number averages the
+hot partition away. The caveat: it's a 10,000 RU/s ceiling per *physical*
+partition, and because one logical partition maps to exactly one physical
+partition, that ceiling applies to the logical partition too — you cannot buy
+your way past it by provisioning more container-level throughput.

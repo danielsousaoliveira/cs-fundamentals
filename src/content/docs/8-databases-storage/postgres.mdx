@@ -1,0 +1,378 @@
+---
+title: PostgreSQL in production
+description: >-
+  What EXPLAIN actually says once you know where the loops divide, why VACUUM
+  is not optional, and how a table can be 500,000 rows and still choose to scan
+  every one of them — correctly.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/databases
+  - 1-complexity/big-o
+tags: [postgres, explain, vacuum, mvcc, query-planner, statistics]
+languages: [sql]
+roles: [backend, data, cloud, fullstack]
+sources:
+  - captured-postgres-18
+---
+
+import { QueryPlanExplorer } from '../../../components/viz/widgets/QueryPlanExplorer.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+[Databases](/cs-fundamentals/5-systems/databases/) covers the idea of an index:
+pay on write, save on read, $O(\log n)$ instead of $O(n)$. This page is about
+what happens once that idea meets a real planner — because the planner does not
+trust the idea. It costs both options and picks the cheaper one, and "cheaper"
+depends on facts about your data that change underneath you.
+
+The result is a machine that looks capricious from outside: the same index, the
+same table, and the planner reaches opposite conclusions depending on the value
+you searched for. That is not a bug and it is not Postgres being clever for
+cleverness's sake — it is the correct answer to a cost question, and the
+`QueryPlanExplorer` below shows the arithmetic behind it rather than asking you
+to trust it.
+
+Two things this page adds that "indexes make lookups faster" leaves out:
+
+- **The planner estimates before it runs anything**, from statistics it
+  collected the last time you ran `ANALYZE`. If those statistics are wrong —
+  stale, or built on a false independence assumption — the *decision* is wrong
+  even though the *index* is fine.
+- **An index does not mean "skip the table."** Reading through an index still
+  usually means visiting the table row by row, in whatever order the index
+  says. Only a narrower thing — an index-only scan — avoids that, and it has
+  its own precondition that quietly stops holding after writes.
+
+## Mechanics
+
+### Reading a real plan
+
+Every plan on this page is real: captured from PostgreSQL 18.1 with
+`EXPLAIN (ANALYZE, BUFFERS)` against a 500,000-row `orders` table, using
+[`scripts/capture-query-plans.sh`](https://github.com/danielsousaoliveira/cs-fundamentals/blob/main/scripts/capture-query-plans.sh)
+in this project's repository. The table is shaped on purpose:
+
+```sql
+-- status is 92% 'complete', 5% 'pending', 2% 'refunded', 1% 'cancelled'.
+-- status and country are deliberately anti-correlated.
+CREATE TABLE orders (
+  id int PRIMARY KEY,
+  customer_id int NOT NULL,
+  status text NOT NULL,
+  amount_cents int NOT NULL,
+  country text NOT NULL,
+  created_at timestamptz NOT NULL
+);
+```
+
+<QueryPlanExplorer client:visible />
+
+Pick `no index` / `cancelled` and then `CREATE INDEX` / `complete`, in that
+order. The second combination is the one to sit with: **the index exists, it
+applies to the query, and Postgres declines to use it.** Reading every row in
+physical order costs less than following 460,000 pointers into essentially the
+same pages the sequential scan would have read anyway. The index is not broken
+— it is correctly unhelpful for a value that matches 92% of the table.
+
+The tree the widget renders is exactly what `EXPLAIN` prints, with two
+translations applied that catch almost everyone the first time:
+
+- **`Actual Rows` is per loop, not total.** A parallel plan launches workers,
+  and the row count is the average *one worker* saw. A node reporting
+  `rows=153,333 loops=3` produced 460,000 rows, not 153,333. Multiply before
+  you compare it to anything.
+- **Time is inclusive of children.** A top-level `Aggregate` always looks like
+  the slowest node in the plan because everything happens beneath it. The
+  widget subtracts child time so the bar you see is *this node's own* share.
+
+### VACUUM and the visibility map
+
+Postgres never overwrites a row in place. An `UPDATE` writes a new row version
+and marks the old one dead; a background process — autovacuum, or `VACUUM` run
+by hand — reclaims the dead versions and, critically, updates the
+**visibility map**: a bit per page recording "every row on this page is visible
+to everyone, so a query does not need to check."
+
+That bit is what makes an **index-only scan** possible. The name promises the
+table is never touched, but the promise only holds where the visibility map
+says so. A freshly bulk-loaded table has an empty visibility map, so Postgres
+will not choose an index-only scan no matter how good the index is — it falls
+back to a bitmap heap scan instead, silently, with no error and no warning.
+
+Captured on the same table, before and after a no-op `UPDATE` that changes no
+values:
+
+```text
+-- clean, freshly VACUUMed
+Index Only Scan using idx_orders_cust_amt on orders
+  Heap Fetches: 0
+  Buffers: shared hit=4
+  Execution Time: 0.058 ms
+
+-- after UPDATE orders SET amount_cents = amount_cents WHERE customer_id = 4242
+Index Only Scan using idx_orders_cust_amt on orders
+  Heap Fetches: 50
+  Buffers: shared hit=38
+  Execution Time: 0.137 ms
+```
+
+Same query, same plan, same data. The heap fetches and the buffer count both
+jumped because the `UPDATE` — even one that changed nothing — dirtied the
+visibility map for those pages, and every read pays for it until the next
+`VACUUM` clears it.
+
+### Extended statistics and correlated columns
+
+By default the planner estimates a compound predicate by multiplying the
+selectivities of its parts, which assumes the columns are independent. On this
+table `status` and `country` are deliberately not:
+
+```text
+SELECT count(*) FROM orders WHERE status = 'cancelled' AND country = 'PT'
+-- before CREATE STATISTICS
+Index Scan using idx_orders_status on orders
+  Index Cond: (status = 'cancelled'::text)
+  Filter: (country = 'PT'::text)
+  Rows Removed by Filter: 5000
+  (estimated 681 rows, actual 0)
+```
+
+681 estimated, zero actual — not close, not "a bit optimistic", off by an
+estimate that clamps to a nonexistent match. `CREATE STATISTICS` tells the
+planner to stop assuming independence and measure the real joint distribution:
+
+```sql
+CREATE STATISTICS stx_status_country (dependencies, mcv)
+  ON status, country FROM orders;
+ANALYZE orders;
+```
+
+```text
+-- after
+Index Scan using idx_orders_status on orders
+  (estimated 1 row, actual 0)
+```
+
+Not zero — Postgres clamps row estimates at 1 — but from 681 to 1 is the
+difference between "wildly wrong" and "as close as a row-count estimate is
+allowed to get." Nothing about the data changed. The planner just stopped
+guessing and started measuring.
+
+### Stale statistics
+
+`ANALYZE` is what populates the statistics the planner reasons from, and it is
+not automatic the instant data changes — autovacuum triggers it on a threshold
+of changed rows, so a table that goes from empty to 500,000 rows in one bulk
+load can sit with statistics describing an empty table until autovacuum
+catches up:
+
+```text
+-- 500,000 rows just loaded, before ANALYZE
+Seq Scan on fresh  (estimated 624 rows, actual 460,000)
+
+-- immediately after ANALYZE fresh
+Seq Scan on fresh  (estimated 191,236 rows, actual 460,000)
+```
+
+The query plan does not change here — both are sequential scans, correctly, on
+a table this size — but on a larger or differently-shaped table, a stale
+`estimated 624` can make the planner choose a nested loop it would never choose
+knowing the true row count, and that choice degrades from "fine" to
+"catastrophic" as the real row count grows past what the stale estimate
+implied.
+
+## Cost & limits
+
+**Buffers, not milliseconds, are the number to trust across environments.**
+Wall-clock time in the transcripts above is from one machine on one run and
+will not reproduce on yours — CPU speed, cache state, and concurrent load all
+move it. Blocks read (`Buffers: shared hit=N`) is a property of the plan
+itself: run the same plan twice and it barely moves. When comparing two plans,
+compare buffers first.
+
+The measured cost difference on this table's data: touching the table via the
+index for a 1%-selectivity value costs about **8 buffers** (64 KB); a
+sequential scan of the same table costs **4,160 buffers** (32.5 MB) regardless
+of what fraction matches. That fixed cost is why sequential scan wins as
+selectivity rises — it is buying a constant amount of I/O no matter the
+predicate, while an index-driven scan's cost rises with the number of matches.
+
+The crossover, measured by sweeping selectivity from 1% to 60% on this
+dataset: a query that must **visit the heap** abandons the index between 28%
+and 29% selectivity. A query answerable **entirely from the index**
+(`count(*)` on an indexed column) never abandons it, through the full sweep to
+60%. The familiar rule "indexes stop paying above roughly 10% selectivity" is
+really a rule about heap access, and conflating the two makes an index-only
+workload look worse than it is.
+
+## When NOT to use it
+
+**Do not add an index to fix a slow query without checking selectivity
+first.** If the predicate matches a large share of the table, Postgres will
+add the index, keep it in sync on every write, and then decline to use it for
+exactly the query you built it for — you pay the write cost and get none of
+the read benefit.
+
+**Do not trust `EXPLAIN` without `ANALYZE`.** Plain `EXPLAIN` shows the
+planner's *estimate* — what it expects to do — not what it did. A query can
+have a perfectly reasonable-looking plan and a catastrophic actual runtime
+because the estimate was wrong; only `ANALYZE` (which actually executes the
+query) surfaces that gap. Never run `EXPLAIN ANALYZE` against a write query in
+production without wrapping it in a transaction you roll back — it executes
+the query for real.
+
+**Do not reach for `CREATE STATISTICS` before checking for a simpler cause.**
+Correlated-column misestimates are one specific failure among several —
+plain stale statistics, an out-of-date most-common-values list, or a
+genuinely unusual predicate are all more common and are fixed by `ANALYZE`
+alone. Reach for extended statistics only after confirming the columns really
+are dependent and `ANALYZE` alone did not close the gap.
+
+**Do not rely on `VACUUM` running "eventually" on a write-heavy table you also
+read latency-sensitively.** Autovacuum is tuned for average tables; a table
+with a hot recently-written subset can have that subset's visibility map
+perpetually dirty, silently downgrading every index-only scan on it into a
+regular one. Tune `autovacuum_vacuum_scale_factor` down for that table, or
+`VACUUM` it on a schedule, rather than assuming the defaults keep pace.
+
+## Real-world usage
+
+Every OLTP backend behind a REST or GraphQL API talks to something like this
+table shape: a status column with a skewed distribution, a handful of foreign
+keys, one or two range predicates on timestamps. The plan flips this page
+walks through — sequential for the common status, indexed for the rare ones —
+is the single most common source of a "why did this query suddenly get slow"
+incident, because the flip is triggered by data distribution changing, not by
+a deploy. A status column that used to be 50/50 and drifts to 95/5 as a system
+matures moves the planner's decision without anyone touching the schema.
+
+`pg_stat_user_indexes` — queried live from this project's capture — shows what
+each index actually costs to keep:
+
+```text
+ indexrelname          | size    | idx_scan
+------------------------+---------+----------
+ orders_pkey            | 11 MB   | 1
+ idx_orders_cust_amt    | 8.2 MB  | 3
+ idx_orders_amt         | 5.5 MB  | -
+ idx_orders_status      | 3.4 MB  | 4
+```
+
+An index with `idx_scan = 0` after a representative period of production
+traffic is a pure cost: it slows every write to that table and returns nothing
+in exchange. Checking this view periodically is the cheapest maintenance task
+on this page.
+
+## Failure modes
+
+**The "it works on staging" plan flip.** Staging has a thousand rows; the
+predicate that matches 92% of a 500,000-row production table matches 92% of a
+thousand-row table too, but the fixed cost of a sequential scan is so small at
+that size that the planner's choice barely matters. The flip to "decline the
+index" only becomes visible in production, precisely when it is most
+expensive to diagnose. Symptom: a query that was fast in every environment
+until it wasn't, with no code change and no deploy in the window.
+
+**The dirtied-visibility-map latency creep.** An index-only scan that degrades
+to fetching from the heap does not error and does not change its plan — the
+node is still labelled `Index Only Scan`. The only visible symptom is
+`Heap Fetches` climbing in `EXPLAIN (ANALYZE)` output and latency drifting
+upward on a query nobody touched. Detect it by watching `Heap Fetches` in
+logged slow-query plans, not by watching for a plan change, because there
+isn't one.
+
+**The correlated-predicate silent misestimate.** A join or filter downstream
+of a badly-estimated node inherits the bad estimate and can choose a nested
+loop over what should have been a hash join, turning a millisecond query into
+a multi-second one. The symptom is a slow query whose individual predicates
+each look selective and reasonable — the interaction between them is where the
+estimate breaks, and that interaction does not show up until you diff the
+`estimated` and `actual` row counts in the plan.
+
+**Long-running transactions blocking VACUUM.** A transaction left open —
+often an ORM connection pool holding a transaction across a slow external
+call — prevents Postgres from reclaiming dead row versions newer than that
+transaction's snapshot, no matter how often `VACUUM` runs. Table and index
+bloat grow unbounded until the transaction closes. Symptom: `VACUUM` runs
+report "0 dead tuples removed" repeatedly, table size grows without a
+corresponding row-count increase, and `pg_stat_activity` has a transaction
+open far longer than any query it is running would justify.
+
+## Practice problems
+
+**1. Given this plan, what would you check first?**
+
+```text
+Seq Scan on events  (estimated 850, actual 2,400,000)
+  Filter: (event_type = 'purchase')
+```
+
+Estimate off by nearly three orders of magnitude on a filter that should be a
+straightforward equality lookup — check when `ANALYZE` last ran on `events`
+before touching indexes or query structure. A misestimate this large is
+almost never fixed by a better index; it needs correct statistics first, or
+any index chosen on top of it will be chosen for the wrong reasons.
+
+**2. An index-only scan is reporting `Heap Fetches: 40,000` on a table with
+2 million rows. Diagnose it.**
+
+`Heap Fetches` should be near zero on a healthy index-only scan; 40,000 on a
+2M-row table means roughly 2% of the pages this scan touched had a dirty
+visibility map. Check whether autovacuum is keeping pace — `pg_stat_user_tables.n_dead_tup`
+and `last_autovacuum` — and whether a long-running transaction is blocking it
+from reclaiming and re-marking those pages.
+
+**3. `WHERE status = 'active' AND region = 'eu-west'` estimates 40,000 rows
+and returns 4. Both columns are indexed individually. What's the fix, and
+what would you check before applying it?**
+
+This is the independence-assumption failure: the planner multiplied two
+selectivities that are not actually independent. Before reaching for
+`CREATE STATISTICS (dependencies, mcv) ON status, region`, confirm the columns
+really do correlate in this table (most active rows might genuinely cluster
+in one region) rather than this being a one-off outlier — extended statistics
+cost maintenance overhead on every subsequent `ANALYZE` and are worth paying
+for only when the correlation is real and this query runs often.
+
+<Quiz
+  client:visible
+  id="postgres-an-index-exists-on"
+  kind="concept"
+  question="An index exists on `status`, the query filters on `status = 'complete'`, and Postgres uses a sequential scan anyway. What is the most likely explanation?"
+  options={[
+    { label: "The index is corrupted and needs REINDEX" },
+    { label: "'complete' matches a large share of the table, so reading it sequentially costs less than following that many index pointers", correct: true },
+    { label: "Postgres never uses indexes for equality predicates" },
+    { label: "The table needs VACUUM before the index will be considered" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>A high-selectivity match (most of the table) makes a sequential scan cheaper than an index scan, because the index scan still pays for reading nearly the whole table -- just via a slower access pattern. This is a correct planner decision, not a broken index.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How would you debug a slow query?"** Run `EXPLAIN (ANALYZE, BUFFERS)`, not
+plain `EXPLAIN` — you need actual row counts and actual timing, not just the
+plan the optimizer intends. Compare `estimated` to `actual` at the node where
+they diverge most; that is where the wrong decision was made, and everything
+downstream of it inherited the error. Check `Buffers` before wall-clock time,
+because buffers are stable across runs and machines. The caveat that shows
+you've actually done this: **`EXPLAIN ANALYZE` executes the query.** Wrap
+anything that writes in a transaction you roll back, or you will have
+debugged a slow query by running it again in production.
+
+**"When would you add an index, and when would you not?"** Add one when the
+predicate is selective — matches a small share of rows — and the query runs
+often enough that the write-time cost is worth it. Don't add one to "fix" a
+query whose predicate matches most of the table; the planner will build the
+index, maintain it on every write, and then correctly decline to use it,
+leaving you with pure overhead. The caveat: selectivity is a property of the
+*data*, and data distributions drift — a column that was 20% one value at
+launch can become 90% that value two years later, so an index decision made
+once is worth revisiting, not set-and-forget.

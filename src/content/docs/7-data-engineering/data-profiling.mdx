@@ -1,0 +1,254 @@
+---
+title: Data profiling
+description: >-
+  What to measure before trusting a new dataset — cardinality, null rate, and
+  the mean-vs-median gap that tells you whether "average" is even a
+  meaningful number for this column.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/sql-fundamentals
+tags: [data-profiling, data-quality, cardinality, distribution]
+languages: [sql, python]
+roles: [data]
+sources:
+  - captured-postgres-18
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Data profiling is running a fixed checklist of questions against a dataset
+*before* building anything on top of it — not because any single answer is
+surprising, but because skipping the checklist means discovering the answers
+one production incident at a time instead. "What's the null rate on this
+column," "how many distinct values does this key have," "is the mean close
+to the median" are boring questions with a specific purpose: each one rules
+out a category of assumption that would otherwise get baked silently into a
+pipeline, a join, or a report.
+
+The checklist matters more than any individual finding, because the failure
+mode isn't "the data is bad" — it's "an assumption about the data was wrong,
+and nothing checked it."
+
+## Mechanics
+
+### The five questions that catch the most, captured on a real table
+
+```sql
+SELECT
+  count(*)                                              AS total,
+  count(*) FILTER (WHERE amount_cents IS NULL)          AS null_amount,
+  count(DISTINCT customer_id)                           AS distinct_customers,
+  min(amount_cents), max(amount_cents),
+  round(avg(amount_cents))                              AS mean_amt,
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY amount_cents) AS median_amt
+FROM orders;
+```
+
+```text
+ total  | null_amount | distinct_customers | min | max   | mean  | median
+--------+-------------+---------------------+-----+-------+-------+-------
+ 500000 |           0 |              20000 | 100 | 90099 | 45099 | 45099
+```
+
+**Cardinality relative to row count** — 20,000 distinct customers across
+500,000 orders means 25 orders per customer on average, which tells you
+`orders` is a many-to-one child of `customers` before you've read a single
+foreign key constraint, and sets an expectation for join fan-out
+([Indexes, joins, and query
+plans](/cs-fundamentals/8-databases-storage/indexes-and-query-plans/) covers
+what happens when that expectation is wrong).
+
+**Null rate** — zero here, but a column profiled at 15% null changes how you
+write every downstream query against it: an aggregate that silently drops
+nulls, a join that silently excludes them, a `WHERE column != x` that
+silently excludes them too ([SQL
+fundamentals](/cs-fundamentals/7-data-engineering/sql-fundamentals/) covers
+why).
+
+**Mean versus median** — nearly identical here (45,099 vs 45,099), which is
+the signature of a roughly uniform or symmetric distribution. A column where
+these diverge sharply — mean far above median — signals a right-skewed
+distribution with outliers pulling the mean up, and "average order value" as
+a single number becomes actively misleading for that column: most orders
+cluster well below the mean, and the mean is being dragged upward by a
+minority of large ones.
+
+### Detecting the skew that makes "average" lie
+
+```sql
+SELECT
+  round(avg(amount_cents)) AS mean_amt,
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY amount_cents) AS p50,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY amount_cents) AS p95,
+  max(amount_cents) AS max_amt
+FROM orders;
+```
+
+A large gap between `p50` and `p95` — the median order versus the 95th
+percentile order — quantifies skew directly, and is a stronger signal than
+mean-vs-median alone: it tells you not just *that* the distribution is
+skewed but *how much* of the tail is doing the pulling. A dataset with
+`p50 = 45,000` and `p95 = 89,000` has a genuinely wide but roughly
+proportional spread; one with `p50 = 5,000` and `p95 = 89,000` has a small
+core of typical values and a long tail of outliers that a single "average"
+figure would badly misrepresent.
+
+### Referential integrity, checked rather than assumed
+
+```sql
+-- orders whose customer_id has no matching row in customers
+SELECT count(*) FROM orders o
+LEFT JOIN customers c ON c.id = o.customer_id
+WHERE c.id IS NULL;
+```
+
+A foreign key *constraint* enforces this going forward; profiling checks
+whether it already holds on data that predates the constraint, was loaded
+around it (bulk imports often are), or arrived from a source system that
+never had one. A non-zero count here means every join against `customers`
+using an inner join is silently dropping some orders — worth knowing before
+building a report on top of that join, not after the totals don't
+reconcile.
+
+## Cost & limits
+
+**Profiling a large table with `COUNT(DISTINCT ...)` can be expensive** —
+exact distinct counting requires the database to materialize and deduplicate
+every value, which on a very large table can be slow enough that an
+approximate method (`HyperLogLog`-based estimators, available as an
+extension in Postgres and built into most warehouses) is the practical
+choice for a first-pass profile, with an exact count reserved for columns
+where the precise number actually matters.
+
+**Profile a sample for exploration, profile the full dataset before trusting
+a pipeline design decision on it.** A sample's null rate and distribution
+shape are usually a good enough guide for initial exploration and are not a
+substitute for checking the real numbers before something depends on them —
+a rare-but-real edge case (a null rate of 0.01%, an occasional negative
+value) can be entirely absent from a sample and still break a pipeline in
+production.
+
+## When NOT to use it
+
+**Do not skip profiling because the schema "looks fine."** A schema with a
+`NOT NULL` constraint on paper and rows loaded around it via a bulk import
+that bypassed constraint checking is a real and common way for "the schema
+guarantees this" to be false in practice — profiling checks what the data
+actually is, not what it's supposed to be.
+
+**Do not treat a one-time profiling pass as sufficient for an ongoing
+pipeline.** A dataset's characteristics — null rate, cardinality,
+distribution — can drift as upstream systems change; profiling once at
+pipeline design time catches the initial state, not a slow drift months
+later. That ongoing check is what [data quality
+frameworks](/cs-fundamentals/7-data-engineering/data-quality-frameworks/)
+formalize.
+
+**Do not report a single "average" for a column you haven't checked for
+skew.** If mean and median diverge meaningfully, report both, or report a
+distribution (percentiles, a histogram) instead of collapsing it to one
+number that misrepresents most of the data.
+
+## Real-world usage
+
+Profiling a new data source is standard practice before building a pipeline
+or a model on top of it — checking null rates, cardinality, and value ranges
+against what the source's documentation (or the person who sent it) claims,
+because the claim and the reality diverge often enough that checking is
+cheaper than debugging the divergence downstream. It's equally standard
+practice on an *existing* pipeline's output after any upstream change, to
+catch a schema or distribution shift before it reaches a report.
+
+## Failure modes
+
+**The "average" that describes almost nobody.** A skewed distribution
+reported as a single mean value (average order size, average session
+length) describes a number very few actual rows are close to — a business
+decision made against that average can be systematically wrong for the
+majority of actual cases, and nothing in the number itself signals that it's
+misleading.
+
+**The silent join loss nobody profiled for.** An inner join against a table
+with unenforced or violated referential integrity drops rows with no error
+and no warning — a report built on that join is quietly incomplete, and the
+gap is invisible unless someone profiles for orphaned foreign keys
+specifically, because the query runs successfully and returns a plausible
+result.
+
+**The null rate that changed after a deploy, undetected.** An upstream
+system change that starts leaving a field empty more often doesn't break
+anything downstream immediately — aggregates that ignore nulls keep running,
+just producing quietly different numbers — until someone happens to check
+the null rate again and finds it's moved.
+
+## Practice problems
+
+**1. A column's mean is 500 and its median is 50. What does this tell you,
+and what would you check next?**
+
+Strong right skew — a small number of large values are pulling the mean well
+above where most of the data actually sits. Check the 95th and 99th
+percentiles and the maximum value to see how extreme the tail is, and
+whether the largest values are legitimate outliers or data errors (a
+misplaced decimal, a unit mismatch) before deciding how to handle them.
+
+**2. `COUNT(DISTINCT customer_id)` on a 2-billion-row event table is taking
+minutes to run. What would you try instead for an exploratory first pass?**
+
+An approximate distinct count (`HyperLogLog`, or the database's built-in
+approximate aggregate if it has one) trades a small, bounded error for a
+massive speed improvement — appropriate for "roughly how many distinct
+customers" during exploration, not for a number that needs to be exact.
+
+**3. A `LEFT JOIN ... WHERE right_table.id IS NULL` check returns a non-zero
+count on a foreign key that has a `NOT NULL, REFERENCES` constraint. How is
+that possible?**
+
+Either the constraint was added after some of the violating data was already
+loaded (constraints aren't retroactively validated unless explicitly told to
+be), or the rows were loaded through a path that bypassed constraint
+checking (a bulk load with constraints disabled, a direct write to the
+underlying storage). The schema saying data "must" be valid and the data
+actually being valid are different claims.
+
+<Quiz
+  client:visible
+  id="data-profiling-mean-median"
+  kind="concept"
+  question="A column's mean is far higher than its median. What does this indicate?"
+  options={[
+    { label: "The data is corrupted" },
+    { label: "The distribution is right-skewed -- a minority of large values are pulling the mean up, and reporting a single average would misrepresent most rows", correct: true },
+    { label: "The column has too many NULL values" },
+    { label: "Nothing -- mean and median always differ by this much" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Mean and median close together signals a roughly symmetric distribution; mean well above median signals right skew, where a relatively small number of large values pull the average up while most rows sit well below it. Checking this before reporting "the average" is one of the fastest ways to catch a misleading summary statistic.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What would you check before building a pipeline on a new dataset?"** Null
+rate per column, cardinality of key columns relative to row count (to
+predict join fan-out before it surprises you), the value range and
+distribution shape (mean vs. median, and percentiles for skew), and
+referential integrity if the data claims foreign key relationships. The
+caveat: schema constraints describe intent, not necessarily reality —
+profiling checks what the data actually is, including for constraints that
+were added after some violating data already existed.
+
+**"Why check mean versus median?"** They agree on a roughly symmetric
+distribution and diverge on a skewed one — a large mean-median gap means a
+minority of extreme values are pulling the average away from where most of
+the data actually sits, and reporting the mean alone in that case
+systematically misrepresents the typical case. The caveat that shows real
+use: the fix usually isn't "use median instead of mean," it's reporting
+enough of the distribution (both, plus a percentile or two) that the shape
+itself is visible rather than collapsed into one number.

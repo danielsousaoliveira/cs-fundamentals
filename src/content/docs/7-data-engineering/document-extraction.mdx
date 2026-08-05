@@ -1,0 +1,267 @@
+---
+title: Document and PDF extraction
+description: >-
+  Why a PDF has no concept of a table, how layout-aware extraction
+  reconstructs structure from position rather than reading markup that
+  doesn't exist, and the silent column-misalignment failure that looks fine
+  until someone checks the numbers.
+sidebar:
+  order: 13
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/data-cleansing
+tags: [pdf, ocr, document-extraction, layout-analysis]
+languages: [python]
+roles: [ai, data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A PDF has no concept of a table, a paragraph, or a column, in the way an
+HTML document has `<table>` or a spreadsheet has cells. **A PDF is a set of
+absolutely-positioned drawing instructions** — "put this character at this
+x,y coordinate, in this font." What looks like a table to a human reading
+the rendered page is, to the file format itself, a collection of
+independent text-placement commands that happen to line up visually.
+
+Every extraction technique on this page is a strategy for inferring
+structure — rows, columns, headers, reading order — from that positional
+information, because the structure was never encoded explicitly in the
+first place. That's the core difficulty, and it's why "just parse the PDF"
+undersells the problem: there's no schema to parse against, only a
+rendering to reverse-engineer.
+
+## Mechanics
+
+### Text extraction versus layout-aware extraction
+
+A naive text extraction reads characters in whatever order the PDF's
+internal instruction stream lists them — which is **not guaranteed to match
+reading order**, and frequently doesn't for multi-column layouts or
+documents where content was added out of order during authoring:
+
+```text
+naive extraction of a two-column page might read:
+"Left column line 1. Right column line 1. Left column line 2. Right column line 2."
+-- interleaved, because that's the order the drawing instructions happen to
+-- appear in the file, not the order a human reads them
+```
+
+Layout-aware extraction (the approach behind tools like `pdfplumber`,
+Amazon Textract, or Google Document AI) instead clusters text by physical
+position first — grouping characters into words, words into lines by
+vertical position, lines into columns by horizontal position — and only
+then reads in an order derived from that reconstructed layout. This is
+strictly more work than naive extraction and is the only approach that
+reliably handles anything beyond a single-column, top-to-bottom document.
+
+### Table reconstruction: inferring rows and columns from whitespace
+
+```python
+import pdfplumber
+
+with pdfplumber.open("invoice.pdf") as pdf:
+    page = pdf.pages[0]
+    table = page.extract_table()   # infers row/column boundaries from
+                                     # ruling lines or consistent whitespace gaps
+```
+
+Table extraction specifically infers column boundaries from either explicit
+ruling lines (if the PDF draws visible table borders — the reliable case)
+or from consistent gaps between text blocks (if it doesn't — a much less
+reliable heuristic, because "consistent gap" is a judgment call the
+extraction library makes, not a fact encoded in the file). A table with
+inconsistent spacing, merged cells, or a column that's occasionally empty
+(so there's no text to establish where that column's boundary is on that
+particular row) can defeat purely whitespace-based inference in ways that
+are invisible until you specifically check the extracted values against
+the source.
+
+### The silent misalignment that's worse than a crash
+
+```text
+Source PDF row:      Product A    |  (blank)  |  $45.00
+Extracted as:         Product A   |  $45.00   |  (missing third column)
+```
+
+A missing or empty cell in a source table is the specific case that breaks
+whitespace-based column inference most reliably, because the extraction
+heuristic has nothing to anchor that column's position on that row — the
+value from the *next* column can shift left to fill the gap, silently
+misaligning every subsequent field in that row. This doesn't error. It
+produces a row of plausible-looking values, each one attributed to the
+wrong column, and the only way to catch it is comparing extracted totals
+against the source or against an independent check — which is exactly why
+document extraction pipelines need validation as a required step, not an
+optional one.
+
+### OCR: when there's no text layer at all
+
+A scanned document (a photograph or scan of a paper page, saved as a PDF)
+has no text layer whatsoever — just an image. Extraction requires OCR
+(optical character recognition) first, converting pixels to text before any
+layout analysis can run at all. OCR accuracy depends heavily on scan
+quality, font, and layout complexity, and introduces its own distinct
+error mode: character-level misreads (a `0` read as an `O`, a `1` as an `l`)
+that look like plausible text and pass a cursory review, unlike a
+structural misalignment that at least produces an obviously wrong-shaped
+table.
+
+## Cost & limits
+
+**Layout-aware extraction and OCR are both meaningfully more expensive,
+computationally and in engineering time, than naive text extraction** — the
+decision to invest in either should follow from a measured problem (naive
+extraction producing garbled or misordered output on your actual documents)
+rather than defaulting to the most sophisticated tool available regardless
+of document complexity.
+
+**Extraction accuracy is not uniform across a single document type.**
+Invoices from one vendor's template can extract reliably while a different
+vendor's invoice — different layout, different column ordering, merged
+cells the first template didn't have — silently fails the same extraction
+logic. Treating "invoice extraction" as one solved problem rather than
+"extraction tuned to specific known layouts" is a common source of
+production surprises when a new document source is onboarded.
+
+## When NOT to use it
+
+**Do not build custom layout-inference logic before checking whether the
+source system can provide structured data directly.** If the PDF was
+generated from structured data in the first place (an invoicing system, a
+report generator), the source system frequently has an API or export
+option that returns the original structured data — extracting it back out
+of a rendered PDF is solving a harder problem than necessary when the
+easier one is available.
+
+**Do not deploy whitespace-based table extraction on documents with a known
+risk of empty cells without adding validation against a known total or
+checksum.** As shown above, this is the specific failure mode most likely
+to silently misalign a table, and it's detectable with a sum-check (do
+extracted line-item totals match the invoice's stated total) far more
+reliably than by visual review of extracted output.
+
+**Do not assume OCR output is correct without a targeted spot-check on the
+specific character classes most prone to misreads** (digits, especially in
+dense tables) — OCR error rates vary enormously by document quality, and a
+low overall error rate can still concentrate errors specifically in the
+numeric fields a downstream process most depends on being correct.
+
+## Real-world usage
+
+Invoice and receipt processing is the dominant commercial use case —
+accounts payable automation extracting line items, totals, and vendor
+information from a heterogeneous stream of PDF invoices arriving in
+different vendors' formats, at a volume where manual entry doesn't scale.
+Contract and legal document analysis is a related but distinct case, where
+the extraction target is often unstructured text and specific clauses
+rather than tabular data — closer to the layout-aware reading-order problem
+than to the table-reconstruction problem.
+
+## Failure modes
+
+**The invoice total that's silently wrong because a column shifted.** The
+misalignment failure described above produces a plausible-looking
+extracted row with each value attributed to the wrong field — symptom: an
+accounts payable system that approves a payment for the wrong amount,
+discovered (if at all) only when a downstream reconciliation against the
+vendor's own records doesn't match, which can be weeks after the payment
+was made.
+
+**The OCR digit misread that compounds downstream.** A `0` read as an `8`
+in a dollar amount, or a `1` read as a `7`, produces a numerically
+plausible but wrong value that passes any check verifying "is this a
+number" without catching "is this the *right* number" — this class of
+error is specifically dangerous because it doesn't produce garbled or
+obviously-wrong output, just quietly incorrect output.
+
+**The extraction pipeline that worked for months and broke on one new
+vendor.** Extraction logic tuned (implicitly or explicitly) against the
+layouts of the vendors it was tested on can fail silently or loudly the
+moment a new vendor's differently-structured document arrives — the
+failure mode depends on how the new layout differs, but "extraction that
+works for the tested cases and degrades unpredictably outside them" is the
+default behavior of most layout-inference approaches unless explicitly
+guarded against.
+
+## Practice problems
+
+**1. An extracted table has a row where a normally-present "discount"
+column is empty in the source document, and the extracted values for that
+row look shifted by one column compared to other rows. What's the most
+likely cause, and what would confirm it?**
+
+Whitespace-based column inference lost its anchor for that column on that
+specific row, because there was no text there to establish its position,
+letting the adjacent column's value shift to fill the visual gap. Confirm
+by checking whether that row's line-item total, computed from the
+(misaligned) extracted values, disagrees with the row's stated total in the
+source — a sum-check catches this reliably where visual inspection often
+doesn't.
+
+**2. A document extraction pipeline processes invoices from 50 different
+vendors and has a 2% row-level error rate overall. What would you check
+before concluding this error rate is acceptable?**
+
+Whether the 2% is evenly distributed across vendors or concentrated in a
+small number of specific vendor layouts — an even 2% across all 50 vendors
+is a very different operational situation than 0% error on 45 vendors and
+20% error on the remaining 5, even though both average to a similar overall
+rate, and the fix differs completely (general robustness improvement versus
+targeted fixes for specific known-bad layouts).
+
+**3. Why is OCR error (misreading a digit) generally considered more
+dangerous than a structural extraction failure (a garbled or empty table)?**
+
+A structural failure tends to be visually obvious — an empty or clearly
+malformed table draws attention and is likely to be caught before use. A
+digit misread produces a plausible, well-formed, wrong number that passes
+any check verifying the output is "a valid amount" without catching that
+it's the *wrong* valid amount — it requires comparing against an
+independent source to catch, not just checking that extraction "succeeded."
+
+<Quiz
+  client:visible
+  id="document-extraction-whitespace-misalignment"
+  kind="concept"
+  question="A source PDF table has a row with an empty cell in one column. Whitespace-based table extraction is used to pull the data. What is the most likely failure mode?"
+  options={[
+    { label: "The extraction throws an error and the row is skipped" },
+    { label: "The value from an adjacent column silently shifts to fill the visual gap, misaligning every field in that row with no error", correct: true },
+    { label: "The empty cell is correctly extracted as an empty string with no other effect" },
+    { label: "OCR is triggered automatically to re-read the row" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Whitespace-based column inference relies on consistent gaps between text to identify column boundaries. An empty cell removes the anchor for that column on that specific row, letting the extraction heuristic misattribute the next column's value to the wrong position -- silently, with no error, producing a plausible-looking but wrong row. Detecting this reliably needs a sum-check or similar validation against the source, not visual review.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How would you extract structured data from a PDF?"** Start by checking
+whether the source system can provide the underlying structured data
+directly, since extracting it back out of a rendered PDF is solving a
+harder problem than necessary when avoidable. If extraction is genuinely
+required, layout-aware extraction (clustering text by position before
+inferring reading order and table structure) rather than naive text
+extraction, since naive extraction doesn't reliably preserve reading order
+beyond simple single-column layouts. The caveat: whitespace-based table
+inference specifically breaks on empty cells, silently misaligning columns
+rather than erroring — worth validating extracted totals against a known
+sum wherever the source document has one.
+
+**"What's the biggest risk in a document extraction pipeline?"** Silent
+misalignment or misreading, not outright failure — both whitespace-based
+table inference (an empty cell shifting subsequent columns) and OCR (a
+digit misread) tend to produce plausible-looking, well-formed, wrong output
+rather than an obvious error. The caveat that shows real production
+experience: this means extraction pipelines need validation against an
+independent check (a stated total, a checksum, a known field format) as a
+required step, because "the extraction ran without error" and "the
+extraction was correct" are different claims, and only the second one
+matters.

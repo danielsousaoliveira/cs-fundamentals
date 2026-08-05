@@ -1,0 +1,272 @@
+---
+title: Power BI — storage modes and DAX context
+description: >-
+  Import versus DirectQuery as a freshness-for-speed trade, and context
+  transition — the DAX mechanism that turns a row context into a filter
+  context — which is where most "why is this measure wrong" bugs live.
+sidebar:
+  order: 15
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/data-modelling
+tags: [power-bi, dax, directquery, import-mode, context-transition]
+languages: [sql]
+roles: [data]
+sources:
+  - powerbi-docs-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Power BI's storage mode decides **where a query actually runs** — inside
+Power BI's own in-memory columnar engine, or pushed back to the source
+database live — and that single decision trades freshness against
+performance in a way that shapes everything else about how a report
+behaves. DAX's context transition is a narrower but equally consequential
+mechanism: it decides **what a measure is actually computing over** at any
+given point in a formula, and getting it wrong is the single most common
+source of a DAX measure that looks reasonable and returns a number that
+doesn't match what anyone expected.
+
+Both are the kind of mechanic that's invisible when it works and confusing
+when it doesn't, which is exactly why they're worth understanding
+explicitly rather than by trial and error.
+
+## Mechanics
+
+### Import mode: fast, and only as fresh as the last refresh
+
+In Import mode, Power BI pulls a full copy of the source data into its own
+in-memory columnar store (VertiPaq) on a schedule — [reported compression
+ratios of roughly 10x are typical](https://www.jamesserra.com/archive/2026/07/power-bi-performance-in-2026-a-practical-guide-to-faster-semantic-models-and-reports/),
+so 10 GB of source data might occupy roughly 1 GB in the model. Every
+report interaction (a filter click, a slicer change) queries that in-memory
+copy, not the original source — which is why Import mode is fast: no
+network round-trip to a database on every click, just a query against
+already-loaded, already-compressed data sitting in memory. The direct cost
+is staleness: data is exactly as fresh as the most recent scheduled
+refresh, and nothing in the report itself signals to a viewer how stale
+that is unless it's explicitly surfaced.
+
+### DirectQuery: fresh, and only as fast as the source
+
+DirectQuery sends a live query to the source system on every interaction —
+no local copy, so data is always current, and performance now depends
+entirely on the source database's own query speed under whatever load the
+report generates. A report with many visuals, each triggering its own
+query on every filter change, can generate significant concurrent load
+against the source — a cost that's invisible in Power BI's own
+performance metrics and shows up instead as load on the database it's
+querying.
+
+### Composite models: not simply "the worst of both"
+
+A composite model mixes storage modes within one semantic model — commonly
+Import for small, slowly-changing dimension tables and DirectQuery for a
+very large, frequently-updated fact table, so dimension lookups are fast
+(served from memory) while the fact table stays current without needing a
+full reload. [Recent guidance specifically notes this can be close to as
+fast as, or in some cases faster than, a pure Import
+model](https://www.abbacustechnologies.com/choosing-between-import-directquery-composite-models-in-power-bi/) —
+particularly when DirectQuery fact-table queries hit pre-aggregated tables
+smaller than the full fact table, avoiding the assumption that mixing modes
+is a straightforward compromise between the two pure options rather than a
+genuinely different trade-off shape.
+
+### Context transition: the mechanism behind most "wrong number" DAX bugs
+
+DAX has two distinct kinds of context. **Row context** exists inside an
+iterator (`SUMX`, `FILTER`, a calculated column) — the formula runs once
+per row, aware of that row's values. **Filter context** is what a report
+visual, a slicer, or an explicit `FILTER`/`CALCULATE` establishes — a set of
+active filters applied to the whole model before a measure evaluates.
+
+**`CALCULATE`, used inside a row context, converts that row context into an
+equivalent filter context** — this is context transition, and it's the
+single most important and most confusing mechanic in DAX:
+
+```dax
+-- Total Sales is a measure. Used inside SUMX, it's evaluated once
+-- per customer row -- and because CALCULATE (implicit inside any
+-- measure reference) triggers context transition, each evaluation
+-- is filtered to just that customer's rows, not the whole table.
+Customer Total = SUMX(Customers, [Total Sales])
+```
+
+Without understanding context transition, this looks like it should
+compute `[Total Sales]` once (over the whole filter context) and multiply
+it by the row count — that's not what happens. Each row's evaluation of
+`[Total Sales]` is silently filtered down to that specific customer's
+transactions, because referencing a measure inside an iterator triggers an
+implicit `CALCULATE`, which converts "the current row" into "a filter
+restricting to the current row's key values." This is precisely the
+behavior that makes `SUMX` over a measure produce per-customer totals
+rather than one repeated grand total — correct once understood, and a
+frequent source of "why is this number different from what I expected"
+until it is.
+
+## Cost & limits
+
+**Import mode's refresh has a real, non-trivial time and resource cost that
+scales with source data volume** — a large fact table refreshed on a fixed
+schedule (hourly, nightly) means every refresh cycle re-pulls and
+re-compresses however much data has changed (or, for a full refresh, the
+whole table), which can become a genuine operational bottleneck as data
+volume grows, independent of report query performance.
+
+**DirectQuery's cost is paid by the source database, per interaction, not
+by Power BI** — a popular DirectQuery report with many concurrent viewers
+can generate significant query load against the source system, and that
+load needs to be accounted for in the source database's own capacity
+planning, not just in Power BI's own performance metrics.
+
+## When NOT to use it
+
+**Do not default to DirectQuery because "always fresh" sounds strictly
+better than Import.** [Current guidance is explicit that Import should
+usually be the starting point](https://www.jamesserra.com/archive/2026/07/power-bi-performance-in-2026-a-practical-guide-to-faster-semantic-models-and-reports/)
+for its performance and modeling flexibility — DirectQuery is the right
+choice specifically when true real-time freshness is a genuine requirement
+(not just a nice-to-have) or when the source data is too large to
+reasonably import in full.
+
+**Do not use `SUMX` over a measure reference without deliberately intending
+context transition.** If the goal genuinely is "compute this once over
+the whole current filter context and multiply," that's a different formula
+(a plain multiplication, or a variable holding the pre-transition value) —
+using `SUMX` over a measure by habit, without understanding that it
+implicitly re-filters per row, is a common source of a subtly wrong
+calculation that still "runs" without any error.
+
+**Do not build a composite model without checking whether the specific
+query patterns your reports use will actually benefit** — composite
+models' performance depends heavily on whether DirectQuery portions can
+leverage aggregation tables or otherwise avoid expensive live queries
+against the largest tables; a composite model built without that check can
+end up closer to DirectQuery's performance profile than to Import's.
+
+## Real-world usage
+
+Most production Power BI reports use Import mode by default, refreshed on
+a schedule matched to how fresh the underlying business question actually
+needs to be (hourly for operational dashboards, nightly for most reporting)
+— DirectQuery and composite models are reached for specifically when a
+measured requirement (true real-time data, or source tables too large to
+practically import) justifies their added complexity and different
+performance characteristics. Context transition understanding separates
+DAX authors who can reliably debug an unexpected measure result from those
+who can only guess-and-check — it's one of the most commonly cited "aha"
+moments in learning DAX precisely because so many measure patterns
+(`SUMX` over a measure, iterating with an implicit `CALCULATE`) depend on
+it silently.
+
+## Failure modes
+
+**The dashboard showing stale data with no visible warning.** An Import
+mode report whose scheduled refresh silently failed (a source credential
+expired, a network issue) continues showing the last successfully
+refreshed data with no obvious visual indicator that anything is wrong —
+symptom: a business decision made against data that's actually days or
+weeks old, discovered only when someone happens to notice a number that
+should have changed hasn't.
+
+**The DirectQuery report that degrades the source database for everyone.**
+A popular DirectQuery report generating substantial concurrent query load
+during business hours can measurably slow down the same source database
+for other systems querying it — a Power BI adoption success (many people
+using the report) directly causing a database performance problem
+elsewhere, in a way that's easy to miss because it shows up as "the
+database got slower," not as "Power BI is the cause."
+
+**The measure that's silently wrong because of a missing (or unintended)
+context transition.** A measure using `SUMX` over another measure reference
+without the author realizing context transition applies computes a
+different, wrong number that still looks plausible — this is arguably the
+single most common category of "our DAX measure gives the wrong number"
+bug report, and debugging it requires specifically understanding context
+transition rather than any general SQL or spreadsheet-formula intuition.
+
+## Practice problems
+
+**1. A report needs data no more than 15 minutes old, and the source table
+has 50 million rows updated continuously throughout the day. Would you
+recommend Import or DirectQuery, and what would you check first?**
+
+Leaning DirectQuery given the freshness requirement, but check first
+whether the source database can actually sustain the expected report query
+load at acceptable latency — DirectQuery shifts the performance burden
+entirely onto the source, and a 50-million-row table serving live,
+filtered aggregate queries needs to be verified capable of that before
+committing to the approach, potentially with aggregation tables or a
+composite model as an alternative.
+
+**2. A DAX measure `SUMX(Products, [Total Revenue])` is intended to compute
+total revenue across all products, but returns a number much larger than
+expected. Why, and what's the likely intended fix?**
+
+`[Total Revenue]` referenced inside `SUMX` triggers context transition,
+evaluating once per product row, filtered to that specific product — if
+the intent was actually "the total across all products" (a single value,
+not summed per-product), the fix is referencing `[Total Revenue]` directly
+without `SUMX`, since it already aggregates across the current filter
+context on its own. Wrapping it in `SUMX(Products, ...)` re-filters and
+re-sums per row, which is a different (and in this case unintended)
+calculation.
+
+**3. A composite model uses Import for a `dim_date` table and DirectQuery
+for a large `fact_sales` table. A report filtering by date and aggregating
+sales runs slowly. What would you check?**
+
+Whether the query pattern generated by the report is hitting the
+DirectQuery fact table efficiently — check for an applicable aggregation
+table (a pre-summarized version of `fact_sales` at a coarser grain,
+imported for fast access) that the composite model could use instead of
+querying the full DirectQuery table live for every interaction; without
+one, the composite model's DirectQuery portion behaves closer to a pure
+DirectQuery report's performance profile than to Import's.
+
+<Quiz
+  client:visible
+  id="power-bi-context-transition"
+  kind="concept"
+  question="A DAX measure [Total Sales] is referenced inside SUMX(Customers, [Total Sales]). What actually happens on each row of the iteration?"
+  options={[
+    { label: "[Total Sales] is computed once over the whole table and multiplied by the row count" },
+    { label: "Referencing the measure inside the iterator triggers context transition, filtering [Total Sales] to just that row's customer before it evaluates", correct: true },
+    { label: "SUMX ignores measure references entirely and returns an error" },
+    { label: "The row context and filter context are combined additively" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Referencing a measure inside a row context (like SUMX's iteration) triggers an implicit CALCULATE, which converts that row context into an equivalent filter context restricting to the current row's key values -- context transition. This is why SUMX over a measure reference produces per-row-filtered results rather than one repeated whole-table value, and it's the mechanism behind most unexpected DAX measure results.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"When would you choose DirectQuery over Import mode?"** When true
+real-time data freshness is a genuine, measured requirement, or the source
+data is too large to practically import and refresh on an acceptable
+schedule. The caveat that shows real experience: [Import is generally the
+right starting point](https://www.jamesserra.com/archive/2026/07/power-bi-performance-in-2026-a-practical-guide-to-faster-semantic-models-and-reports/)
+for most reports, because DirectQuery shifts query performance entirely
+onto the source database, under load generated by however many people
+interact with the report — that's a real operational cost that needs
+capacity planning on the source side, not just a Power BI configuration
+choice.
+
+**"Explain context transition in DAX."** Row context (inside an iterator
+like `SUMX`, or a calculated column) is per-row awareness of that row's
+values; filter context is what a visual or `CALCULATE` establishes across
+the whole model. `CALCULATE`, executed inside a row context — including
+implicitly, whenever a measure is referenced inside an iterator — converts
+that row context into an equivalent filter context. The caveat that
+signals real DAX debugging experience: this is implicit and easy to miss,
+which is exactly why `SUMX` over a measure reference is one of the most
+common sources of an unexpectedly wrong measure result — the fix isn't a
+different function, it's recognizing that the measure is being
+re-evaluated per row under a narrower filter than the author may have
+intended.

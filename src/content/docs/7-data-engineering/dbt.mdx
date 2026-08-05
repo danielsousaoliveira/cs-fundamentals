@@ -1,0 +1,279 @@
+---
+title: dbt
+description: >-
+  What "transform in SQL, version like code" actually buys you, why the
+  materialization you pick trades build time against query time, and the
+  incremental model bug that silently reprocesses the same rows forever.
+sidebar:
+  order: 10
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/sql-advanced
+  - 7-data-engineering/data-quality-frameworks
+tags: [dbt, transformation, materialization, incremental-models]
+languages: [sql, yaml]
+roles: [data]
+sources:
+  - dbt-docs-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Before dbt, "transform data in the warehouse" typically meant a tangle of
+scheduled SQL scripts, often with no version history, no tests, and no
+explicit record of which script depended on which other script's output.
+dbt's core idea is narrow and specific: **treat SQL `SELECT` statements as
+the unit of transformation, let dbt handle the `CREATE TABLE` /
+`CREATE VIEW` / `INSERT` boilerplate around them, and infer the dependency
+graph from `ref()` calls between models** rather than from a human tracking
+run order by hand.
+
+```sql
+-- models/fact_orders.sql
+SELECT o.id, o.customer_id, o.status, o.amount_cents
+FROM {{ ref('stg_orders') }} o          -- dbt resolves this to the actual
+WHERE o.status != 'test'                -- table/view name and builds the
+                                          -- dependency graph from this call
+```
+
+Everything else — [tests and contracts](/cs-fundamentals/7-data-engineering/data-quality-frameworks/),
+documentation, the dependency DAG, incremental processing — is built on top
+of that one idea: a model is a named, testable, dependency-tracked `SELECT`.
+
+## Mechanics
+
+### Materializations: the same SQL, different execution strategies
+
+```sql
+-- models/fact_orders.sql
+{{ config(materialized='table') }}
+SELECT ...
+```
+
+The `SELECT` is identical regardless of materialization; what changes is
+what dbt does with it on each run:
+
+- **`view`** — creates a database view. No data is duplicated, but every
+  query against it re-runs the full `SELECT` — cheapest to build, most
+  expensive to query repeatedly.
+- **`table`** — runs the `SELECT` and materializes the full result as a
+  table on every single run, dropping and rebuilding it each time. Fast to
+  query, and the build cost is the entire query's cost, every time, even if
+  only a few rows actually changed.
+- **`incremental`** — runs the full `SELECT` only once; every subsequent run
+  processes *only new or changed rows* and merges them into the existing
+  table, dramatically cheaper to build for a large, append-heavy table, at
+  the cost of meaningfully more complex logic to get right.
+- **`ephemeral`** — not materialized as a database object at all; inlined
+  as a CTE into whatever references it. Useful for a small transformation
+  step that exists purely for readability and doesn't need its own table.
+
+Choosing between `table` and `incremental` is a direct trade: `table` costs
+full recomputation every run, `incremental` costs a meaningfully more
+complex model (and a wider space of ways to get it subtly wrong) in
+exchange for cheap ongoing runs.
+
+### Incremental models, and the filter that has to be written correctly
+
+```sql
+{{ config(materialized='incremental', unique_key='id') }}
+
+SELECT id, customer_id, status, amount_cents, updated_at
+FROM {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+  -- only true on runs AFTER the first: filters to genuinely new/changed rows
+  WHERE updated_at > (SELECT max(updated_at) FROM {{ this }})
+{% endif %}
+```
+
+`is_incremental()` is `false` on the first run (or a full `--full-refresh`),
+so the whole table builds; on every subsequent run it's `true`, and the
+`WHERE` clause restricts the query to rows updated since the last run —
+`{{ this }}` refers to the model's own already-materialized table, letting
+the model reason about its own current state.
+
+The correctness of this pattern depends entirely on that `WHERE` clause
+matching reality. **If the source's `updated_at` isn't reliably set on
+every actual change — a bulk update that bypasses the application layer
+which normally sets it, a clock skew issue, a column that's null on some
+legitimate updates — rows can be silently skipped on every future
+incremental run, forever, with no error.** The gap doesn't self-heal; it
+compounds silently until someone notices the incremental table has drifted
+from the source and runs a `--full-refresh` to reconcile it — which briefly
+reintroduces the entire `table`-materialization cost this was meant to
+avoid.
+
+### Tests as the check on exactly this kind of silent drift
+
+```yaml
+# schema.yml -- covered in depth on the data quality frameworks page
+models:
+  - name: fact_orders
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+```
+
+A `unique` test on the incremental model's key column is the most direct
+catch for the specific incremental-drift failure above: if the incremental
+merge logic has a bug that produces duplicate rows for the same `id`
+(common when the `unique_key` config and the actual merge strategy
+disagree), this test fails on the very next run rather than accumulating
+duplicates silently for months. See [Data quality
+frameworks](/cs-fundamentals/7-data-engineering/data-quality-frameworks/)
+for where else in a pipeline this kind of check belongs.
+
+## Cost & limits
+
+**`table` materialization cost scales with the full query's cost, every
+run, regardless of how much data actually changed** — for a large,
+slow-to-compute model, this can dominate total pipeline run time even when
+99% of the underlying data is unchanged from the previous run.
+
+**Incremental models trade that recomputation cost for logic complexity and
+a real risk of silent drift**, as shown above — this is worth adopting once
+a `table` model's build time becomes a genuine bottleneck, and worth
+resisting for smaller models where the added complexity isn't earning its
+keep yet.
+
+**`dbt build` (as opposed to `dbt run`) runs tests interleaved with model
+builds rather than after all models finish**, which fails fast on a broken
+upstream model before downstream models waste time building on top of it —
+worth using in CI specifically for that fail-fast property, even though it
+can make an individual failing test block more of the DAG than a
+run-everything-then-test approach would.
+
+## When NOT to use it
+
+**Do not materialize every model as `table` by default "to be safe."** A
+frequently-changing, cheap-to-compute model is often better served by
+`view` (always fresh, no storage or rebuild cost) or `incremental`
+(cheap to keep current) — reflexively choosing `table` for models that
+don't need it adds unnecessary rebuild cost to every pipeline run.
+
+**Do not adopt `incremental` materialization before a model has an outgrown
+`table` build time.** The complexity and drift risk are real costs; pay
+them once they're solving an actual problem (a model whose full rebuild is
+measurably too slow), not preemptively for a model that builds in seconds.
+
+**Do not write an incremental filter (`is_incremental()` block) without a
+test that would catch the silent-skip failure mode.** A `unique_key`
+config and a matching `not_null`/`unique` test on that key are close to the
+minimum bar for trusting an incremental model's correctness over time,
+given how quietly this class of bug compounds.
+
+## Real-world usage
+
+dbt is the dominant transformation layer in the modern "ELT" pattern —
+extract and load raw data into the warehouse first (often via a separate
+ingestion tool or [CDC pipeline](/cs-fundamentals/7-data-engineering/ingestion-and-cdc/)),
+then transform it in place using dbt models, rather than transforming
+before loading. Analytics engineering teams commonly organize models into
+staging (light cleanup of raw source data), intermediate (business logic
+applied), and mart (final, consumer-facing tables) layers, with `ref()`
+calls forming the dependency chain between them — the layered structure
+being a convention dbt encourages rather than one it enforces.
+
+## Failure modes
+
+**The incremental model that quietly stopped capturing some updates,
+months ago.** A source system change that starts leaving `updated_at`
+unset (or unreliable) on some update path causes an incremental model's
+`WHERE updated_at > ...` filter to silently skip those rows forever — no
+error, just a model that slowly diverges from its source, discovered only
+when someone happens to compare row counts or a downstream number stops
+reconciling.
+
+**The `table` model whose build time crept up until it dominated the whole
+pipeline.** A model that started small and cheap, materialized as `table`
+from day one, can grow to dominate total pipeline runtime as the underlying
+data grows — because `table` materialization always recomputes fully,
+there's no natural point at which this becomes visible except total
+pipeline duration slowly increasing, easy to attribute to "the pipeline
+got bigger" rather than to one specific model's materialization choice.
+
+**The `dbt build` that failed opaquely because an upstream test failed.**
+`dbt build`'s fail-fast behavior (skipping downstream models when an
+upstream test fails) is a feature, but read carelessly it produces a CI
+failure log dominated by "skipped" statuses for models that were never
+actually broken — the real failure (one upstream test) can be easy to miss
+in a long list of skip messages if you're not specifically looking for the
+one genuine failure among them.
+
+## Practice problems
+
+**1. An incremental model's row count has grown noticeably slower than its
+source table's row count over the past month, with no errors reported.
+What's the most likely cause, and how would you confirm it?**
+
+A silent gap in the incremental filter — rows that should match the
+`WHERE updated_at > ...` condition aren't being captured, most commonly
+because `updated_at` isn't reliably set on every change path in the
+source. Confirm by comparing `count(*)` between the source and the
+incremental model directly, and checking for source rows with a more
+recent actual change than what the incremental model's max `updated_at`
+suggests it has processed.
+
+**2. A model currently materialized as `view` is being queried by a
+dashboard that reloads every few seconds, and the underlying `SELECT` is
+expensive. What materialization change would you consider, and what would
+you check first?**
+
+Materializing as `table` (or `incremental` if the source is large and
+append-heavy) trades query-time cost for build-time cost, appropriate here
+since the view's full query is being re-run on every dashboard refresh.
+Check the acceptable staleness window first — `table` means data is only as
+fresh as the last scheduled `dbt run`, which needs to match what the
+dashboard's users actually need.
+
+**3. Two engineers disagree about whether a new model should be `table` or
+`incremental`. What question would resolve the disagreement?**
+
+Whether the model's full-query build time is currently a measured problem
+(a genuine bottleneck in pipeline duration) — if not, `table`'s simplicity
+is worth keeping until it becomes one; if it already is, `incremental`'s
+added complexity is justified. The decision should follow from a measured
+cost, not a default preference either way.
+
+<Quiz
+  client:visible
+  id="dbt-incremental-drift"
+  kind="concept"
+  question="An incremental dbt model filters on `WHERE updated_at > (SELECT max(updated_at) FROM {{ this }})`. The source system has a bulk-update path that doesn't set `updated_at`. What happens?"
+  options={[
+    { label: "dbt detects the missing timestamp and falls back to a full refresh automatically" },
+    { label: "Rows changed via that path are silently skipped on every future incremental run, with no error", correct: true },
+    { label: "The model build fails immediately with a clear error" },
+    { label: "Nothing -- dbt tracks changes independently of the updated_at column" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>An incremental model's correctness depends entirely on its filter matching reality. If updated_at isn't reliably set on every change path, rows changed through the unreliable path never satisfy the incremental WHERE clause -- they're silently excluded from every subsequent run, and the gap compounds indefinitely with no error, until someone notices the model has drifted from its source.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What problem does dbt solve?"** It turns ad-hoc, hand-scheduled SQL
+transformation scripts into version-controlled, tested, dependency-tracked
+models — the `ref()` function lets dbt infer the DAG from the SQL itself
+rather than requiring a human to track and maintain run order separately.
+The caveat: dbt handles the transformation layer specifically (the "T" in
+ELT) — it doesn't extract data from source systems or load it into the
+warehouse; that's typically a separate ingestion tool or [CDC
+pipeline](/cs-fundamentals/7-data-engineering/ingestion-and-cdc/) feeding
+raw data in before dbt models start from it.
+
+**"When would you use an incremental model instead of a table
+materialization?"** Once a `table` model's full rebuild time becomes a
+measured bottleneck — incremental models trade that recomputation cost for
+meaningfully more complex logic (a correct filter distinguishing new/changed
+rows from unchanged ones) and a real risk of silent drift if that filter's
+assumptions stop holding. The caveat that shows real experience: the
+incremental filter's correctness depends on an assumption about the source
+data (a reliable `updated_at`, typically) that's worth explicitly verifying
+and testing for, not just implementing and trusting.

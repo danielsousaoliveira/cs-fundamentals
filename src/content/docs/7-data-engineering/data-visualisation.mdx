@@ -1,0 +1,259 @@
+---
+title: Data visualisation principles
+description: >-
+  Why a truncated y-axis isn't a style choice, when a chart is genuinely the
+  wrong tool for the question, and the aggregation-before-charting decision
+  that determines whether the picture matches the data underneath it.
+sidebar:
+  order: 14
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/data-profiling
+tags: [data-visualisation, charts, dashboards, misleading-charts]
+languages: [python]
+roles: [data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A chart is a claim about the data, made visually instead of in words — and
+like any claim, it can be accurate, misleading, or simply the wrong claim
+for the question being asked. The mechanics of a chart (which chart type,
+which axis scale, what gets aggregated before plotting) aren't neutral
+presentation choices layered on top of "the data" — they *are* the
+analysis, expressed visually, and a chart built without deliberate choices
+at each of these points tends to default toward the choice that looks most
+dramatic rather than the one that's most accurate.
+
+The through-line for this whole page: **every visual decision that makes a
+chart more visually striking without a corresponding justification in the
+data is a decision that makes the chart more likely to mislead**, whether
+or not that was the intent.
+
+## Mechanics
+
+### The truncated axis, and what it actually claims
+
+```text
+Bar chart, y-axis from 95 to 100:
+  Product A: 97%
+  Product B: 98%
+```
+
+Rendered with a y-axis starting at 95 rather than 0, Product B's bar looks
+roughly *twice as tall* as Product A's — visually claiming "B is
+substantially better than A." The actual difference is one percentage
+point. Truncating the axis isn't inherently dishonest — for data that
+genuinely only varies in a narrow range (say, a metric that's always
+between 95% and 100%, where 0–95% would compress all the meaningful
+variation into a sliver), a truncated axis can be the *more* honest
+choice. The failure is truncating **without a corresponding annotation or
+justification** — the same chart with the axis clearly labeled and the
+choice explained is a legitimate visualization; without that, it's a
+one-point difference dressed up to look like a two-fold one.
+
+### Aggregation before plotting: the decision that determines what the chart can show
+
+```python
+# plotting the mean collapses the distribution entirely
+df.groupby('region')['order_value'].mean().plot(kind='bar')
+
+# a box plot or violin plot preserves the spread the mean hides
+df.boxplot(column='order_value', by='region')
+```
+
+A bar chart of means answers "what's typical, on average, per group" and
+actively hides everything about the shape of each group's distribution —
+[Data profiling](/cs-fundamentals/7-data-engineering/data-profiling/)
+covers why mean alone can misrepresent a skewed distribution; a bar chart
+of means inherits that exact problem, visually. Two regions with identical
+means and wildly different variances (one region consistently near the
+mean, another with huge swings above and below it) render as identical
+bars — the chart type itself has discarded the information that would
+distinguish them, before any question of styling or color even comes up.
+
+### Chart type as a claim about the relationship in the data
+
+- A **line chart** implies continuity and order between points — appropriate
+  for a genuine time series, actively misleading for categorical data with
+  no natural ordering (connecting "Region A" to "Region B" to "Region C"
+  with a line implies a progression between them that doesn't exist).
+- A **pie chart** implies the segments are parts of one meaningful whole
+  that sums to 100% — misleading when segments overlap, or when the "whole"
+  itself isn't the thing anyone actually cares about (individual segment
+  comparison is usually the real question, and a pie chart is one of the
+  weakest chart types for comparing individual values against each other).
+- A **dual-axis chart** (two different y-axes on the same plot) implies a
+  relationship between the two series that the shared visual space
+  suggests but the independent scales don't actually establish — two
+  unrelated metrics plotted together, each on a scale chosen to make them
+  visually correlate, is a well-known way to imply causation or
+  correlation that isn't in the underlying numbers at all.
+
+### When a chart is the wrong tool entirely
+
+A single precise number — "conversion rate this month: 3.2%, versus 3.1%
+last month" — is often better communicated as text or a simple table than
+as a chart, because a chart's strength is showing *patterns across many
+data points* (a trend, a distribution, a comparison across several
+categories), and forcing a two-number comparison into chart form usually
+adds visual overhead without adding clarity. The decision to chart
+something at all should follow from "does this have enough data points, or
+enough structure, for a visual pattern to matter" — not from a default
+assumption that data always benefits from being charted.
+
+## Cost & limits
+
+**A dashboard with many charts costs the viewer's attention, not just
+engineering time to build** — every additional chart competes for a
+viewer's limited attention and interpretation effort, and a dashboard with
+twenty charts where three would answer the actual question people come to
+it for isn't more thorough, it's more likely for the important three to be
+missed among the other seventeen.
+
+**Real-time or frequently-refreshing charts carry a genuine computation and
+rendering cost** proportional to refresh frequency and query complexity
+behind each chart — a dashboard refreshing every few seconds, showing data
+that only meaningfully changes hourly, is paying a real infrastructure cost
+for freshness nobody needed.
+
+## When NOT to use it
+
+**Do not truncate an axis without labeling the truncation clearly enough
+that a viewer skimming the chart (not reading every axis label carefully)
+still gets an accurate impression of the actual magnitude of difference
+shown.** If that's not achievable for a given chart, start the axis at
+zero instead.
+
+**Do not use a chart type that implies a relationship (continuity via a
+line, proportion-of-whole via a pie) the underlying data doesn't actually
+have.** Categorical comparisons are bar charts; genuine time series are
+line charts; parts of a true, meaningful whole are (cautiously) pie
+charts — matching the type to the actual structure of the data is not a
+stylistic detail.
+
+**Do not build a chart before deciding what aggregation level answers the
+actual question.** A chart built on whatever aggregation the data happened
+to arrive in (raw transaction-level data plotted directly, or an average
+computed by default) rather than the aggregation the question actually
+calls for produces a chart that's technically accurate about the wrong
+thing.
+
+## Real-world usage
+
+Executive dashboards are the highest-stakes application of these
+principles, because they're often viewed briefly, by people who won't
+cross-check the underlying data, making a misleading (even if
+unintentionally so) chart more likely to directly drive a wrong decision
+than the same chart buried in a detailed analytical report a careful reader
+would scrutinize. A/B test result reporting is a related high-stakes case,
+where an inappropriately truncated axis or an average-only comparison
+(ignoring variance) can make a statistically insignificant difference look
+like a clear win.
+
+## Failure modes
+
+**The dashboard that drove a decision based on a visual exaggeration.** A
+truncated-axis chart or a dual-axis chart implying a correlation stronger
+than the data supports can genuinely change a business decision — the
+failure isn't caught by "the chart was wrong" (the numbers plotted were
+usually accurate) but by "the visual impression the chart created didn't
+match the actual magnitude or relationship in the data," which is a subtler
+and more consequential failure than a simple data error.
+
+**The bar-chart-of-means that hid the real story.** Two groups with
+identical average performance and wildly different consistency (one
+reliable, one volatile) render identically in a bar chart of means — a
+decision made from that chart alone (which region should we expand
+investment in?) misses the variance difference entirely, because the chart
+type discarded exactly the information that would have surfaced it.
+
+**The dashboard nobody looked at because it had too many charts.** A
+dashboard built to be comprehensive rather than focused can fail simply by
+overwhelming its viewers — the specific chart that mattered for a given
+decision existing somewhere on the dashboard isn't the same as it being
+seen and acted on, and a dashboard's actual usefulness is measured by
+whether the important signal reaches the viewer, not by how much it
+displays.
+
+## Practice problems
+
+**1. A chart shows a y-axis from 80 to 85, making a change from 81% to 84%
+look like a dramatic jump. Is truncating this axis inherently wrong?**
+
+Not inherently — if the metric genuinely and meaningfully only varies
+within a narrow band (say, it's never been outside 78–86% historically),
+a truncated axis can correctly emphasize real, meaningful variation that a
+0–100 axis would flatten into invisibility. The question is whether the
+truncation is clearly labeled and the choice explained, versus silently
+exaggerating an otherwise unremarkable change.
+
+**2. A team wants to compare order value across five regions. Someone
+proposes a pie chart with five slices. What would you suggest instead, and
+why?**
+
+A bar chart — pie charts are one of the weakest chart types for comparing
+individual values against each other, because human perception is better
+at comparing bar lengths (a shared linear scale) than at comparing
+wedge angles or areas. A pie chart is more appropriate when the actual
+question is about proportion-of-a-meaningful-whole rather than
+individual-value comparison, which usually isn't the real question behind
+"compare X across categories."
+
+**3. A dashboard chart shows two unrelated metrics (revenue and website
+uptime) on a dual-axis line chart, with axes scaled so both lines appear
+to move together. What's the risk, and what would you check?**
+
+Dual-axis charts with independently scaled axes can make two genuinely
+unrelated metrics appear correlated purely through axis-scaling choice —
+check the actual correlation coefficient between the two series
+numerically rather than trusting the visual impression, and consider
+whether plotting them separately (or on a shared, meaningful scale) would
+avoid implying a relationship the data doesn't support.
+
+<Quiz
+  client:visible
+  id="data-visualisation-truncated-axis"
+  kind="concept"
+  question="A bar chart's y-axis is truncated to start at 95 instead of 0, making a one-point difference (97% vs 98%) look like roughly a two-fold difference in bar height. Is this always misleading?"
+  options={[
+    { label: "Yes, axes should always start at zero" },
+    { label: "Not inherently -- it depends on whether the truncation is clearly labeled and justified by the data genuinely only varying in a narrow band", correct: true },
+    { label: "No, truncated axes are always more accurate" },
+    { label: "It only matters for line charts, not bar charts" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Truncating an axis isn't inherently dishonest -- for data that genuinely only varies in a narrow range, a full 0-to-100 axis would compress all the meaningful variation into an unreadable sliver. The failure is truncating without clear labeling or justification, which lets a visually dramatic difference stand in for what might be a numerically small one. The same underlying chart can be legitimate or misleading depending entirely on whether that context is present.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What makes a chart misleading, even if the underlying data is
+correct?"** The chart's visual claims — axis scale, chart type, aggregation
+level — can imply a magnitude or relationship in the data that the actual
+numbers don't support, independent of whether any individual data point
+plotted is accurate. A truncated, unlabeled axis exaggerating a small
+difference, or a chart type implying continuity or proportion the data
+doesn't have, are both cases where "every number shown is correct" and
+"the chart accurately represents the data" are different claims. The
+caveat: this isn't an argument against ever truncating an axis or choosing
+a dramatic chart type — it's an argument for the choice being deliberate
+and legible to the viewer, not incidental.
+
+**"How would you decide what chart type to use for a given dataset?"**
+Start from what relationship or comparison the question actually needs —
+a genuine time series calls for a line chart (implying continuity
+correctly); categorical comparison calls for bars (which human perception
+compares more accurately than angles or areas); true parts-of-a-whole
+calls for a pie chart, cautiously. The caveat that shows real
+experience: the aggregation level matters as much as the chart type — a
+bar chart of means can visually equate two groups with identical averages
+and wildly different variances, discarding exactly the information that
+would distinguish them, before any question of chart type or styling even
+comes into play.

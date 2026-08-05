@@ -1,0 +1,281 @@
+---
+title: Window functions, CTEs, and recursive queries
+description: >-
+  RANK vs DENSE_RANK vs ROW_NUMBER measured on real ties, LAG for
+  period-over-period deltas without a self-join, and the recursive CTE
+  mechanics that make a bill-of-materials query possible.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 7-data-engineering/sql-fundamentals
+tags: [sql, window-functions, cte, recursive-query, rank]
+languages: [sql]
+roles: [data, backend]
+sources:
+  - captured-postgres-18
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A window function computes something across a set of rows — a running total,
+a rank, the previous row's value — **without collapsing those rows into one**,
+the way `GROUP BY` does. Every input row survives; each one just gets an extra
+computed column attached, calculated over a "window" of related rows defined
+by `PARTITION BY` and `ORDER BY`.
+
+That's the whole idea, and it replaces two patterns that are common and both
+worse: a self-join (to compare a row to the previous one) and a correlated
+subquery (to compute a running total). Both work; both re-scan data a window
+function computes in a single pass.
+
+## Mechanics
+
+### RANK, DENSE_RANK, and ROW_NUMBER on real ties
+
+The three ranking functions only visibly differ when there are ties, and
+prose descriptions of the difference are easy to nod along to and still get
+wrong. Captured against 5,000 real rows with genuine ties in `amount_cents`:
+
+```text
+amount_cents | rnk | dense_rnk
+--------------+-----+-----------
+        90062 |   1 |         1
+        90043 |   7 |         2
+        89962 |  13 |         3
+        89943 |  19 |         4
+```
+
+`RANK()` leaves gaps after a tie — six rows tied for first place, so the next
+distinct value is rank 7, not rank 2. `DENSE_RANK()` never leaves gaps — the
+next distinct value is always the previous rank plus one, regardless of how
+many rows tied for it. `ROW_NUMBER()` (not shown above) ties break arbitrarily
+and every row gets a distinct, sequential number — 1 through 5,000 with no
+repeats, even among rows with identical `amount_cents`.
+
+Picking the wrong one for "top 10 by amount" changes the answer:
+`WHERE ROW_NUMBER() <= 10` returns exactly 10 rows, arbitrarily including some
+tied rows and excluding others; `WHERE RANK() <= 10` can return more than 10
+rows if a tie straddles the boundary; `WHERE DENSE_RANK() <= 10` returns every
+row within the top 10 *distinct* values, which can be far more than 10 rows if
+there's significant tying.
+
+### LAG for period-over-period comparison, no self-join
+
+```sql
+SELECT id, created_at, amount_cents,
+       LAG(amount_cents) OVER (ORDER BY created_at) AS prev_amount,
+       amount_cents - LAG(amount_cents) OVER (ORDER BY created_at) AS delta
+FROM orders WHERE customer_id = 4790
+ORDER BY created_at;
+```
+
+Captured output for one customer's order history:
+
+```text
+created_at | amount_cents | prev_amount | delta
+------------+--------------+-------------+--------
+2023-01-08 |        15631 |             |
+2023-01-21 |        85631 |       15631 |  70000
+2023-02-02 |        65631 |       85631 | -20000
+2023-02-15 |        45631 |       65631 | -20000
+```
+
+The first row's `prev_amount` is `NULL` — there is no row before it, and
+`LAG` returns `NULL` at the boundary rather than erroring. The equivalent
+without a window function is a self-join on "the row with the next-earliest
+`created_at` for the same customer," which is both more code and, on a large
+table, typically slower — the window function computes this in one ordered
+pass per partition rather than a join's row-matching.
+
+### The CTE that runs once, and the one that runs per reference
+
+```sql
+WITH recent_orders AS (
+  SELECT * FROM orders WHERE created_at > now() - interval '30 days'
+)
+SELECT * FROM recent_orders WHERE status = 'complete'
+UNION ALL
+SELECT * FROM recent_orders WHERE status = 'cancelled';
+```
+
+In modern Postgres (12+), a non-recursive CTE referenced multiple times is
+usually inlined by the planner and optimized as if you'd written the
+subquery twice — it is **not** automatically materialized once and reused,
+despite that being the common assumption. Whether it's inlined or
+materialized depends on the CTE's contents and how it's referenced; check
+`EXPLAIN` if the performance of a repeated CTE matters, rather than assuming
+either behavior.
+
+### Recursive CTEs: the mechanism, not just the syntax
+
+```sql
+WITH RECURSIVE countdown(n) AS (
+  SELECT 5                                    -- base case
+  UNION ALL
+  SELECT n - 1 FROM countdown WHERE n > 1     -- recursive case
+)
+SELECT * FROM countdown;
+```
+
+Captured output: `5, 4, 3, 2, 1`. The mechanism: the base case (`SELECT 5`)
+runs once, producing the initial row set. The recursive case then runs
+repeatedly, each iteration querying only the rows produced by the *previous*
+iteration (not the accumulated total), until an iteration produces zero rows
+— here, once `n` reaches 1, `WHERE n > 1` matches nothing and the recursion
+terminates. The final result is the union of every iteration's output.
+
+This is the mechanism behind the classic org-chart or bill-of-materials
+query — "find every employee under this manager, at any depth" — where each
+iteration finds one more level down, and the recursion terminates naturally
+once a level produces no further reports.
+
+## Cost & limits
+
+**A window function computes over its partition without reducing row
+count**, so a `PARTITION BY` on a low-cardinality column (few distinct
+values, many rows each) is far more expensive than one on a high-cardinality
+column — the "window" of rows the function has to consider for each output
+row is proportional to partition size.
+
+**A recursive CTE with no depth limit and a bug in the termination condition
+runs until it exhausts memory or hits Postgres's default recursion depth
+guard**, not gracefully — always test the base and termination conditions in
+isolation before trusting the recursive case with real data, and consider
+adding an explicit depth counter with a `WHERE depth < N` safety bound for
+production use.
+
+## When NOT to use it
+
+**Do not use `ROW_NUMBER()` for "top N" when ties matter to the business
+question.** If two rows are genuinely tied for 10th place, `ROW_NUMBER()`
+arbitrarily picks one — `RANK()` or `DENSE_RANK()` (per whether "top 10"
+should mean "10 rows" or "the top 10 distinct values, however many rows that
+is") represent the tie honestly.
+
+**Do not assume a CTE is a performance optimization by itself.** A CTE is
+primarily a readability tool — naming an intermediate result — not a
+guaranteed materialization or caching mechanism. If you need a subquery's
+result to be computed exactly once and reused, verify that's actually
+happening in `EXPLAIN` rather than assuming the CTE syntax guarantees it.
+
+**Do not reach for a recursive CTE for a fixed, small, known depth.** A
+three-level category hierarchy that will never grow deeper doesn't need
+recursion — a couple of explicit joins are more readable and don't carry the
+performance characteristics or termination-condition risk of a recursive
+query.
+
+## Real-world usage
+
+Leaderboards, "top N per group" reports, and period-over-period dashboards
+(this week vs. last week, this customer's spend trend) are the daily use
+case for window functions — the alternative, computing the same thing in
+application code after fetching all rows, moves work from a database
+optimized for it into an application server that isn't, and usually means
+fetching far more data over the network than necessary.
+
+Recursive CTEs show up specifically wherever the data has a
+self-referential hierarchy of unknown depth: org charts, category trees,
+bill-of-materials (a part containing sub-parts containing sub-parts),
+dependency graphs. Anywhere the depth is fixed and known, plain joins are
+more common and more idiomatic.
+
+## Failure modes
+
+**The "top 10" report that returns 14 rows, or drops a legitimate tie.**
+Choosing `RANK()` when the business question wanted exactly N rows, or
+`ROW_NUMBER()` when it wanted every tied entry, produces a result that's
+defensible by the letter of the query and wrong by the intent behind it —
+and the mismatch usually isn't caught until someone manually counts the
+report's rows and gets a number that doesn't match what they expected.
+
+**The recursive CTE that never terminates.** A recursive case with a bug in
+its termination condition — comparing the wrong column, an off-by-one in a
+depth check — can run indefinitely, consuming memory until Postgres's
+recursion guard or an out-of-memory condition stops it. Symptom: a query
+that hangs rather than erroring quickly, which is a worse failure mode
+because it's not obvious from the error message what went wrong.
+
+**The window function partitioned on the wrong column, silently returning
+plausible numbers.** A `PARTITION BY customer_id` where the intent was
+`PARTITION BY customer_id, product_id` computes running totals across all of
+a customer's products combined rather than per product — no error, just a
+number that's wrong in a way that requires knowing the intended grouping to
+even notice.
+
+## Practice problems
+
+**1. `RANK() OVER (ORDER BY score DESC) <= 3` for "top 3 scorers" returns 5
+rows. Is this a bug?**
+
+Not a bug — `RANK()` leaves gaps after ties, so if two players tie for 2nd
+place, both get rank 2, the next player gets rank 4, and `<= 3` correctly
+includes both rank-2 players plus rank-1 and rank-3 players: 4 or 5 rows
+depending on how many tied. If the requirement is "exactly 3 rows," use
+`ROW_NUMBER()` instead, accepting an arbitrary tie-break.
+
+**2. Write a window function query that computes each order's percentage of
+its customer's total spend, without a self-join or subquery aggregating
+separately.**
+
+```sql
+SELECT id, customer_id, amount_cents,
+       amount_cents::float / SUM(amount_cents) OVER (PARTITION BY customer_id) AS pct_of_customer_total
+FROM orders;
+```
+
+`SUM(...) OVER (PARTITION BY customer_id)` computes each customer's total
+once per partition while leaving every order row intact, avoiding a separate
+aggregated subquery joined back to the detail rows.
+
+**3. A recursive CTE finding "all reports under this manager" runs forever
+on one particular manager's data. What's the most likely cause, and how
+would you debug it?**
+
+Almost certainly a cycle in the data — an employee record pointing back to
+an ancestor, whether from a data entry error or a genuine cross-reference
+that shouldn't exist in a tree structure. Debug by adding a `path` array
+tracking visited ids through the recursion and a `WHERE NOT id = ANY(path)`
+guard, which both fixes the infinite loop and identifies exactly where the
+cycle is.
+
+<Quiz
+  client:visible
+  id="sql-advanced-rank-vs-dense-rank"
+  kind="concept"
+  question="Six rows tie for the highest value. What rank does the next distinct value get under RANK() versus DENSE_RANK()?"
+  options={[
+    { label: "RANK() gives it 7 (rank 1 plus 6 tied rows); DENSE_RANK() gives it 2", correct: true },
+    { label: "Both give it rank 2" },
+    { label: "Both give it rank 7" },
+    { label: "RANK() gives it 2; DENSE_RANK() gives it 7" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>RANK() leaves gaps proportional to how many rows tied -- six rows at rank 1 means the next distinct value is rank 7. DENSE_RANK() never leaves gaps: the next distinct value is always the previous rank plus one, however many rows tied for it.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"When would you use a window function instead of GROUP BY?"** When you
+need the aggregate result attached to every individual row rather than
+collapsed into one row per group — a running total next to each transaction,
+a rank next to each player, a comparison to the previous row. `GROUP BY`
+reduces row count; a window function preserves it while adding a computed
+column. The caveat: they can be combined — aggregate with `GROUP BY` first,
+then window-function over the aggregated result — for questions like "each
+group's rank among all groups."
+
+**"How do RANK, DENSE_RANK, and ROW_NUMBER differ?"** All three assign a
+position within an ordered partition; they only differ on ties. `ROW_NUMBER`
+breaks ties arbitrarily and always produces sequential distinct numbers;
+`RANK` gives tied rows the same number and skips ahead by the tie count;
+`DENSE_RANK` gives tied rows the same number without skipping. The caveat
+that shows real use: which one is correct depends on the business question
+being "exactly N rows" (`ROW_NUMBER`) versus "the top N distinct values,
+however many rows that is" (`DENSE_RANK`) — getting this wrong produces a
+report that's defensible by the query and wrong by intent.

@@ -1,0 +1,263 @@
+---
+title: Dimensional modelling
+description: >-
+  Star schema versus a normalized OLTP schema, and why "when did this customer
+  live at this address" is a modelling decision — slowly changing dimensions —
+  not a query you can bolt on afterward.
+sidebar:
+  order: 4
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/databases
+  - 7-data-engineering/sql-fundamentals
+tags: [dimensional-modelling, star-schema, scd, data-warehouse]
+languages: [sql]
+roles: [data]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+An OLTP schema — the kind [Databases](/cs-fundamentals/5-systems/databases/)
+covers — is normalized to make a single transaction fast and consistent:
+minimal duplication, foreign keys enforcing integrity, optimized for "update
+this one order" or "look up this one customer." An analytical warehouse
+schema optimizes for the opposite operation: "aggregate millions of
+historical facts, sliced by dozens of attributes, as fast as possible" — and
+that goal is better served by a different shape entirely.
+
+**Dimensional modelling's star schema** puts measurable events — orders,
+page views, transactions — in a central **fact table**, and the descriptive
+attributes you slice and filter by — customer, product, date, region — in
+surrounding **dimension tables**. A fact table row is deliberately narrow
+(mostly foreign keys plus a few numeric measures); dimension tables are
+deliberately wide and denormalized, because a wide, flat dimension table is
+what makes `GROUP BY customer.region, product.category` fast — no chain of
+joins through a normalized customer→address→region hierarchy required.
+
+## Mechanics
+
+### The shape
+
+```sql
+-- fact table: narrow, one row per event, mostly foreign keys + measures
+CREATE TABLE fact_orders (
+  order_id       int,
+  date_key       int REFERENCES dim_date(date_key),
+  customer_key   int REFERENCES dim_customer(customer_key),
+  product_key    int REFERENCES dim_product(product_key),
+  quantity       int,
+  amount_cents   int
+);
+
+-- dimension table: wide, denormalized -- deliberately not in 3rd normal form
+CREATE TABLE dim_customer (
+  customer_key   int PRIMARY KEY,   -- surrogate key, not the source system's id
+  customer_id    text,              -- the source system's natural id, kept for reference
+  name           text,
+  region         text,              -- denormalized: no separate regions table to join
+  segment        text,
+  valid_from     date,
+  valid_to       date,
+  is_current     boolean
+);
+```
+
+`dim_customer.region` being a plain text column rather than a foreign key
+into a `regions` table is deliberate denormalization — an OLTP schema would
+normalize it to avoid update anomalies, but a dimension table's whole
+purpose is being flat enough that a single `GROUP BY dim_customer.region`
+needs no further joins.
+
+### Slowly changing dimensions: the modelling problem "just update the row"
+doesn't solve
+
+A customer moves from the `EU` region to the `US` region. The naive fix —
+`UPDATE dim_customer SET region = 'US' WHERE customer_id = 123` — silently
+rewrites history: every historical order this customer placed while
+genuinely in the `EU` now attributes to `US` in any report grouped by
+region, because the fact table's foreign key points at a dimension row whose
+attributes just changed underneath it.
+
+**Type 1 SCD** (overwrite) is that naive update — appropriate only when
+historical accuracy for that specific attribute genuinely doesn't matter (a
+corrected typo in a name, for instance).
+
+**Type 2 SCD** (new row per change) is the standard fix for attributes where
+history matters:
+
+```sql
+-- Instead of updating the existing row, insert a new one and close the old one
+UPDATE dim_customer
+SET valid_to = CURRENT_DATE, is_current = false
+WHERE customer_id = 123 AND is_current = true;
+
+INSERT INTO dim_customer (customer_key, customer_id, name, region, valid_from, valid_to, is_current)
+VALUES (nextval('customer_key_seq'), 123, 'Same Name', 'US', CURRENT_DATE, NULL, true);
+```
+
+Now `dim_customer` has two rows for the same real-world customer, each with
+a different `customer_key` (the surrogate key) and a validity window. A
+historical fact row's `customer_key` foreign key still points at the *EU*
+version of the dimension row, forever — because that foreign key was set at
+the time the order happened, pointing at whichever dimension row was current
+then. Reports grouping by region correctly attribute old orders to `EU` and
+new orders to `US`, because the fact table was never asked to change.
+
+### Why the surrogate key matters here
+
+The dimension table's primary key is a synthetic `customer_key`, not the
+source system's `customer_id` — that's what makes Type 2 SCD possible at
+all. If the fact table's foreign key were the natural `customer_id`, there
+would be no way to distinguish "this order happened while the customer was
+in the EU" from "this order happened after the customer moved to the US,"
+because both dimension rows would share the same key. The surrogate key is
+what lets two rows represent "the same entity, at two different points in
+time" as genuinely distinct join targets.
+
+## Cost & limits
+
+**A Type 2 SCD grows the dimension table proportional to how often tracked
+attributes change**, not proportional to entity count — a dimension with
+frequently-changing attributes (a `status` field updated daily) tracked as
+Type 2 can accumulate far more rows than there are actual customers,
+degrading every join against it. Track only the attributes that genuinely
+need historical accuracy as Type 2; leave the rest Type 1.
+
+**A denormalized dimension table costs storage and update complexity in
+exchange for query speed** — a `region` column duplicated across every
+customer row in that region, rather than normalized into a separate table,
+means updating "how we categorize this region" touches every affected
+customer row instead of one row in a lookup table. This is the same
+trade-off [Databases](/cs-fundamentals/5-systems/databases/) covers for
+indexes generally, applied at the schema-design level: pay on write (or on
+update) to make reads cheap.
+
+## When NOT to use it
+
+**Do not build a star schema for a transactional system.** Dimensional
+modelling optimizes for read-heavy analytical aggregation across historical
+data; it actively works against the update-consistency and normalization
+goals of an OLTP system serving live application traffic. These are
+different schemas for different workloads, typically maintained separately
+and connected by an ETL/ELT pipeline, not one schema serving both.
+
+**Do not apply Type 2 SCD tracking to every dimension attribute by
+default.** Tracking history has a real storage and query-complexity cost;
+apply it to attributes where "what was true at the time" genuinely matters
+for historical reporting (a customer's region, a product's category) and
+leave attributes where only the current value matters (a typo-corrected
+name) as Type 1.
+
+**Do not model a slowly changing dimension without deciding the SCD type up
+front.** Retrofitting Type 2 tracking onto a dimension that was built Type
+1 means historical fact rows already point at dimension rows whose past
+states were overwritten and are unrecoverable — this decision needs to be
+made before data starts accumulating, not after a report reveals the gap.
+
+## Real-world usage
+
+Every BI dashboard built on a data warehouse (Snowflake, BigQuery, Redshift)
+sits on some variant of a star or snowflake schema, because the alternative
+— running analytical aggregations directly against a normalized OLTP
+schema — means the multi-way joins get progressively slower as historical
+data accumulates, exactly the workload dimensional modelling exists to make
+fast. "Customer lifetime value by the region they were in at time of
+purchase" is a canonical query that's straightforward with Type 2 SCD
+tracking and effectively unanswerable without it, once the naive overwrite
+has already destroyed the history.
+
+## Failure modes
+
+**The report that silently rewrites history.** A Type 1 update on an
+attribute that should have been Type 2 changes every historical
+aggregation's grouping the moment the underlying value changes — a customer
+moving regions doesn't just affect future reports, it retroactively
+reclassifies every past order, and the report looks completely normal
+because nothing errors, the numbers just move.
+
+**The dimension table nobody realized needed Type 2 until the report was
+needed.** By the time someone asks "what was our regional revenue split as
+of last quarter, using the region customers were actually in then," a Type
+1-tracked region attribute has already destroyed the information needed to
+answer it — there is no way to recover history that was overwritten rather
+than versioned.
+
+**The fact table joined to the wrong dimension version.** A query joining
+facts to the *current* dimension row (`is_current = true`) instead of the
+dimension row valid at the time of the fact, when the analysis specifically
+needs "as it was then" — a subtle logic error that produces a plausible
+number reflecting today's dimension state applied retroactively to
+historical facts, rather than the true historical state.
+
+## Practice problems
+
+**1. A `dim_product` table's `category` field changes when a product gets
+reclassified. Should this be Type 1 or Type 2, and what does the choice
+depend on?**
+
+Type 2, if historical reports need to reflect "how this product was
+categorized at the time of each sale" (common for retail analytics). Type 1
+if only the current categorization matters and past reports should reflect
+today's taxonomy. The choice depends entirely on whether the business
+question is "as it was" or "as it is now" — there's no universally correct
+answer.
+
+**2. Why does a Type 2 SCD need a surrogate key rather than reusing the
+source system's natural key as the dimension's primary key?**
+
+Because Type 2 stores multiple rows for the same real-world entity (one per
+historical state), and the natural key is the same across all of them — only
+a synthetic surrogate key can distinguish "this customer, as they were before
+the change" from "this customer, as they are after it," which is exactly
+what lets historical facts point at the correct historical version.
+
+**3. A dimension table has grown to have 10x more rows than the number of
+real-world entities it represents. What does this suggest, and what would
+you check?**
+
+Likely an attribute (or several) tracked as Type 2 that changes far more
+often than expected — check which columns are driving new-row insertion and
+whether each one genuinely needs historical tracking, or whether some should
+be demoted to Type 1 (overwrite) to stop the table growing unnecessarily.
+
+<Quiz
+  client:visible
+  id="data-modelling-scd-type2"
+  kind="concept"
+  question="A customer moves from the EU region to the US region, tracked as a Type 2 slowly changing dimension. What happens to that customer's historical order facts?"
+  options={[
+    { label: "They are updated to show the customer's new region, US" },
+    { label: "They continue to reference the old EU dimension row via its surrogate key, so historical reports still attribute them to EU", correct: true },
+    { label: "They are deleted, since the dimension row they referenced no longer exists" },
+    { label: "The fact table automatically recalculates which region each order belongs to" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Type 2 SCD inserts a new dimension row rather than updating the old one, each with its own surrogate key. Historical fact rows keep pointing at the surrogate key that was current when the fact occurred, so old orders correctly stay attributed to EU while new orders attribute to the new US row -- history is preserved by construction, not by a query-time correction.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between a fact table and a dimension table?"** A
+fact table holds narrow, numeric, event-level records — mostly foreign keys
+plus measures — one row per event. Dimension tables hold wide, denormalized
+descriptive attributes used to filter and group facts. The caveat: dimension
+tables are deliberately denormalized (a `region` column instead of a
+`region_id` foreign key), which is the opposite of OLTP schema design, and
+that's intentional — it's optimizing for read-time aggregation speed, not
+write-time consistency.
+
+**"Explain slowly changing dimensions."** SCDs handle the case where a
+dimension attribute changes over time and historical accuracy matters — Type
+1 overwrites (losing history, appropriate when only the current value
+matters), Type 2 inserts a new row with a new surrogate key and a validity
+window (preserving history, at the cost of the dimension table growing with
+every tracked change). The caveat that signals real design experience: this
+decision has to be made per-attribute and up front, because a Type 1 update
+destroys the history a later Type 2 requirement would need, with no way to
+recover it after the fact.

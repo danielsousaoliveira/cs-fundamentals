@@ -1,0 +1,233 @@
+---
+title: SQL fundamentals
+description: >-
+  What a SELECT actually does in execution order rather than in the order you
+  type it, and why GROUP BY, HAVING, and WHERE are not interchangeable filters
+  on the same data.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/databases
+tags: [sql, select, group-by, aggregation, execution-order]
+languages: [sql]
+roles: [data, backend, fullstack]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+SQL reads left to right and executes in almost the opposite order. That gap is
+the single largest source of "why doesn't this query do what it says"
+confusion for anyone coming from an imperative language, where code runs in
+the order it's written.
+
+**Written order:** `SELECT` → `FROM` → `WHERE` → `GROUP BY` → `HAVING` →
+`ORDER BY` → `LIMIT`.
+
+**Execution order:** `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` →
+`ORDER BY` → `LIMIT`.
+
+`SELECT` — the clause you type first — is second to last to run. That single
+fact explains why you can't reference a column alias defined in `SELECT`
+inside the same query's `WHERE` clause (the alias doesn't exist yet when
+`WHERE` runs), why `WHERE` can't filter on an aggregate (the aggregate hasn't
+been computed yet), and why `HAVING` exists as a separate clause at all
+instead of just being a second `WHERE`.
+
+## Mechanics
+
+### Building the pipeline in execution order
+
+```sql
+FROM orders
+WHERE status = 'complete'                    -- filters ROWS, before grouping
+GROUP BY customer_id
+HAVING COUNT(*) > 5                           -- filters GROUPS, after grouping
+SELECT customer_id, COUNT(*) AS order_count
+ORDER BY order_count DESC
+LIMIT 10;
+```
+
+`WHERE` runs against individual rows before any grouping happens — it has
+never seen an aggregate and can't filter on one. `HAVING` runs after
+`GROUP BY` has collapsed rows into groups — it filters groups, and it's the
+only clause that can reference an aggregate result directly by expression
+(`HAVING COUNT(*) > 5`, not `HAVING order_count > 5`, because the alias
+`order_count` is defined in `SELECT`, which hasn't run yet).
+
+### Why `WHERE` before `GROUP BY` matters for performance, not just correctness
+
+```sql
+-- Filters BEFORE grouping: the database aggregates only 'complete' orders
+SELECT customer_id, COUNT(*) FROM orders
+WHERE status = 'complete' GROUP BY customer_id;
+
+-- Filters AFTER grouping, to the same final result -- but slower
+SELECT customer_id, COUNT(*) FROM orders
+GROUP BY customer_id, status HAVING status = 'complete';
+```
+
+Both can produce the same rows, but the first filters before the expensive
+aggregation step and the second aggregates everything (every status, every
+customer) before discarding most of it in `HAVING`. `WHERE` is a row filter
+applied early; `HAVING` is a group filter applied late. Using `HAVING` where
+`WHERE` would do is a common and easy-to-miss inefficiency, because both
+spell "filter" in English even though they operate at different stages of
+the pipeline.
+
+### `NULL` and three-valued logic
+
+SQL has three truth values, not two: `TRUE`, `FALSE`, and `UNKNOWN`. Any
+comparison involving `NULL` evaluates to `UNKNOWN`, and `WHERE` keeps only
+rows where the condition is `TRUE` — `UNKNOWN` rows are silently dropped,
+same as `FALSE` ones:
+
+```sql
+SELECT * FROM orders WHERE customer_id != 42;
+-- silently excludes rows where customer_id IS NULL, even though
+-- "not equal to 42" feels like it should include "no customer at all"
+```
+
+`customer_id != 42` where `customer_id` is `NULL` evaluates to `UNKNOWN`, not
+`TRUE`, so that row is dropped from the result exactly as if the condition
+had been `FALSE`. The fix, when NULLs should be included, is explicit:
+`WHERE customer_id != 42 OR customer_id IS NULL`.
+
+### Aggregate functions ignore NULL by default
+
+```sql
+SELECT AVG(amount_cents) FROM orders;         -- NULLs excluded from both sum and count
+SELECT COUNT(amount_cents) FROM orders;       -- counts non-NULL values only
+SELECT COUNT(*) FROM orders;                  -- counts every row, NULL or not
+```
+
+`COUNT(*)` and `COUNT(column)` are not interchangeable — the first counts
+rows, the second counts non-NULL values in that column, and a table with
+NULLs in the counted column will return different numbers from each. This is
+a frequent source of an off-by-some-unknown-amount bug in a report, because
+both spellings look equally reasonable and only one matches the intended
+question.
+
+## Cost & limits
+
+**`WHERE` reduces the row count entering every subsequent stage of the
+pipeline** — pushing a filter as early as possible (into `WHERE` rather than
+`HAVING`, or into a subquery before a join) reduces the amount of data every
+later stage has to process. This compounds: a filter that eliminates 90% of
+rows before a join means the join processes a tenth of the data it otherwise
+would.
+
+**`DISTINCT` and `GROUP BY` both force a full materialization and comparison
+of the result set** before returning anything — on a large intermediate
+result, either can be the most expensive part of the query, more than any
+single filter or join, because they can't stream results the way row-by-row
+filtering can.
+
+## When NOT to use it
+
+**Do not use `HAVING` to filter on a column that isn't an aggregate.** If the
+condition doesn't reference a `GROUP BY` result, it belongs in `WHERE`, both
+for correctness clarity and because it runs earlier and cheaper.
+
+**Do not rely on column position (`ORDER BY 2`) in production code.** It
+works, and it silently breaks the moment someone reorders the `SELECT` list
+without also updating the `ORDER BY` — reference the column name or a stable
+alias instead.
+
+**Do not assume `SELECT *` and an explicit column list behave identically
+under schema change.** `SELECT *` silently picks up new columns (and their
+associated cost) the moment they're added to the table, changing a query's
+output shape and performance profile with no change to the query itself.
+
+## Real-world usage
+
+Every dashboard, report, and API endpoint backed by SQL relies on this
+execution order being predictable — a filter placed in the wrong clause is
+one of the most common causes of a report returning a plausible-but-wrong
+number, because the query still runs successfully and returns *a* result,
+just not the intended one.
+
+## Failure modes
+
+**The report that's wrong by a consistent, explainable amount.** A `NULL`
+handling mistake in a `WHERE` clause (using `!=` instead of accounting for
+`NULL`) drops exactly the rows with `NULL` in that column, every time —
+symptom: a total that's consistently a bit low, tracking the count of `NULL`
+values in the excluded column, not random noise.
+
+**The slow query that "should" be fast.** A filter written in `HAVING` that
+belongs in `WHERE` forces the database to aggregate rows it will immediately
+discard — symptom: a query with a selective condition that still scans and
+aggregates the full table, visible in `EXPLAIN` as a large row count entering
+the aggregate step despite an apparently selective query.
+
+**The `COUNT` that disagrees with itself.** `COUNT(*)` and `COUNT(some_column)`
+returning different numbers in the same query is not a bug — it's NULL
+handling working as documented — but it reads as a bug to anyone who assumed
+they were interchangeable, and the disagreement is easy to miss until two
+reports built on the two forms stop reconciling.
+
+## Practice problems
+
+**1. Why does `SELECT customer_id, COUNT(*) AS n FROM orders WHERE n > 5
+GROUP BY customer_id` fail with a "column n does not exist" error?**
+
+`WHERE` runs before `SELECT`, so the alias `n` doesn't exist yet when `WHERE`
+is evaluated — and even setting aside the alias, `WHERE` runs before
+`GROUP BY`, so it can't reference an aggregate at all. The fix is `HAVING
+COUNT(*) > 5`, which runs after grouping.
+
+**2. `WHERE region != 'EU'` unexpectedly excludes rows where `region IS
+NULL`. Why, and how would you include them?**
+
+Three-valued logic: `NULL != 'EU'` evaluates to `UNKNOWN`, not `TRUE`, and
+`WHERE` only keeps rows where the condition is `TRUE`. Fix: `WHERE region !=
+'EU' OR region IS NULL`.
+
+**3. A report shows `COUNT(*)` and `COUNT(email)` returning different
+numbers for the same table. What does the difference tell you, and is it a
+bug?**
+
+Not a bug — the difference is exactly the number of rows with `NULL` in
+`email`. `COUNT(*)` counts rows; `COUNT(email)` counts non-NULL values of
+that column. Whichever number the report needs depends on the actual
+question being asked ("how many rows" vs. "how many rows have an email").
+
+<Quiz
+  client:visible
+  id="sql-fundamentals-execution-order"
+  kind="concept"
+  question="In SQL's execution order, which runs first: WHERE or GROUP BY?"
+  options={[
+    { label: "GROUP BY, so WHERE can filter on aggregate results" },
+    { label: "WHERE, which is why it can't reference an aggregate function directly", correct: true },
+    { label: "They run simultaneously" },
+    { label: "It depends on which is written first in the query" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Execution order is FROM, WHERE, GROUP BY, HAVING, SELECT, ORDER BY, LIMIT -- the opposite of how you type most of it. WHERE filters rows before any grouping happens, so it has no aggregate to filter on yet; that's what HAVING is for.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between WHERE and HAVING?"** `WHERE` filters
+individual rows before grouping happens; `HAVING` filters groups after
+`GROUP BY` has run, which is the only place you can filter on an aggregate
+result. The caveat that shows real use: using `HAVING` for a condition that
+doesn't involve an aggregate works but is strictly worse than `WHERE`,
+because it forces the database to do the (expensive) grouping work before
+discarding rows that could have been filtered out earlier and cheaper.
+
+**"Explain SQL's logical execution order."** Written order and execution
+order diverge: you type `SELECT` first, but it runs second-to-last, after
+`FROM`, `WHERE`, `GROUP BY`, and `HAVING`. The caveat that signals real
+experience: this is why a column alias defined in `SELECT` can be used in
+`ORDER BY` (which runs after `SELECT`) but not in `WHERE` or `GROUP BY`
+(which run before it) — a rule that looks arbitrary until you know the
+execution order behind it.

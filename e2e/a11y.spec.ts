@@ -25,6 +25,9 @@ const PAGES = [
   // Adds focusable SVG circles and build-time mermaid SVG — both are markup
   // axe has opinions about and neither exists anywhere else on the site.
   '10-ai-engineering/embeddings/',
+  // The rendering-strategy timeline positions bars by inline style rather than
+  // flow layout — worth checking axe has no opinion about that on its own.
+  '11-web-frontend/rendering-strategies/',
 ];
 
 for (const url of PAGES) {

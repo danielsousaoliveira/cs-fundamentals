@@ -495,6 +495,45 @@ test('PartitionKeyExplorer trades distribution against query routing', async ({
   expect(Number(routableAfter)).toBe(1);
 });
 
+test('RenderingTimeline hydrates and switching strategy moves the marked timings', async ({
+  page,
+}) => {
+  await page.goto('11-web-frontend/rendering-strategies/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  await expect(widget.locator('.rtl__event')).not.toHaveCount(0);
+
+  const before = await caption(page).innerText();
+  expect(before).toContain('Static (SSG)');
+
+  await widget.getByRole('button', { name: 'Client-rendered (CSR)' }).click();
+
+  await expect(caption(page)).not.toHaveText(before);
+  await expect(caption(page)).toContainText('Client-rendered (CSR)');
+
+  // CSR's headline claim: LCP lands strictly after the widget's own hydrated
+  // reading, which the counters flag as the failure mode.
+  const lcpValue = widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'largest contentful paint' })
+    .locator('.viz-counters__value');
+  await expect(lcpValue).toHaveClass(/join__wrong/);
+});
+
+test('RenderingTimeline is keyboard operable', async ({ page }) => {
+  await page.goto('11-web-frontend/rendering-strategies/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  const before = await caption(page).innerText();
+
+  const csrButton = widget.getByRole('button', { name: 'Client-rendered (CSR)' });
+  await csrButton.focus();
+  await expect(csrButton).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  await expect(caption(page)).not.toHaveText(before);
+});
+
 test('TerraformPlanDiff flips between update and replace by attribute', async ({
   page,
 }) => {

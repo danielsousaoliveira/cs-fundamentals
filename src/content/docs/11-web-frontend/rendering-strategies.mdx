@@ -1,0 +1,290 @@
+---
+title: Rendering strategies
+description: >-
+  Static, server-rendered, streaming, client-rendered and incrementally
+  regenerated pages, compared on one timeline instead of by adjective — when
+  the byte arrives, when the pixel arrives, and when the click actually works.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/event-loop
+  - 6-languages/node-runtime
+tags: [ssr, ssg, csr, streaming, isr, hydration, ttfb, lcp, astro]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: []
+---
+
+import { RenderingTimeline } from '../../../components/viz/widgets/RenderingTimeline.tsx';
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+"Static is fast, client-side is slow" is the kind of claim that is true often
+enough to survive unexamined and wrong often enough to cause a bad launch. It
+treats rendering strategy as a single speed dial, when it is really a
+**sequence of events happening at different times for different reasons**:
+when the server sends its first byte, when the browser has something to
+paint, and when the page starts responding to input. Two strategies can share
+a first-paint time and differ by hundreds of milliseconds on the third. A
+sentence cannot hold three independently-moving numbers; a timeline can.
+
+Every strategy on this page answers the same question differently: **how
+much of the work happens before the response leaves the server, versus after
+it lands in the browser?** Static did all of it at build time, months before
+anyone asked. SSR does it per request, on your infrastructure. CSR does
+almost none of it before sending — the browser gets a shell and does the
+rest. Streaming and incremental regeneration are neither extreme: each
+overlaps or defers part of the same work rather than moving all of it to one
+side.
+
+## Mechanics
+
+<RenderingTimeline client:visible />
+
+Five strategies, one shared timeline, four events marked on all of them:
+
+- **TTFB** — time to first byte. When the response *starts* arriving.
+- **First paint** — when the browser has enough markup to paint something.
+- **LCP** — largest contentful paint. When the page's main content, the thing
+  the reader came for, is actually on screen. This is the number that gets
+  conflated with TTFB, and the widget exists to show they are not the same
+  measurement.
+- **Hydrated** — when client JavaScript has attached and the page responds to
+  clicks. (This site itself ships interactive widgets — including this one —
+  as [Astro islands](https://docs.astro.build/en/concepts/islands/): server
+  markup first, JavaScript attached afterward. "Hydration" here is that
+  attachment step, not a metaphor.)
+
+Two comparisons worth making with the controls, in order:
+
+**Switch between Static and Server-rendered.** Static's TTFB is a cache
+lookup at the edge; SSR's TTFB waits for a real request to be rendered — a
+data fetch plus a render pass, on every single request, because nothing was
+precomputed. Both still reach first paint and LCP at roughly the same *point
+in their own timeline*, because both ship complete HTML: the content is in
+the markup the browser receives, not assembled afterward by JavaScript.
+
+**Switch to Client-rendered.** TTFB is the fastest of all five — the server
+does almost nothing before responding, just hands back an empty shell. LCP is
+the slowest of all five, and it lands *after* hydration, not alongside it:
+the browser has to download the full application bundle, parse it, attach
+it, and only then fetch the data it needs to render anything. A fast TTFB and
+a slow LCP are not in tension; they are the same architectural choice
+measured at two different points.
+
+**Streaming SSR** is the middle case worth naming separately: the server
+sends a shell immediately (fast TTFB, same as static) while the slow part —
+a database call, say — renders in parallel and streams in as a later chunk.
+The reader sees *something* early and the real content lands no later than a
+blocking SSR render would have delivered it, because the wait was overlapped
+with the response instead of placed in front of it.
+
+**Incremental regeneration (ISR)** looks identical to static on this
+timeline, deliberately: a normal request during the cached window *is* a
+cache hit, indistinguishable from static rendering. The difference is
+invisible to any single request and only shows up in the widget as a
+non-blocking background track — a stale page is served instantly while a
+fresh copy regenerates for the *next* visitor. Nothing about the reader's own
+timeline waits on it.
+
+## Cost & limits
+
+The timeline above is a model, not a trace captured from a real deployment —
+there is no single "the" TTFB or LCP; both are set by network latency, data
+source, and server load, and vary per request. What does not vary is the
+**shape**: which phases are sequential and which overlap, and that shape is
+what the widget derives from, not a number it asserts.
+
+**Bytes over the wire, roughly, per strategy:**
+
+- Static / SSR / streaming / ISR ship complete HTML for the requested page —
+  the payload is proportional to that page's content plus whatever
+  interactive islands it uses.
+- CSR ships a near-empty HTML shell plus the *entire application's* routing
+  and rendering code, because the browser needs all of it before it can
+  render the first route. A larger app means a larger bundle before first
+  paint, regardless of how small the actual page is — this is the direct
+  cost of moving rendering logic to the client.
+
+**Server load, roughly, per strategy:**
+
+- Static and ISR (on a cache hit) do zero render work per request; the cost
+  was paid once at build or regeneration time.
+- SSR pays a full render on every single request, so its infrastructure cost
+  scales with traffic in a way static's does not.
+- Streaming pays the same render cost as SSR, but held open longer (the
+  connection stays open while chunks stream), which is a different resource
+  profile — more concurrent open connections, not more CPU per request.
+- CSR pays almost nothing server-side; the render cost moved entirely to the
+  reader's device, which is why a low-end phone can make a CSR app feel far
+  slower than the same content served static.
+
+**Where each one hits a ceiling:** static content is stale by definition
+between builds — a build that takes ten minutes means content can be ten
+minutes wrong, which is why ISR exists at all. SSR's render-per-request cost
+becomes the ceiling directly: enough concurrent traffic exhausts render
+capacity before it exhausts bandwidth. CSR's ceiling is the reader's device
+and network, not the server's — a slow phone on a slow connection pays the
+full bundle-download-and-parse cost that a fast developer laptop never
+notices in testing.
+
+## When NOT to use it
+
+**Do not reach for CSR because it feels simpler to build.** It is the
+correct choice when the content is genuinely private-per-user and
+non-indexable — an authenticated dashboard, an editor, a tool a search
+engine will never be asked to rank. It is close to always the wrong choice
+for anything a stranger needs to read quickly or a search engine needs to
+crawl, because LCP landing after hydration is not a rare edge case in that
+architecture — it is what the architecture does by construction.
+
+**Do not reach for full per-request SSR for content that changes rarely.**
+Paying a render cost on every request for a page that changes once a day is
+spending infrastructure budget to recompute the same answer — static or ISR
+gets the same HTML to the reader with a cache lookup instead of a render.
+
+**Do not reach for streaming just because it sounds strictly better than
+SSR.** It adds real complexity — Suspense boundaries, out-of-order chunk
+delivery, a client that must handle partially-hydrated state — to buy back
+milliseconds that only matter when part of the page depends on a genuinely
+slow, independent data source. A page where every section needs the same
+one fast query gets nothing from streaming it would not get from ordinary
+SSR.
+
+**Do not reach for ISR without a plan for what "stale" is allowed to mean.**
+It is a good default for content that changes on a schedule (a blog, a
+product catalog) and a bad one for anything where a reader seeing yesterday's
+number is a real problem (a live price, a stock count) — that case wants SSR
+or a client-side fetch on top of a static shell, not a background
+regeneration window.
+
+## Real-world usage
+
+Marketing pages, documentation, and blogs are close to always static or
+ISR — the content is the same for every reader, changes infrequently, and
+every millisecond before LCP is directly worth money on a page whose whole
+job is to be read. This site is built that way: nearly every page here is
+prerendered, with interactive widgets hydrating as islands afterward rather
+than driving the initial render.
+
+Authenticated dashboards and internal tools lean CSR — the content is
+different for every user, not indexable, and the team already accepts a
+loading spinner as normal UX for a tool people keep open all day rather than
+land on once.
+
+E-commerce product pages are the canonical streaming or ISR case: mostly
+static (description, images) with one genuinely slow, personalized piece
+(live inventory, a recommendation call) that would otherwise block the
+entire page behind the slowest dependency.
+
+Feeds, search results, and anything personalized-per-request but still
+crawlable tend to land on SSR — content that must be fresh and specific to
+the request, but still needs to exist as real markup for LCP and for
+crawlers that do not execute JavaScript.
+
+## Failure modes
+
+**The "fast" site that measures slow.** A team ships CSR, watches TTFB in
+their monitoring dashboard, sees it looking great, and ships — because TTFB
+was never the number that mattered. The symptom shows up later, in Core Web
+Vitals or in users bouncing before content appears, and the fix is
+discovering that the metric being watched and the metric users experience
+were never the same one.
+
+**The stale build nobody rebuilt.** A static or ISR site has content baked
+in from the last build or regeneration; a content or pricing change made in
+the CMS does not exist on the live site until a rebuild happens (static) or
+the regeneration window elapses (ISR). Symptom: a support ticket about
+"wrong" content that turns out to be correct in the source and simply not
+yet deployed.
+
+**The streaming boundary that never resolves.** A Suspense boundary around a
+slow or failing data source streams a loading skeleton and then never
+replaces it, because the promise it is waiting on rejects or hangs with no
+timeout or fallback. Symptom: a page that looks like it is still loading
+forever, with no error visible anywhere in the UI — the failure is silent
+because nothing was built to catch it.
+
+**The hydration mismatch.** Server-rendered markup and the client's first
+render disagree — often because the render used something that differs
+between server and browser (the current time, `window`, a random value) —
+and the framework either re-renders the whole subtree client-side (quietly
+erasing any SSR benefit for that region) or throws visibly. Symptom: a
+flash of different content right after load, or a console error that only
+appears in production, because dev tooling for some frameworks masks exactly
+this class of bug.
+
+## Practice problems
+
+**1. A page has SSR's TTFB and CSR's LCP. What architecture produces that
+combination, and why?**
+
+A CSR page with server-side data prefetching that is not actually rendered
+into the response — the server does real work before responding (raising
+TTFB above a cheap empty-shell CSR page) but still ships an empty or
+skeleton shell, so LCP still waits on client-side hydration and rendering.
+This is a common half-migration state: teams add server-side data fetching
+for SEO metadata or caching without changing how the page is actually
+rendered, and get the cost of both approaches with the speed benefit of
+neither.
+
+**2. Using the widget's model, why does switching from SSR to Streaming SSR
+lower LCP without lowering TTFB by nearly as much?**
+
+Streaming's TTFB is fast because the *shell* renders immediately — nothing
+about the shell waits on the slow data. LCP, though, is the real content, and
+that still depends on the same slow data source SSR waits on; streaming just
+moves that wait to run in parallel with the shell's own network transfer
+instead of in front of it, so the total elapsed time to real content shrinks
+by roughly the overlapped portion, not by removing the slow work.
+
+**3. A stale-content bug report says the CMS was updated but the live page
+did not change. What question do you ask before touching any code?**
+
+Whether the page is static (needs a full rebuild), ISR (needs the
+regeneration window to elapse, or an on-demand revalidation trigger), or SSR
+(should have shown the change immediately, meaning the bug is probably a
+cache layer in front of the server, not the rendering strategy at all) —
+each answer points at a completely different fix, and guessing wrong wastes
+a deploy.
+
+<Quiz
+  client:visible
+  id="rendering-strategies-lcp-vs-ttfb"
+  kind="concept"
+  question="A page reports an excellent TTFB but a poor LCP. Which architecture is most consistent with that combination?"
+  options={[
+    { label: "Static site generation with a CDN cache hit" },
+    { label: "Client-rendered app that fetches its data after hydration", correct: true },
+    { label: "Server-rendered page with a slow database query" },
+    { label: "It is not possible for the two to diverge that much" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>CSR responds fast because the server does almost nothing before sending an empty shell — that is the good TTFB. LCP then has to wait for the full JS bundle to download, parse, hydrate, and only then fetch and render the real content, which is where the gap comes from. A slow SSR query would raise TTFB itself, not leave it looking good.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Walk me through the difference between SSR and static generation."** Both
+ship complete HTML, so their first-paint and LCP profiles look similar — the
+difference is *when* the render happens. Static renders once, at build time,
+so every request is a cache lookup; SSR renders on every request, so it can
+reflect data that changes between requests but pays a render cost — and
+inherits render latency — on every single one. The caveat that shows real
+experience: this is why teams reach for ISR as a middle ground, and why
+"just use SSR everywhere" is usually a cost decision in disguise, not a
+correctness one.
+
+**"Why would a fast TTFB still produce a slow user experience?"** Because
+TTFB measures when the response starts, not when the reader has anything
+useful — a CSR app can respond in milliseconds with an empty shell and still
+take a second or more to paint real content, once the bundle downloads,
+parses, hydrates, and fetches its own data. The caveat: this is exactly why
+Core Web Vitals moved the industry's attention to LCP and INP instead of
+server-side timing metrics alone — they measure what the reader actually
+experienced, not what the server measured about itself.

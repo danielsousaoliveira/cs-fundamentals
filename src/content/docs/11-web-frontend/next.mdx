@@ -1,0 +1,53 @@
+---
+title: Next.js
+description: Next.js's React server/client boundary and the cost of crossing it.
+sidebar: { order: 7 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [nextjs, react, server-components, frontend]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://nextjs.org/docs/app/getting-started/server-and-client-components, https://nextjs.org/docs/app/building-your-application/rendering]
+---
+
+## Intuition
+
+Next.js uses React's server/client boundary to keep data fetching and non-interactive rendering on the server, while Client Components carry browser behavior. The timeline and streaming strategies are prerequisites; this page focuses on the boundary's cost.
+
+## Mechanics
+
+```tsx
+// Server Component by default
+export default async function Page() {
+  const data = await getData();
+  return <ClientFilter data={data} />;
+}
+```
+
+`'use client'` marks a module boundary; its imports join the client graph and its props must be serializable. Checked against Next.js 16.3.1 documentation, 2026-08-17: [Server and Client Components](https://nextjs.org/docs/app/getting-started/server-and-client-components).
+
+## Cost & limits
+
+Moving a component to the client adds its code and reachable imports to browser bytes, plus serialization and hydration work for its rendered boundary. Keeping it server-side removes that client code but can require a request/stream boundary for data. For `m` client modules, startup work is approximately transfer + parse + execute of their reachable graph, then hydration of interactive instances; server rendering adds server compute per request unless cached. Measure route chunks and device TTI, not the framework's headline bundle.
+
+## When NOT to use it
+
+Do not use Next.js for a static page that needs no React runtime unless its platform benefits justify the dependency. Do not mark a whole page `'use client'` to fix one interactive control; keep the boundary narrow. Choose a simpler static or server-first tool when the app has no need for Next's routing, caching, or React integration.
+
+## Real-world usage
+
+Next.js fits React products needing a mix of server data access, indexed HTML, streaming, and browser interactions. Teams often keep page shells and data access server-side and isolate filters, editors, and charts as client boundaries.
+
+## Failure modes
+
+**A small button ships megabytes.** The symptom is a large route chunk; a broad `'use client'` boundary pulled a chart, data client, or utility graph into the browser. Split the boundary and inspect the production analyzer. **The page shows stale data.** The cause is an incorrect cache/revalidation assumption; declare and test freshness for the route. **Hydration is slow or mismatches.** Too many client instances or nondeterministic output inflate work; narrow boundaries and make server/client initial output equal.
+
+## Practice problems
+
+1. A page needs one date-picker but is entirely client-marked. Solution: move the marker to the picker and pass serializable data; compare route chunk bytes.
+2. A dashboard must be fresh per request. Solution: choose an explicit dynamic/fetch policy and verify response behavior under two requests; do not infer freshness from local development.
+
+## Interview answers
+
+Next.js lets React render non-interactive work on the server and ships browser code only across Client Component boundaries. The caveat is that the boundary is an accounting boundary: imports, serialization, hydration, and cache policy all affect the real result.

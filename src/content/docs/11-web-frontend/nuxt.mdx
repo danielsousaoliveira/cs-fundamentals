@@ -1,0 +1,51 @@
+---
+title: Nuxt
+description: Nuxt's Vue universal rendering and payload boundary between server and browser.
+sidebar: { order: 8 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [nuxt, vue, frontend, ssr]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://nuxt.com/docs/3.x/guide/concepts/rendering, https://nuxt.com/docs/3.x/guide/concepts/server-engine]
+---
+
+## Intuition
+
+Nuxt packages Vue into a universal application model: routes can render HTML on the server, then the browser takes over, while server-only code stays behind the server boundary. The foundational rendering page covers the general SSR/SSG timeline.
+
+## Mechanics
+
+```vue
+<script setup lang="ts">
+const { data } = await useFetch('/api/products')
+</script>
+```
+
+Nuxt can resolve data during server rendering and serialize the result for the client to avoid an identical first fetch. This is a legacy Nuxt 3 guide; check Nuxt's support and EOL policy before starting new work. Checked against Nuxt 3.20 documentation, 2026-08-17: [rendering modes](https://nuxt.com/docs/3.x/guide/concepts/rendering) and [server engine](https://nuxt.com/docs/3.x/guide/concepts/server-engine).
+
+## Cost & limits
+
+Universal rendering pays server render work per uncached request and then browser hydration work; static generation pays render work at build time and serves bytes from a cache. A `useFetch` payload adds serialized data bytes to the response, but avoiding a duplicate browser request can reduce latency and server load. Client-only components reduce hydration scope but defer their content. Derive the real budget from HTML + payload + JS transfer, parse/execute/hydration time, and server p99 at the chosen cache hit rate.
+
+## When NOT to use it
+
+Do not choose Nuxt for a fully static document unless its Vue conventions or deployment model are valuable. Do not SSR highly personalized content without a cache and privacy design. Avoid client-only rendering for content that must be present in initial HTML; use universal or static rendering instead.
+
+## Real-world usage
+
+Nuxt fits Vue sites that need indexed HTML, server data access, route-level rendering choices, and progressive enhancement. It is common for commerce, editorial, and authenticated applications with a public shell plus private interactions.
+
+## Failure modes
+
+**The server receives duplicate data requests.** The symptom is repeated API traffic on navigation; bypassing Nuxt's shared fetch payload or using a raw request in both server and client caused the duplication. Use the Nuxt data composable and inspect network traces. **A page leaks user-specific HTML through caching.** The cause is caching a personalized response as public; disable SWR, ISR, and Nitro caching for the route, send `Cache-Control: private, no-store`, and test isolation with separate authenticated sessions. **Hydration replaces the page.** Browser-only state differs from SSR output; keep the initial render deterministic and isolate client-only behavior.
+
+## Practice problems
+
+1. A 200 KB product payload is serialized into every response. Solution: select only fields needed for first paint, paginate the rest, and compare response bytes against the saved duplicate request.
+2. A personalized dashboard is cached publicly. Solution: disable SWR, ISR, and Nitro caching for the route, send `Cache-Control: private, no-store`, and verify isolation with separate authenticated sessions.
+
+## Interview answers
+
+Nuxt gives Vue a universal rendering and server boundary: it can send useful HTML, hydrate it, and share server-fetched payloads with the browser. The caveat is that the budget is two-sided—server render and payload bytes trade against browser hydration and duplicate-request avoidance, while cache mistakes can become data leaks.

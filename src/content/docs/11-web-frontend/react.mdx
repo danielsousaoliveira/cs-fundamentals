@@ -1,0 +1,59 @@
+---
+title: React
+description: React's rerender-and-diff model, measured in browser work and shipped bytes.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 11-web-frontend/rendering-strategies
+  - 6-languages/typescript
+tags: [react, frontend, reconciliation, hydration]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources:
+  - https://react.dev/learn/render-and-commit
+  - https://react.dev/reference/react/memo
+---
+
+## Intuition
+
+React treats a component function as a recipe for a UI snapshot. A state update runs the affected tree again; reconciliation compares the new element tree with the previous one and commits the resulting DOM updates. That model is the subject of [rendering strategies](../rendering-strategies/), not something to re-derive here.
+
+## Mechanics
+
+```tsx
+import { useState } from 'react';
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+```
+
+The click schedules a render, calls `Counter`, compares the returned elements, then commits the changed text node. `memo` can skip a child when its props are unchanged; it cannot make impure rendering safe. Checked against React 19.2.8 documentation, 2026-08-17: [render and commit](https://react.dev/learn/render-and-commit), [`memo`](https://react.dev/reference/react/memo).
+
+## Cost & limits
+
+For a tree with `n` visited component results and `d` DOM mutations, one update has an approximate JavaScript-work model of `O(n + d)`, not a total browser-cost equation: React may revisit or restart work, and DOM mutations can trigger layout and paint. A 10,000-row list that re-renders all rows visits about 10,000 row functions even when only one label changes. Memoization can reduce `n`, at the cost of prop comparisons and retained references. Bytes are the compressed React runtime plus the application code actually imported; measure the production chunk, not the package name. For server-rendered output, interactivity also depends on hydration; otherwise it depends on scheduling and long tasks after download, parse, and execution. Use TBT and INP on a target device to measure those costs rather than relying on deprecated TTI.
+
+## When NOT to use it
+
+Do not choose React for a mostly static document where islands or plain HTML solve the interaction; the runtime and hydration budget buy little. Do not use `memo` as a substitute for stable state boundaries. Choose a compile-time or fine-grained model when a large, frequently updating surface makes broad rerender bookkeeping the dominant cost.
+
+## Real-world usage
+
+React is a strong fit for product applications with many independently composed screens, a large hiring ecosystem, and a need to choose rendering around the same component model. React itself does not prescribe routing, data fetching, or deployment; those belong to the surrounding stack.
+
+## Failure modes
+
+**A keystroke drops below 60 fps.** The symptom is input lag in a large form. The cause is a high ancestor update visiting a wide subtree; split the state boundary, defer non-urgent work, or memoize measured hot children, then profile commits. **A server page flashes or logs hydration errors.** The cause is different first renders (time, randomness, browser-only state); make the initial output deterministic and test production hydration. **A list loses focus.** Index keys are acceptable for static or append-only lists, but changing lists can move identity when items are inserted, removed, filtered, or reordered; use stable item identity there and retain a reorder test.
+
+## Practice problems
+
+1. A 5,000-row table updates on every search keystroke. Estimate the visited work and name two measurements before optimizing. Solution: profile commit duration and row renders; move query state nearer the table, debounce/defer filtering, and virtualize only if the visible-window problem is real.
+2. SSR output differs only after a timestamp is added. Solution: render a server-known value first, then update in an effect; do not silence the mismatch.
+
+## Interview answers
+
+React reruns component recipes and reconciles the resulting tree, so its cost is the work it visits plus the DOM changes it commits. The caveat is that a small DOM diff does not imply a small render: broad parent state can still execute thousands of components, and hydration adds client work before interaction.

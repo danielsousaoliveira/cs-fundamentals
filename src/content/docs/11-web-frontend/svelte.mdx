@@ -1,0 +1,50 @@
+---
+title: Svelte
+description: Svelte's compile-time component updates and the runtime work they leave behind.
+sidebar: { order: 5 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [svelte, frontend, compiler, reactivity]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://svelte.dev/docs/svelte/overview, https://svelte.dev/docs/svelte/$state]
+---
+
+## Intuition
+
+Svelte turns component source into JavaScript that knows which assignments affect which DOM operations. It moves much of update bookkeeping from the browser runtime to compilation; the rendering timeline prerequisite explains when those operations run.
+
+## Mechanics
+
+```svelte
+<script>let count = $state(0);</script>
+<button onclick={() => count++}>{count}</button>
+```
+
+The compiler generates the invalidation and DOM update path for `count`; it does not need a general virtual-DOM walk for this component. Checked against Svelte 5 docs, 2026-08-17: [overview](https://svelte.dev/docs/svelte/overview) and [`$state`](https://svelte.dev/docs/svelte/$state).
+
+## Cost & limits
+
+For an update touching `d` compiled DOM targets, the generated path does approximately `O(d)` update work rather than visiting every component result; the emitted code size grows with the update logic and imported features. A page with many distinct handlers can therefore ship more generated application code even while each update is narrow. SSR still needs hydration code for interactive components, so time to interactive remains transfer + parse + execute + hydration, measured on a real device.
+
+## When NOT to use it
+
+Do not choose Svelte when the team depends on a mature ecosystem that does not support it or when compiler constraints would make a shared library awkward. Do not assume compiled updates eliminate data-flow complexity. Use plain HTML for no-interaction pages and choose a runtime model when dynamic metaprogramming or ecosystem breadth dominates.
+
+## Real-world usage
+
+Svelte fits interactive pages and applications where small, direct update paths and a low shared runtime are valuable. SvelteKit adds routing and server rendering; those deployment decisions belong to the rendering prerequisite.
+
+## Failure modes
+
+**A value changes but the UI does not.** In legacy mode, mutating an array/object without the assignment that triggers invalidation leaves compiled dependencies unaware; reassign or use the current reactive API. **A refactor creates excessive shipped code.** Repeated bespoke reactive blocks duplicate generated paths; inspect the production bundle and extract only genuinely shared behavior. **A server/client mismatch appears.** Browser-only values computed during SSR differ during hydration; make the initial value deterministic.
+
+## Practice problems
+
+1. `items.push(x)` leaves a list unchanged in legacy syntax. Solution: assign `items = [...items, x]`, or use the Svelte 5 state API consistently; test the compiled production behavior.
+2. A page has 100 tiny handlers. Solution: compare generated chunk bytes and interaction traces before and after consolidation; the smallest runtime is not automatically the smallest page.
+
+## Interview answers
+
+Svelte compiles reactive source into targeted DOM operations, so an update can scale with the targets it invalidates rather than a general tree walk. The caveat is that the compiler moves cost into generated code and imposes data-flow rules; inspect both bundle bytes and update traces.

@@ -1,0 +1,49 @@
+---
+title: Astro
+description: Astro's server-first HTML and explicit island boundaries for client work.
+sidebar: { order: 6 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [astro, frontend, islands, static]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://docs.astro.build/en/concepts/islands/, https://docs.astro.build/en/reference/directives-reference/]
+---
+
+## Intuition
+
+Astro renders components to HTML and sends client JavaScript only for components explicitly made interactive. An island is a boundary: static content stays HTML while a widget gets its own hydration policy. The [rendering-strategies](../rendering-strategies/) page owns the timeline vocabulary.
+
+## Mechanics
+
+```astro
+<SearchBox client:visible />
+```
+
+The server emits markup; `client:visible` delays the island's module and hydration until it enters the viewport. Checked against Astro 7.2.2 documentation, 2026-08-17: [islands](https://v7.docs.astro.build/en/concepts/islands/) and [directives](https://v7.docs.astro.build/en/reference/directives-reference/).
+
+## Cost & limits
+
+If a page has islands `i1...ik`, shipped client code is approximately the sum of their reachable chunks plus shared runtime, rather than a whole-site application bundle. Initial interactive work is the sum of islands eligible at load; `client:visible` moves an island's download and hydration later, trading immediate readiness for lower startup work. Static HTML shifts recurring render work to build time, while server rendering pays it per request; measure output bytes, island script bytes, and interaction latency separately.
+
+## When NOT to use it
+
+Do not use Astro when nearly every element is continuously interactive and cross-component client state dominates; a client application can make that boundary simpler. Do not add an island for content that never responds to input. Avoid `client:load` everywhere: it gives up the startup budget islands are meant to protect.
+
+## Real-world usage
+
+Astro is a strong fit for documentation, editorial, marketing, and commerce pages with a mostly stable content surface and a few interactive search, purchase, or visualization widgets.
+
+## Failure modes
+
+**A widget is visible but inert.** The symptom is HTML with no click behavior; its directive delayed hydration or its client module failed. Use the appropriate directive and monitor island errors. **A page becomes a client app by accident.** Many `client:load` islands duplicate runtime and hydration work; inspect the generated scripts and move non-critical widgets to visibility or idle. **Two islands disagree about shared state.** Separate islands do not share component memory automatically; move coordination to a deliberate client boundary or URL/server state.
+
+## Practice problems
+
+1. Ten charts use `client:load`. Solution: measure each chart's visibility and move below-fold charts to `client:visible`; compare startup JS and first interaction.
+2. A nav must work before any script. Solution: keep navigation as links/server HTML and enhance only the optional behavior; test with JavaScript disabled.
+
+## Interview answers
+
+Astro ships HTML by default and hydrates explicit islands, so client bytes and startup work scale with chosen interactive boundaries. The caveat is coordination: islands reduce shared runtime assumptions, and over-hydrating them recreates the application cost.

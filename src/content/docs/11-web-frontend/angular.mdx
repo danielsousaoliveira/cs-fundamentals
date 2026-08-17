@@ -1,0 +1,50 @@
+---
+title: Angular
+description: Angular's signal- and component-tree update model, with its explicit costs.
+sidebar: { order: 4 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [angular, frontend, signals, change-detection]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://v20.angular.dev/guide/signals, https://v20.angular.dev/guide/zoneless]
+---
+
+## Intuition
+
+Angular owns an application platform: components, dependency injection, templates, and change detection are designed together. Modern Angular signals record reads and mark consuming components when a signal changes; zoneless mode can schedule from explicit notifications. This page assumes the rendering timeline prerequisite rather than repeating it.
+
+## Mechanics
+
+```ts
+count = signal(0);
+double = computed(() => this.count() * 2);
+```
+
+Reading `count()` registers a dependency; `set` invalidates the computed value and consumers. Checked against Angular 20 documentation, 2026-08-17: [signals](https://v20.angular.dev/guide/signals) and [zoneless](https://v20.angular.dev/guide/zoneless).
+
+## Cost & limits
+
+An update invalidates the dependent signal graph and runs the affected template work; if legacy or zone-triggered checks visit `n` views, the upper-bound work is proportional to `n`, even when few bindings change. Signals can narrow that set, while the framework's baseline runtime, generated component code, and framework services add shipped bytes. Time to interactive is the sum of those bytes' transfer, parse, execution, and hydration; record it on the target device rather than comparing framework package sizes.
+
+## When NOT to use it
+
+Do not select Angular for a tiny static marketing page where its application platform is overhead. Do not turn on zoneless or signals as a migration slogan without tracing the notification paths. Choose a smaller library or static generator when the team does not need Angular's conventions, dependency injection, and long-lived platform support.
+
+## Real-world usage
+
+Angular is suited to large, multi-team applications with shared conventions, typed templates, and explicit service boundaries. Its structure is valuable when consistency and governance outweigh the cost of adopting a full platform.
+
+## Failure modes
+
+**A click causes a whole-screen spike.** The symptom is slow interaction despite one changed value; broad zone-triggered checks or an ancestor binding is visiting too many views. Profile change detection, isolate state, and use measured OnPush/signal boundaries. **A zoneless view never updates.** An async path changed state without a recognized notification; update through signals or the documented scheduling APIs and test the path. **A computed value is stale.** Reading a non-reactive field inside the computation records no dependency; read the signal itself and add a regression test.
+
+## Practice problems
+
+1. One signal changes but 2,000 views run. Solution: capture a profile, identify the ancestor notification, and narrow the component boundary before changing flags.
+2. A timer updates a plain field in zoneless mode. Solution: use a signal or explicitly notify through supported Angular APIs; verify the DOM in a production build.
+
+## Interview answers
+
+Angular combines a component platform with change detection; signals let the framework narrow invalidation to consumers of changed state. The caveat is that legacy or broad scheduling can still visit many views, and zoneless correctness depends on every async update producing a recognized notification.

@@ -1,0 +1,50 @@
+---
+title: Vue
+description: Vue's proxy-tracked updates and the dependency graph they create.
+sidebar: { order: 3 }
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
+tags: [vue, frontend, reactivity]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: [https://vuejs.org/guide/extras/reactivity-in-depth.html, https://vuejs.org/guide/essentials/reactivity-fundamentals.html]
+---
+
+## Intuition
+
+Vue makes state observable. A reactive proxy records which effects read each property; a write notifies those effects, and Vue updates the component view. The browser timing of that update belongs to [rendering strategies](../rendering-strategies/).
+
+## Mechanics
+
+```ts
+const count = ref(0);
+count.value++;
+```
+
+The read during render subscribes the render effect to `count`; the write schedules it. Vue batches jobs, so several synchronous writes normally produce one flush. Checked against Vue 3.5 docs, 2026-08-17: [reactivity in depth](https://vuejs.org/guide/extras/reactivity-in-depth.html).
+
+## Cost & limits
+
+If an update invalidates `k` subscribed effects, notification is proportional to `k`, then each effect's render and patch work adds its own cost. This can be much less than walking an unrelated component tree, but a broad reactive object or a component that reads many properties makes `k` broad. Each proxy/ref and dependency set also consumes memory; deep reactive data multiplies bookkeeping across accessed objects. Shipped bytes are the production Vue runtime plus imported features, and interactive time still includes hydration when SSR is used; measure the built output and a device trace.
+
+## When NOT to use it
+
+Avoid deep reactivity for huge immutable datasets that are replaced wholesale; use shallow boundaries or another representation. Do not choose Vue solely to avoid learning update costs: a page with no meaningful client interaction may need only HTML. Choose a different ecosystem when its conventions or integration constraints matter more than dependency tracking.
+
+## Real-world usage
+
+Vue suits dashboards and content applications where local reactive state, templates, and progressive adoption matter. It can render a static shell and hydrate selected behavior, or power a full client application; the choice changes the byte and interactive budgets described in the prerequisite.
+
+## Failure modes
+
+**A chart update freezes the tab.** The cause is making a large nested object deeply reactive and then mutating it; use `shallowRef`, immutable replacement, or a measured derived slice. **The UI is one tick behind.** The cause is reading immediately before Vue's batched flush; await `nextTick` when the DOM itself must be inspected. **A destructured prop stops reacting.** Destructuring can lose the proxy connection; use the documented reactive destructure pattern or `toRef`/`toRefs`. Checked against Vue 3.5 docs, 2026-08-17.
+
+## Practice problems
+
+1. Ten writes happen in one event. Why might there be one render? Solution: Vue queues and deduplicates effects; inspect after `nextTick`, not after the first assignment.
+2. A 100 MB JSON blob is reactive. Solution: keep it shallow or non-reactive and expose only the small reactive view-model; verify memory and update traces.
+
+## Interview answers
+
+Vue tracks reads and invalidates the effects that depend on changed reactive properties, then batches their updates. The caveat is that dependency tracking is not free: deep objects and broad reads create graph and memory work, while shallow boundaries can make large data cheaper.

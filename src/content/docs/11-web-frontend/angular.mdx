@@ -8,7 +8,7 @@ prereqs: [11-web-frontend/rendering-strategies, 6-languages/typescript]
 tags: [angular, frontend, signals, change-detection]
 languages: [typescript]
 roles: [frontend, fullstack]
-sources: [https://angular.dev/guide/signals, https://angular.dev/guide/zoneless]
+sources: [https://v20.angular.dev/guide/signals, https://v20.angular.dev/guide/zoneless]
 ---
 
 ## Intuition
@@ -22,7 +22,7 @@ count = signal(0);
 double = computed(() => this.count() * 2);
 ```
 
-Reading `count()` registers a dependency; `set` invalidates the computed value and consumers. Checked against Angular 20 documentation, 2026-08-17: [signals](https://angular.dev/guide/signals) and [zoneless](https://angular.dev/guide/zoneless).
+Reading `count()` registers a dependency; `set` invalidates the computed value and consumers. Checked against Angular 20 documentation, 2026-08-17: [signals](https://v20.angular.dev/guide/signals) and [zoneless](https://v20.angular.dev/guide/zoneless).
 
 ## Cost & limits
 

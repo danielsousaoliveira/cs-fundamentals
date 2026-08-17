@@ -23,7 +23,7 @@ const { data } = await useFetch('/api/products')
 </script>
 ```
 
-Nuxt can resolve data during server rendering and serialize the result for the client to avoid an identical first fetch. Checked against Nuxt 3.20 documentation, 2026-08-17: [rendering modes](https://nuxt.com/docs/3.x/guide/concepts/rendering) and [server engine](https://nuxt.com/docs/3.x/guide/concepts/server-engine).
+Nuxt can resolve data during server rendering and serialize the result for the client to avoid an identical first fetch. This is a legacy Nuxt 3 guide; check Nuxt's support and EOL policy before starting new work. Checked against Nuxt 3.20 documentation, 2026-08-17: [rendering modes](https://nuxt.com/docs/3.x/guide/concepts/rendering) and [server engine](https://nuxt.com/docs/3.x/guide/concepts/server-engine).
 
 ## Cost & limits
 
@@ -39,12 +39,12 @@ Nuxt fits Vue sites that need indexed HTML, server data access, route-level rend
 
 ## Failure modes
 
-**The server receives duplicate data requests.** The symptom is repeated API traffic on navigation; bypassing Nuxt's shared fetch payload or using a raw request in both server and client caused the duplication. Use the Nuxt data composable and inspect network traces. **A page leaks user-specific HTML through caching.** The cause is caching a personalized response as public; vary or disable caching and test with two users. **Hydration replaces the page.** Browser-only state differs from SSR output; keep the initial render deterministic and isolate client-only behavior.
+**The server receives duplicate data requests.** The symptom is repeated API traffic on navigation; bypassing Nuxt's shared fetch payload or using a raw request in both server and client caused the duplication. Use the Nuxt data composable and inspect network traces. **A page leaks user-specific HTML through caching.** The cause is caching a personalized response as public; disable SWR, ISR, and Nitro caching for the route, send `Cache-Control: private, no-store`, and test isolation with separate authenticated sessions. **Hydration replaces the page.** Browser-only state differs from SSR output; keep the initial render deterministic and isolate client-only behavior.
 
 ## Practice problems
 
 1. A 200 KB product payload is serialized into every response. Solution: select only fields needed for first paint, paginate the rest, and compare response bytes against the saved duplicate request.
-2. A personalized dashboard is cached publicly. Solution: mark the route private/dynamic, verify cache headers, and test with distinct sessions.
+2. A personalized dashboard is cached publicly. Solution: disable SWR, ISR, and Nitro caching for the route, send `Cache-Control: private, no-store`, and verify isolation with separate authenticated sessions.
 
 ## Interview answers
 

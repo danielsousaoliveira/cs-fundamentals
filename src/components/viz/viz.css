@@ -2153,3 +2153,145 @@ svg[id^='mermaid-'] {
   color: var(--viz-role-swap-fg);
   border-radius: var(--viz-radius);
 }
+
+/* RenderingTimeline */
+
+.rtl__chart {
+  position: relative;
+  margin-top: 1.6rem;
+  padding-top: 1.4rem;
+}
+
+.rtl__marks {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100%;
+  pointer-events: none;
+}
+
+.rtl__mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-1px);
+}
+
+.rtl__mark-line {
+  display: block;
+  width: 1px;
+  height: 100%;
+  background: var(--viz-border);
+  opacity: 0.6;
+}
+
+.rtl__mark-label {
+  position: absolute;
+  top: -1.3rem;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  font-family: var(--viz-font-mono);
+  white-space: nowrap;
+  color: var(--viz-fg-muted, currentColor);
+}
+
+.rtl__mark--lcp .rtl__mark-line {
+  background: var(--viz-role-swap-border);
+  opacity: 1;
+}
+
+.rtl__mark--hydrated .rtl__mark-line {
+  background: var(--viz-role-sorted-border);
+  opacity: 1;
+}
+
+.rtl__tracks {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rtl__track {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.rtl__track-label {
+  font-size: 0.72rem;
+  font-family: var(--viz-font-mono);
+  color: var(--viz-fg-muted, currentColor);
+}
+
+.rtl__track-lane {
+  position: relative;
+  height: 1.9rem;
+  background: var(--viz-surface-sunken, var(--viz-surface));
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius);
+  overflow: hidden;
+}
+
+.rtl__event {
+  position: absolute;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  display: flex;
+  align-items: center;
+  padding: 0 0.35rem;
+  border-radius: calc(var(--viz-radius) - 2px);
+  font-size: 0.66rem;
+  font-family: var(--viz-font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--viz-role-default-fg);
+  background: var(--viz-role-default-bg);
+  border: 1px solid var(--viz-role-default-border);
+  transition:
+    left var(--viz-duration) var(--viz-ease),
+    width var(--viz-duration) var(--viz-ease);
+}
+
+.rtl__event--network {
+  background: var(--viz-role-compare-bg);
+  color: var(--viz-role-compare-fg);
+  border-color: var(--viz-role-compare-border);
+}
+
+.rtl__event--render,
+.rtl__event--revalidate {
+  background: var(--viz-role-active-bg);
+  color: var(--viz-role-active-fg);
+  border-color: var(--viz-role-active-border);
+}
+
+.rtl__event--transfer {
+  background: var(--viz-role-default-bg);
+}
+
+.rtl__event--parse {
+  background: var(--viz-role-sorted-bg);
+  color: var(--viz-role-sorted-fg);
+  border-color: var(--viz-role-sorted-border);
+}
+
+.rtl__event--fetch {
+  background: var(--viz-role-swap-bg);
+  color: var(--viz-role-swap-fg);
+  border-color: var(--viz-role-swap-border);
+}
+
+.rtl__event--async {
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.rtl__event-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

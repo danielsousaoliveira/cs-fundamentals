@@ -1,0 +1,50 @@
+---
+title: Frontend testing
+description: Test browser behavior and component contracts at the boundary where users observe the interface.
+sidebar:
+  order: 14
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/forms-validation]
+tags: [testing, browser, components, playwright]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: []
+---
+
+## Intuition
+
+Frontend tests are valuable when they protect a user-observable contract: a person can submit a form, navigate with a keyboard, see a server error, or recover from a failed request. Component tests make state and rendering combinations cheap; browser tests prove that the assembled page, browser APIs, routing, and network boundary agree.
+
+## Mechanics
+
+Test components through rendered roles, labels, and visible text rather than private implementation details. Test browser flows through the same selectors and interaction a user has, intercepting network calls only where determinism requires it. Keep one focused test for each meaningful failure path and a small number of full journeys. The general testing material remains the prerequisite; this page covers the browser/component boundary.
+
+## Cost & limits
+
+If a component test renders in `c` milliseconds and runs `n` cases, serial cost is approximately `nc`; parallel workers reduce wall time until CPU, browser startup, or shared resources saturate. Browser tests add startup and network time, so a suite with `b` isolated browser contexts costs roughly `b × startup + test work`. The ceiling is flakiness: retries can hide a real race, so measure reruns and fix timing or ownership rather than increasing retries indefinitely.
+
+## When NOT to use it
+
+Do not use a browser test to cover every pure formatter, do not snapshot an entire page when a role-level assertion expresses the contract, and do not mock the browser so heavily that the test no longer exercises routing, focus, or network failure. Do not make every test an end-to-end journey; that produces slow feedback and unclear failures.
+
+## Real-world usage
+
+Component tests cover a form’s error and disabled states. Browser tests cover sign-in, keyboard navigation through a dialog, a failed save, and a route change with a loading state. A small accessibility assertion can run against the same rendered states.
+
+## Failure modes
+
+**The test passes while the user cannot click.** It called a component method or selected a CSS class rather than using the accessible surface. Query by role and label.
+
+**The suite flakes on timing.** It sleeps for an arbitrary duration while waiting for a request or transition. Wait for a visible state or response with a bounded timeout.
+
+**Mocks drift from the API.** The fixture accepts fields or status codes the real endpoint does not. Keep fixtures shaped like the contract and include an intentional server-error case.
+
+## Practice problems
+
+1. A save test asserts only that `fetch` was called. Add assertions for the user-visible pending, success, and error states, then reserve one browser test for the assembled route.
+2. A test uses `nth(0)` to find a button. Replace it with an accessible name; if two buttons share a name, improve the UI or scope the query to the relevant landmark.
+
+## Interview answers
+
+Component tests give fast feedback on rendered contracts; browser tests verify the assembled user journey and real browser behavior. The caveat is that test stability comes from explicit state and boundaries, not from sleeps, retries, or assertions about implementation details.

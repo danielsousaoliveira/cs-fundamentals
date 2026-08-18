@@ -181,13 +181,14 @@ on mismatch, forcing the client to reload and reapply.
 
 ## Practice problems
 
-**1. A `304` response is showing a `Content-Length: 2048` header.** What's
-wrong, and why does it matter? — A `304` must not carry a body, so a
-`Content-Length` matching the full resource means either a proxy is
-rewriting the response incorrectly or the server is not actually short-
-circuiting the serialization pass; the client saved no bandwidth even though
-the status code implies it did. Verify by checking whether the byte count on
-the wire matches the header.
+**1. A `304` response comes back with a 2 KB body attached.** What's wrong,
+and why does it matter? — A `304` must never carry a message body (a
+`Content-Length` header alone is fine — it can legitimately describe the
+selected representation's size — but an actual body means a proxy or server
+is not short-circuiting the serialization pass and is resending the full
+resource anyway). The client saved no bandwidth even though the status code
+implies it did. Verify by checking the actual bytes on the wire, not just
+the status code.
 
 **2. Design the sunset path for a field.** A `discount_code` field is being
 replaced by `discount` (an object with `code` and `percent`). Write the

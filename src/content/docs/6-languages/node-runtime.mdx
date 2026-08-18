@@ -309,6 +309,12 @@ await pipeline(
 Use `pipeline` rather than `.pipe()` chains: `.pipe()` does not forward errors or
 destroy the remaining streams, which leaks file descriptors on failure.
 
+**A server-rendering framework lives on top of all of this.** [Rendering
+strategies](/cs-fundamentals/11-web-frontend/rendering-strategies/) is where the
+state-sharing rule above turns into "don't put a request-scoped value in module
+scope," and where streaming a response is the same backpressure question as
+streaming a file.
+
 ## Failure modes
 
 **Symptom: memory climbs steadily and the process eventually dies with `FATAL

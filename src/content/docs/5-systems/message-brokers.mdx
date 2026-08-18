@@ -307,6 +307,14 @@ versioned, additive-only JSON. Old consumers must tolerate new fields, and new
 consumers must tolerate old messages, because a log can contain events written by
 code that no longer exists. Never repurpose a field's meaning — add a new one.
 
+**Two systems downstream take these mechanics further.** [Event-driven
+architecture](/cs-fundamentals/13-architecture/event-driven-architecture/) is
+what choreography and orchestration look like once services communicate this
+way by default rather than as an exception. [Ingestion and
+CDC](/cs-fundamentals/7-data-engineering/ingestion-and-cdc/) is the same log
+consumed for data replication instead of application events — ordering and
+schema evolution are the same problem, one layer down.
+
 ## Failure modes
 
 **Symptom: everything is processed twice, occasionally.** At-least-once working as

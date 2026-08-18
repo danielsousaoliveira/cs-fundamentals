@@ -295,6 +295,14 @@ same idea, several hashes, no stored keys.
 **Content addressing.** Git names every object by the SHA-1 of its contents; so do
 Docker layers and IPFS. Same hash, same object, no coordination required.
 
+**Partitioning in distributed stores.** The same load-factor and hot-key reasoning
+resurfaces at cluster scale as the choice of a
+[partition key](/cs-fundamentals/8-databases-storage/cosmosdb/) — a bad key
+concentrates writes on one shard the same way a bad hash function concentrates
+entries in one bucket. [Single-table NoSQL
+design](/cs-fundamentals/8-databases-storage/nosql-modelling/) is that idea
+pushed further: the primary key doubles as the access pattern.
+
 ## Failure modes
 
 **Hash flooding.** Covered in the quiz above: adversarial keys that all collide

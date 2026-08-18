@@ -82,6 +82,18 @@ exchanged for a new access token periodically. Revoking the refresh token
 stops new access tokens from being minted; it does not touch access tokens
 already issued.
 
+A refresh token shouldn't be reused indefinitely either: **rotate it on
+every exchange** — each refresh call issues a new refresh token and
+invalidates the one just spent — so a refresh token is single-use. That
+turns theft into something detectable: if a stolen refresh token is
+replayed after the legitimate client already rotated past it, the server
+sees a redeemed-and-already-superseded token and can revoke the entire
+token family (every token descended from that login), not just the one
+reused token. In a browser, the refresh token belongs in an `HttpOnly`,
+`Secure`, `SameSite` cookie — never in `localStorage`, where any script
+running on the page (an XSS payload, a compromised dependency) can read
+it directly.
+
 **OAuth 2.0 / OIDC** is the same access-token idea generalized to a third
 party: the app never sees the user's password, only a token an identity
 provider issued after the user authenticated with *it*. Authorization Code
@@ -124,13 +136,23 @@ which one you pick.**
   cheap. The tradeoff was paid earlier — every request costs a database
   round trip (or a cache lookup, typically ~1ms against Redis) that a
   stateless token doesn't.
-- **Stateless JWT, no revocation list:** revocation is impossible before
-  `exp`. A stolen token with a 15-minute expiry is live for up to 15
-  minutes no matter what the server does after discovering the theft. This
-  is the central tradeoff of the design: the server pays nothing to verify
-  a token (no round trip, just a signature check, sub-millisecond) and pays
-  for that by losing the ability to say "no" to a specific token once
-  issued.
+- **Stateless JWT, no revocation list:** `jwt.verify` checks a token's
+  signature against a key the server controls — that's what makes it
+  trustworthy without a database round trip, but it also means the only
+  lever the server has over an *already-issued* token, without adding
+  state, is that key. Revoking one specific token is impossible before
+  `exp` — a stolen token with a 15-minute expiry is live for up to 15
+  minutes no matter what the server does after discovering the theft.
+  Rotating or retiring the signing key is the blunt instrument one level
+  up: it invalidates *every* token signed with that key at once, which
+  solves "kick everyone out immediately" (a suspected key compromise) at
+  the cost of also signing out every unaffected user — not a substitute
+  for selective, per-token revocation, which still needs server-side
+  state. This is the central tradeoff of the design: the server pays
+  nothing to verify a token (no round trip, just a signature check,
+  sub-millisecond) and pays for that by losing the ability to say "no" to
+  one specific token without either waiting out its expiry or taking
+  every other token down with it.
 - **JWT + deny-list:** revocation means writing the token's `jti` to a
   fast-lookup store (Redis) with a TTL equal to the token's remaining
   lifetime, and checking that store on every verify. This reintroduces the
@@ -149,11 +171,18 @@ which one you pick.**
 against a well-indexed `sessions` table on primary-key lookup is
 sub-millisecond and bounded by connection pool size, not row count — the
 limit shows up as connection exhaustion under load, not query latency. A
-JWT signature check (HMAC-SHA256) is roughly 5–20μs of CPU per request with
-no I/O; at the same 5,000 req/s that's under 100ms of aggregate CPU a
-second, which is why stateless auth is the default choice for services that
-fan a request out to many downstream calls, each needing its own identity
-check.
+JWT signature check (HMAC-SHA256) is on the order of low tens of
+microseconds of CPU per request with no I/O; at the same 5,000 req/s
+that's on the order of tens to a hundred milliseconds of aggregate CPU a
+second — small enough that it's rarely the bottleneck, which is why
+stateless auth is the default choice for services that fan a request out
+to many downstream calls, each needing its own identity check. Treat both
+figures as illustrative, not a guarantee: the real numbers depend on the
+signing algorithm (an RSA/ECDSA check costs meaningfully more than HMAC),
+key size, runtime, hardware, and how much else is contending for the same
+event loop or connection pool — measure p95/p99 under your own load and
+watch event-loop lag, not just the median, before sizing a token strategy
+around either number.
 
 ## When NOT to use it
 
@@ -182,8 +211,12 @@ check.
 
 ## Real-world usage
 
-GitHub's OAuth apps use the Authorization Code flow with a short-lived
-access token exchanged via a server-side client secret; GitHub's own web
+GitHub distinguishes the two token lifetimes this page argues matter: an
+OAuth App's access token, exchanged via a server-side client secret, is
+long-lived by default (it doesn't expire unless the app opts into token
+expiration), while a GitHub App's user access token expires after eight
+hours and is paired with a refresh token — the shorter-lived, rotate-and-
+refresh shape this page recommends. GitHub's own web
 sessions are cookie-based, not token-based, because a first-party session
 that must survive a password change and support "sign out everywhere" needs
 the exact revocation precision a database row provides. Google's OIDC

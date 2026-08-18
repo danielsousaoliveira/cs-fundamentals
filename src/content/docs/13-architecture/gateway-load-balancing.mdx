@@ -86,21 +86,26 @@ nothing to correct the imbalance — a hot key mapped to a struggling
 backend stays mapped there — which is the tradeoff made deliberately in
 exchange for stickiness.
 
-**Health checks and ejection.** A backend is removed from rotation when it
-fails a **liveness check** — typically an HTTP `GET /healthz` on an
-interval (5–10s is common), ejected after N consecutive failures (2–3 is
-typical) to avoid ejecting on one transient blip, and re-admitted after M
-consecutive successes once it recovers. The health-check *condition* is
-the part worth deriving rather than defaulting: a shallow check (does the
-process answer at all) catches a crashed process but not a process that's
-up and answering while its database connection pool is exhausted — a
-**deep health check** that verifies the dependency the backend actually
-needs (a fast query against its database, not just a 200 from the process)
-catches the second case, at the cost of the health check itself now being
-able to fail for a reason unrelated to that specific backend instance (the
-shared database being down takes every backend's deep check down with it,
-ejecting the entire fleet at once — a shallow check would have correctly
-left them all in rotation, unable to help either way).
+**Health checks and ejection.** The check that decides whether a backend
+receives traffic is a **readiness check**, not a liveness check —
+liveness answers "is this process making progress, or should the
+orchestrator restart it," readiness answers "can this specific instance
+correctly handle a request right now," and a load balancer only cares
+about the second question. A readiness probe is typically an HTTP `GET
+/healthz` on an interval (5–10s is common), the backend ejected after N
+consecutive failures (2–3 is typical) to avoid ejecting on one transient
+blip, and re-admitted after M consecutive successes once it recovers. The
+readiness *condition* is the part worth deriving rather than defaulting: a
+shallow check (does the process answer at all) catches a crashed process
+but not a process that's up and answering while its database connection
+pool is exhausted — a **deep readiness check** that verifies the
+dependency the backend actually needs (a fast query against its database,
+not just a 200 from the process) catches the second case, at the cost of
+the check itself now being able to fail for a reason unrelated to that
+specific backend instance (the shared database being down takes every
+backend's deep check down with it, ejecting the entire fleet at once — a
+shallow check would have correctly left them all in rotation, unable to
+help either way).
 
 ```mermaid
 sequenceDiagram
@@ -146,17 +151,24 @@ round trip, typically low single-digit milliseconds), which is the reason
 deep checks run less frequently than shallow ones in practice.
 
 **What an uneven backend costs under each algorithm, concretely.** Take 3
-backends, one running at half the throughput of the other two (a degraded
-instance, not yet failing health checks). Under round robin, that backend
-receives 33% of requests but can only clear 33% of the *fleet's* combined
-throughput budget in the time the other two clear 66% each proportionally
-— its queue grows without bound as long as the imbalance persists, and its
-p99 latency degrades continuously until it either recovers or fails health
-checks. Under least connections, that backend's growing queue is exactly
-the signal the algorithm reads, so its request share drops roughly in
-proportion to its slowdown — not to zero, but to something closer to the
-share it can actually clear, which is the self-correction round robin
-lacks.
+backends, one running at half the throughput of the other two — call each
+healthy backend's capacity `C`, so the fleet's combined capacity is `2.5C`
+(2 backends at `C`, 1 at `0.5C`). Round robin still sends the degraded
+backend a flat third of incoming requests regardless of whether it can
+clear that share. At a third of `C` — that is, whenever the fleet's total
+arrival rate `λ` stays at or below `1.5C` — the degraded backend can still
+keep up with its fixed third and nothing backs up. Only once `λ` exceeds
+`1.5C` does that backend's assigned share (`λ/3`) exceed what it can
+actually clear (`0.5C`), and only then does its queue start to grow and
+its latency degrade — round robin's failure here is conditional on load,
+not automatic. Least connections doesn't wait for that threshold: it
+routes each new request to whichever backend currently has the fewest
+active requests, so as the degraded backend's in-flight count climbs
+relative to its peers, new requests get steered away from it — its share
+of *new* requests falls below a third *before* a hard overload point is
+reached, not just after. That's a live, continuous response to the
+observed queue, not a guarantee that the degraded backend's share lands
+exactly at the throughput it can clear.
 
 ## When NOT to use it
 
@@ -169,17 +181,19 @@ lacks.
   dependency (a database, a required downstream service) whose failure
   should take the backend out of rotation.** A backend that answers
   `/healthz` while every real request fails against a dead connection
-  pool passes every liveness check while actively serving errors — the
-  gap a deep check exists to close.
+  pool passes every shallow readiness check while actively serving errors
+  — the gap a deep check exists to close.
 - **Don't run only deep health checks either, without considering the
   shared-dependency blast radius.** A deep check against a shared
   database means a database blip ejects the entire fleet simultaneously
   — sometimes correct (nothing can serve anyway), sometimes worse than
   shallow checks would have been (a brief blip that would have recovered
   in seconds now triggers a full re-admission ramp-up across every
-  instance). The right answer is usually both: a shallow liveness check
-  gating basic rotation, plus a separate readiness signal for
-  deploy-time traffic admission.
+  instance). The right answer is usually both: a lightweight liveness
+  probe (is the process itself alive and worth restarting if not) kept
+  entirely separate from the readiness signal that actually gates traffic
+  admission, so a shared-dependency blip degrades rotation without
+  triggering process restarts too.
 - **Don't build a custom API gateway when an existing one (Envoy, Kong,
   AWS API Gateway, NGINX) already covers the routing and health-check
   behavior needed.** Custom gateway code earns its cost only when the
@@ -188,12 +202,17 @@ lacks.
 
 ## Real-world usage
 
-Envoy's default load-balancing policy is a variant of least-requests
-(least connections generalized with power-of-two-choices sampling to
-avoid the herd problem noted above), specifically because Envoy is
-commonly deployed as a service-mesh sidecar where backend response times
-vary continuously with real workload skew, not just at failure boundaries
-— round robin was a worse default for that environment. AWS's Application
+Core Envoy's cluster default is round robin (`ROUND_ROBIN`); Least Request
+— a variant of least-connections generalized with power-of-two-choices
+sampling to avoid the herd problem noted above — is available and has to
+be configured explicitly. Envoy Gateway, the Kubernetes Gateway API
+implementation built on Envoy, flips that default and ships with Least
+Request out of the box, precisely because a service-mesh-style deployment
+is where backend response times vary continuously with real workload skew,
+not just at failure boundaries — round robin is a worse default for that
+environment specifically, which is why the more specialized project
+changed it rather than core Envoy changing its general-purpose default.
+AWS's Application
 Load Balancer performs health checks against a configurable path with
 independently tunable healthy/unhealthy thresholds and interval, and
 explicitly documents a *deregistration delay* (connection draining) —
@@ -221,12 +240,12 @@ instances were rolled out gradually.** Cause: a deep health check against
 a shared resource (a schema migration mid-flight, a shared cache being
 warmed) fails identically on every instance at once, since the shared
 dependency — not the individual instance — is what's actually unhealthy.
-Fix: separate the liveness check (is this process itself healthy) from a
-readiness check tied to the specific rollout condition, and stage the
-shared-resource change so it doesn't create a moment where every deep
-check fails at once. Detect it earlier by testing the health-check
-behavior specifically during the deploy sequence, not just at steady
-state.
+Fix: separate the liveness probe (is this process alive and worth
+restarting if not) from the readiness check that gates traffic and is
+tied to the specific rollout condition, and stage the shared-resource
+change so it doesn't create a moment where every deep readiness check
+fails at once. Detect it earlier by testing the health-check behavior
+specifically during the deploy sequence, not just at steady state.
 
 **Symptom: users see intermittent errors immediately after a scale-down
 event removes an instance.** Cause: the instance was terminated without a
@@ -256,7 +275,7 @@ per-backend in-flight counts, negligible at 5 backends.
 **2. Design a health-check policy for a backend whose only hard
 dependency is a database, given that a shallow check alone lets it serve
 errors while healthy, and a deep check alone risks ejecting the whole
-fleet on a database blip.** — Run two checks: a shallow liveness check
+fleet on a database blip.** — Run two checks: a shallow readiness check
 (process responds) on a short interval (5s, 2-failure threshold) gating
 basic traffic eligibility, and a separate deep readiness check (a fast
 query against the database) on a longer interval or with a higher failure

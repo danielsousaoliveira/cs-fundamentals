@@ -54,9 +54,23 @@ await queue.add('send-trial-ending-email', { userId }, { delay: ms('24h') });
 Cron jobs need a **leader-election or lock** in any multi-instance
 deployment — without one, every instance's cron fires at 2am and the job
 runs N times, once per instance. A distributed lock (`SELECT ... FOR UPDATE
-SKIP LOCKED` on a `cron_locks` row, or a Redis `SET key value NX EX 60`)
-held for the job's duration is the standard fix; a job that starts without
-acquiring the lock exits immediately instead of running.
+SKIP LOCKED` on a `cron_locks` row, or a Redis `SET key value NX EX 60`) is
+the standard fix; a job that starts without acquiring the lock exits
+immediately instead of running. Treat it as a *lease*, not a permanent
+lock: `value` should be a token unique to the instance holding it, and
+releasing or renewing the lease should be an atomic compare-and-delete (or
+compare-and-extend) against that token — an unconditional `DEL` lets any
+instance release a lease it doesn't actually hold, and a plain renewal
+without the token check lets a second instance that raced in after an
+expiry silently overwrite the first instance's lease and then have both
+believe they hold it. A lease can still expire out from under a holder
+that's still working — a GC pause, a slow query, or a network delay long
+enough to blow past the TTL — so for work where two concurrent holders
+would cause real damage (not just a harmless double-run of an idempotent
+job), pair the lease with a fencing token: a monotonically increasing
+number handed out with each successful acquisition, checked by whatever
+the job writes to so a late write from an instance that lost its lease is
+rejected rather than applied.
 
 **Idempotent execution.** The retry guarantee a queue gives you is
 at-least-once, not exactly-once — a worker can crash after doing the work
@@ -67,11 +81,13 @@ same end state, not double the effect.
 ```typescript
 // not idempotent — a retry double-charges
 async function chargeCard(orderId: string) {
+  const order = await db.orders.findOne({ id: orderId });
   await stripe.charges.create({ amount: order.total, customer: order.customerId });
 }
 
 // idempotent — a retry is a no-op against the already-applied charge
 async function chargeCard(orderId: string) {
+  const order = await db.orders.findOne({ id: orderId });
   await stripe.charges.create(
     { amount: order.total, customer: order.customerId },
     { idempotencyKey: `charge-${orderId}` }, // Stripe dedupes on this key
@@ -79,12 +95,23 @@ async function chargeCard(orderId: string) {
 }
 ```
 
-Where the provider doesn't offer a built-in idempotency key, the same
-pattern is rolled by hand: a `processed_jobs` table keyed on a
-deterministic job ID, checked before the side effect and written inside the
-same transaction as the effect (or right after, with the effect itself
-designed to be safely re-appliable — an `UPSERT` instead of an `INSERT`,
-a `SET status = 'sent'` instead of `INSERT INTO sent_emails`).
+Where the effect is entirely inside your own database, the same pattern is
+rolled by hand: a `processed_jobs` table keyed on a deterministic job ID,
+checked before the side effect and written inside the *same* transaction
+as the effect — the atomicity is what makes "check, then write" safe, and
+it only holds when the check and the effect commit together. That
+guarantee stops at the database's edge: a call to an external system (an
+email provider, a payment processor, a third-party webhook) can't be
+wrapped in your local transaction, so "checked before, written after"
+around a remote call still leaves a window where the remote effect
+happened but the local record of it didn't get written — the crash-after-
+send case a retry can't tell apart from crash-before-send. For a remote
+effect, the correct primitive is the provider's own idempotency support
+(Stripe's `idempotencyKey`, as above) where it exists, or a durable,
+reconciled workflow (a job that starts in `pending`, and a separate
+reconciliation pass that checks the remote system's actual state before
+retrying) where it doesn't — a local-only idempotency table cannot make a
+remote side effect safe by itself.
 
 **Observing silent failure.** A job that throws is easy — the queue's
 retry and dead-letter path (covered on the message-brokers page) catches
@@ -111,25 +138,38 @@ signature of a job that's technically fine and functionally dead.
 
 ## Cost & limits
 
-**Scheduling granularity and drift.** Cron's finest practical grain is a
-minute; sub-minute scheduling needs a different mechanism (a delayed queue
-with second-level delay, or a long-running scheduler loop) because cron
-itself was never built for it. Clock drift between instances matters for
-lock-based leader election specifically at the boundary — two instances a
-few hundred milliseconds apart in clock time can both believe they've
-acquired a lock that expires in that window; a lock TTL needs enough
-margin over the job's expected runtime (2–3x, as a starting point) that
-drift and a slow run don't both land inside it.
+**Scheduling granularity and lease margin.** Cron's finest practical grain
+is a minute; sub-minute scheduling needs a different mechanism (a delayed
+queue with second-level delay, or a long-running scheduler loop) because
+cron itself was never built for it. The lease TTL from the mechanics
+section above is the other knob worth sizing deliberately: too short, and
+a GC pause or a slow-but-legitimate run outlives the lease, letting a
+second instance acquire it and both believe they're the one doing the
+work; too long, and a crashed holder leaves the job un-run for the
+remainder of the TTL before anyone else can pick it up. Neither a fixed
+TTL nor a fencing token makes the risk zero — a lease can still be
+believed to be held by an instance that's actually stalled — sizing the
+TTL with real margin over the job's expected runtime (2–3x, as a starting
+point) narrows the window rather than closing it, which is why the
+fencing token matters for anything where a second concurrent writer is
+genuinely dangerous rather than just wasteful.
 
 **Idempotency-key storage.** A `processed_jobs` table or Redis key-set
 keyed on job ID needs a retention window matched to how long redelivery can
-plausibly happen after — for most queues, minutes to low hours, not
-indefinitely; a key that never expires is an unbounded table, one row per
-job ever processed. At 100,000 jobs/day with a 7-day retention window,
-that's roughly 700,000 rows — trivial for a database, but "never expire
-the key" turns it into tens of millions of rows within a year, imposing a
-real index-maintenance cost for a guarantee that stopped being needed
-after the redelivery window closed.
+plausibly happen after — and that horizon is longer than plain at-least-
+once redelivery alone suggests, because it has to cover the full retry
+schedule, any dead-letter queue a message can sit in before someone
+investigates it, and a manual redrive of that DLQ weeks later. Concretely:
+SQS retains a message for up to 14 days if configured for it; Pub/Sub
+supports retention up to 31 days; Stripe retains idempotency keys for at
+least 24 hours. A retention window shorter than the real redelivery
+horizon reopens exactly the double-effect bug idempotency was meant to
+close, just delayed until whatever redelivered the message outlived the
+key. A key that never expires, on the other hand, is an unbounded table,
+one row per job ever processed — at 100,000 jobs/day that's roughly 3
+million rows a month with no cap, a real and avoidable index-maintenance
+cost once the row is older than any plausible redelivery, DLQ, or manual
+replay for that job.
 
 **Worker throughput vs. job cost.** A worker pool's real capacity is jobs
 processed per second, which is worker count divided by average job

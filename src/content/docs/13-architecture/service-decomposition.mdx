@@ -98,14 +98,24 @@ the system.
 in-process call is nanoseconds to low microseconds. The equivalent call
 across a service boundary — HTTP, JSON serialization, TLS handshake
 (amortized by keep-alive), a hop through a load balancer — is typically
-1–5ms same-region, more with retries or a slow downstream. A request
-handler that made 3 in-process calls and now makes 3 service calls has
-added single-digit milliseconds of latency at best; one that fans out to
-15 downstream services per request (a common outcome of over-decomposing
-a single logical operation) has added tens of milliseconds and, more
-importantly, has made its p99 the p99 of the *slowest* of those 15 calls,
-not the sum of averages — a single flaky dependency now sets the ceiling
-for a request that touches it at all.
+1–5ms same-region, more with retries or a slow downstream. What that
+compounds into depends on the shape of the fan-out. If the 3 (or 15)
+calls are made **sequentially** — each one waiting on the last — the
+added latency is roughly additive: 3 in-process calls turned into 3
+sequential service calls adds single-digit milliseconds; 15 sequential
+calls adds tens of milliseconds, straightforwardly. If they're made **in
+parallel**, the request's latency is governed by whichever call finishes
+last, not the sum — but "governed by the slowest" is a statement about
+probability, not a guarantee equal to any one call's own p99. With 15
+independent downstream calls each individually hitting their stated p99
+1% of the time, the chance that *at least one* of the 15 exceeds its own
+p99 on a given request is roughly `1 - 0.99^15 ≈ 14%` — meaningfully
+higher than 1%, and higher again the more calls are fanned out in
+parallel. Decomposing a single logical operation into many downstream
+calls, sequential or parallel, raises the odds that *some* dependency
+having a bad moment becomes *this* request having a bad moment — the
+mechanism is compounding probability across dependencies, not a single
+slow call setting a hard ceiling.
 
 **Operational cost, per service.** Each service is its own deploy
 pipeline, its own on-call rotation surface, its own set of dashboards and
@@ -201,10 +211,15 @@ schema from outside that service's codebase is the tell.
 sometimes leaves the system in a half-completed state — an order exists
 with no corresponding inventory decrement.** Cause: the operation was
 split across services without a compensating-action design for partial
-failure — the saga pattern was needed and wasn't built. Fix: implement
-explicit compensating actions (cancel the order if the inventory step
-fails) or move to an event-driven design where each step is independently
-retryable and idempotent. Detect it earlier by writing the failure-mode
+failure — the saga pattern was needed and wasn't built. Fix: implement an
+explicit saga — compensating actions for each step (cancel the order if
+the inventory step fails), and something tracking which steps have
+completed so a partial failure knows what to undo. An event-driven design
+with retryable, idempotent steps is a reasonable way to *implement* that
+saga's steps, but it doesn't substitute for having the compensating
+actions and the workflow state in the first place — idempotency makes a
+retry safe, it doesn't make an unwound half-completed operation
+consistent on its own. Detect it earlier by writing the failure-mode
 test first — "what does the system look like if step 2 of 3 fails" — before
 the split ships, not after the first incident.
 

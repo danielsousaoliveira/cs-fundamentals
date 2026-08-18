@@ -49,10 +49,15 @@ HTTP/1.1 304 Not Modified
 
 `304` carries no body. The client keeps its cached copy, and the server did
 the one thing it is actually good at: a hash comparison instead of a
-serialization pass. The same header pair, `If-Match`, turns a `PUT` or
-`PATCH` into an optimistic-concurrency check — the write only applies if the
-`ETag` still matches, which is the cheap alternative to row locking for a
-"last write wins" race between two editors.
+serialization pass. The equivalent header for writes, `If-Match`, turns a
+`PUT` or `PATCH` into an optimistic-concurrency check: the server compares
+the `ETag` against the current resource and applies the write atomically
+only if it still matches, returning `412 Precondition Failed` otherwise.
+That's lost-update prevention, not "last write wins" — without `If-Match`,
+whichever write reaches the server second silently overwrites the first;
+with it, the second writer is told explicitly that its view was stale and
+has to reload and reapply, which is the cheap alternative to row locking for
+two editors racing on the same resource.
 
 ### Content negotiation
 
@@ -64,9 +69,14 @@ Accept: application/vnd.acme.order+json;version=2
 
 HTTP/1.1 200 OK
 Content-Type: application/vnd.acme.order+json;version=2
+Vary: Accept
 ```
 
-A vendor media type in `Accept` is one way to version without a URL change —
+`Vary: Accept` tells any shared cache in front of the server that the
+response depends on the request's `Accept` header — without it, a CDN that
+cached the `version=2` response for this URL could serve it to a client
+that asked for `version=1`. A vendor media type in `Accept` is one way to
+version without a URL change —
 the resource identity (`/orders/482`) stays stable while its representation
 changes, which matters because URLs get bookmarked, cached, and hard-coded
 in ways headers don't.
@@ -121,7 +131,12 @@ $$
 At 500 concurrent clients doing the same poll, that is roughly 2.6 GB of
 egress avoided per shift — the conditional-request header pair is doing the
 job a Redis cache-aside layer would otherwise exist to do, for free, using
-infrastructure (browser and CDN caches) you did not have to run.
+infrastructure you did not have to run. The `Cache-Control: private` on
+`/orders/482` above means only the browser's own cache gets this benefit —
+a per-user resource has no business in a shared CDN cache. A collection or
+public resource that legitimately can be shared needs its own
+`Cache-Control: public, max-age=…` policy to get the CDN-side version of the
+same saving.
 
 **Version fan-out.** Each live API version is a codepath you test and a
 security patch you backport. Two versions in production roughly doubles
@@ -147,12 +162,15 @@ it just accumulated.
 
 ## Real-world usage
 
-Stripe's API is the textbook case for additive-only versioning: accounts pin
-to the API version active when they were created, and a new field is safe to
-add because old integrations never see it unless they opt in. GitHub's REST
-API uses `Accept`-header versioning (`Accept: application/vnd.github+json`)
-specifically so the URL — which ends up in scripts, docs, and bookmarks —
-never has to change under a client.
+Stripe's API is the textbook case for additive-only versioning: an account's
+default API version is set on its first request and pins there, overridable
+per request with a `Stripe-Version` header, and a new field is safe to add
+because old integrations never see it unless they opt in. GitHub's REST API
+separates the two concerns this page treats together: `Accept:
+application/vnd.github+json` selects the response media type, while the
+actual API version is chosen with a dedicated `X-GitHub-Api-Version` header
+— so the URL, which ends up in scripts, docs, and bookmarks, never has to
+change under a client either way.
 
 ## Failure modes
 
@@ -160,10 +178,13 @@ never has to change under a client.
 Cause: `Cache-Control` was set generously on a collection endpoint
 (`max-age=3600`) without a corresponding invalidation path — the write
 succeeded, but nothing told the CDN the cached `GET /orders` was now wrong.
-Fix: either shorten the TTL to match acceptable staleness, or invalidate the
-specific cache key on write (a CDN purge API call, or a `Vary` header keyed
-to something that changes). Detect it earlier by asserting cache headers in
-contract tests, not just response bodies.
+Fix: either shorten the TTL to match acceptable staleness, or invalidate on
+write explicitly — a CDN purge API call for that specific cache key, or a
+versioned cache key (an ETag or a version segment baked into the URL) so a
+new value simply doesn't collide with the stale cached one. `Vary` changes
+which header values partition the cache key going forward; it does not
+retroactively invalidate anything already cached. Detect it earlier by
+asserting cache headers in contract tests, not just response bodies.
 
 **Symptom: a mobile app update breaks overnight for users who haven't
 updated.** Cause: a field was renamed or removed on the same URL instead of

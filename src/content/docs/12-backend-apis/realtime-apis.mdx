@@ -111,12 +111,15 @@ function connect() {
 ### Backpressure
 
 A slow consumer on a fast producer's stream either buffers unboundedly
-(memory grows until the process dies) or drops. `ws.bufferedAmount` exposes
-the pending-send queue size so a server can choose deliberately:
+(memory grows until the process dies) or drops. On the server, each
+client's connection object (from Node's `ws` package, say) exposes
+`bufferedAmount` — the pending-send queue size for that one socket — so the
+server can choose deliberately per connection:
 
 ```typescript
-if (ws.bufferedAmount > MAX_BUFFER) {
-  ws.close(1013, 'Try again later'); // or drop non-critical messages
+// socket: a per-client connection on the server, not the browser's WebSocket
+if (socket.bufferedAmount > MAX_BUFFER) {
+  socket.close(1013, 'Try again later'); // or drop non-critical messages
 }
 ```
 
@@ -138,14 +141,23 @@ $$
 \text{buffer size} = r \times t_{\max}
 $$
 
-At $r = 5$/s and a chosen $t_{\max} = 300$ s (five minutes — anything longer
-requires a full resync, not a replay), that's 1,500 buffered messages per
-active subscription. At 200 bytes per message and 10,000 concurrent
-subscriptions, the buffer costs $1{,}500 \times 200\text{ B} \times 10{,}000
-\approx 2.9\text{ GB}$ of server memory — a real number to size infrastructure
-against, not an open-ended "keep everything." Past $t_{\max}$, the server
-drops the buffer and the client falls back to a full state resync (a plain
-`GET` for current state) instead of an unbounded replay log.
+The buffer belongs to the topic or channel (`order:482`), not to any one
+client's subscription — many clients can reconnect and replay from the same
+buffer, so it isn't duplicated per connection. At $r = 5$/s and a chosen
+$t_{\max} = 300$ s (five minutes — anything longer requires a full resync,
+not a replay), that's 1,500 buffered messages per topic. At 200 bytes per
+message and 10,000 concurrently *active* topics, the buffers cost $1{,}500
+\times 200\text{ B} \times 10{,}000 \approx 2.9\text{ GB}$ of memory — a real
+number to size infrastructure against, not an open-ended "keep everything."
+
+Behind a load balancer with more than one server instance, that buffer
+either lives in a shared store with a globally consistent sequence per
+topic (so any instance can serve a replay), or each topic is routed stickily
+to one instance that owns its buffer — in which case a failover to another
+instance loses the buffer and has to fall back to a full resync rather than
+a replay. Past $t_{\max}$, the server drops the buffer and the client falls
+back to a full state resync (a plain `GET` for current state) instead of an
+unbounded replay log.
 
 **Connection cost at scale.** Each open WebSocket holds a TCP socket, TLS
 state, and per-connection memory (typically 10–50 KB depending on buffer
@@ -173,10 +185,12 @@ connections, not on request throughput the way a REST tier does.
 
 ## Real-world usage
 
-Slack's client reconnects over WebSocket and calls `rtm.start`-equivalent
-resync endpoints to fetch anything missed rather than trusting the socket
-layer to replay it — the durable state lives server-side, the socket is
-just the live-update channel. GitHub's live-updating UI (PR checks,
+Slack's Socket Mode reconnects over WebSocket (opened via
+`apps.connections.open`) and calls REST endpoints to fetch anything missed
+rather than trusting the socket layer to replay it — the durable state
+lives server-side, the socket is just the live-update channel. This
+replaced the older RTM API, which worked the same way in spirit
+(`rtm.start` opened the socket) but is now legacy. GitHub's live-updating UI (PR checks,
 notifications) uses SSE specifically because the data flow is one-way
 server-to-client and SSE's automatic reconnect-with-`Last-Event-ID` removes
 a whole reconnection-logic class of client bug for free.
@@ -209,14 +223,15 @@ taking the service down entirely.
 
 ## Practice problems
 
-**1. Size the replay buffer** for a stream producing 20 messages/s where
-product has decided a 2-minute network gap must be fully recoverable, and
-each message averages 150 bytes, across 50,000 concurrent subscriptions. —
-$20 \times 120 = 2{,}400$ messages/subscription $\times$ 150 B $= 360$ KB/
-subscription $\times$ 50,000 $\approx 18$ GB. At that size, either shrink
-$t_{\max}$, compress buffered messages, or move the buffer off in-process
-memory into a shared store (Redis) so it isn't duplicated per server
-instance behind the load balancer.
+**1. Size the replay buffer** for a stream producing 20 messages/s per
+topic, where product has decided a 2-minute network gap must be fully
+recoverable, each message averages 150 bytes, and 50,000 topics are active
+concurrently. — $20 \times 120 = 2{,}400$ messages/topic $\times$ 150 B $=
+360$ KB/topic $\times$ 50,000 $\approx 18$ GB. At that size, either shrink
+$t_{\max}$, compress buffered messages, or move the buffer off any single
+instance's memory into a shared, replay-capable store — Redis Streams
+(bounded with `MAXLEN`), not Redis Pub/Sub, which is fire-and-forget and
+keeps no history for a client that reconnects after the fact.
 
 **2. A WebSocket client's `onclose` handler reconnects immediately with no
 backoff.** Under what condition does this go from "fine" to "an outage,"

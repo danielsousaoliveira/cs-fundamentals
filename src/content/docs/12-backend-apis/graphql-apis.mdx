@@ -72,17 +72,13 @@ not bounded in total.
 
 ```typescript
 import depthLimit from 'graphql-depth-limit';
-
-const server = new ApolloServer({
-  schema,
-  validationRules: [depthLimit(4)],
-});
 ```
 
-A query nesting `friends` five levels deep is rejected at parse time, before
-a single resolver runs. Depth alone is a blunt instrument — it caps nesting
-but not breadth, so `friends { name }` requested with an `edges(first: 10000)`
-argument at depth 2 still walks past it.
+A query nesting `friends` five levels deep is rejected during validation —
+after the query is parsed, but before any resolver runs. Depth alone is a
+blunt instrument — it caps nesting but not breadth, so `friends { name }`
+requested with an `edges(first: 10000)` argument at depth 2 still walks past
+it.
 
 ### Complexity budgets
 
@@ -99,21 +95,43 @@ const ComplexityLimit = createComplexityLimitRule(1000, {
 Each field costs points; a list multiplies the cost of everything beneath it
 by an estimate of its size. This is the mechanism that catches what depth
 limiting misses — wide-but-shallow queries — because it prices breadth, not
-just nesting.
+just nesting. Both rules run in the same validation pass, registered
+together:
+
+```typescript
+const server = new ApolloServer({
+  schema,
+  validationRules: [depthLimit(4), ComplexityLimit],
+});
+```
+
+A depth limit alone would have let the wide-but-shallow query through;
+dropping the complexity rule from `validationRules` and keeping only
+`depthLimit` is the easy way to end up unprotected against exactly the case
+depth limiting can't see.
 
 ### Persisted queries
 
+Apollo's *automatic* persisted queries (APQ) send a hash instead of the
+query text:
+
 ```typescript
 // Client sends a hash, not the query text
-{ "extensions": { "persistedQuery": { "sha256Hash": "ecf4edb..." } } }
+{ "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "ecf4edb..." } } }
 ```
 
-The server only executes queries it has already seen and approved (usually
-registered at build time from the client's own query files). This removes
-arbitrary-query risk from public-facing GraphQL entirely — the flexibility
-GraphQL sells is still available at build time, just not at request time —
-at the cost of losing ad hoc querying for anyone who isn't the shipped
-client.
+This is not by itself a safelist. If the server doesn't recognize the hash,
+the standard APQ flow has the client retry with the full query text
+attached, and the server registers it — meaning *any* query text a client
+sends can end up persisted, arbitrary-query risk and all. APQ's win is
+bandwidth (short hash instead of full query text on repeat requests), not
+access control.
+
+A genuine safelist — a fixed set of operations registered at build time from
+the client's own query files, with every other operation rejected outright,
+no retry-with-full-text fallback — is what removes arbitrary-query risk from
+a public-facing endpoint. That's a separate mechanism (a persisted query
+list / operation allowlist) layered on top of, or instead of, plain APQ.
 
 ## Cost & limits
 
@@ -125,36 +143,47 @@ $$
 $$
 
 nodes, and — without batching — issues one database round trip per node.
-With $f = 50$ (a realistic social-graph fan-out) and $d = 4$:
+The example query above nests `friends` three times (`friends { friends {
+friends { name } } }`), so $d = 3$. With $f = 50$ (a realistic social-graph
+fan-out):
 
 $$
-\frac{50^5 - 1}{50 - 1} \approx 6.4\text{ million node visits from a single request}
+\frac{50^4 - 1}{50 - 1} \approx 127{,}551\text{ node visits from a single request}
 $$
 
 At a conservative 2 ms per round trip (with `DataLoader` batching collapsing
 same-level fetches, so this is per *level*, not per *node*, once batched)
-the query still touches on the order of $50^4 \approx 6.25$ million distinct
-users at the leaf level alone — more rows than most `users` tables hold. One
-request from one client can do more work than your entire nightly batch job.
+the query still touches on the order of $50^3 = 125{,}000$ distinct users at
+the leaf level alone — likely more rows than the query's author intended one
+request to reach, and the count grows to the tens of millions if a client
+adds one more level of nesting.
 
 **The bound applied.** With `complexityLimit(1000)`, `scalarCost: 1`,
-`objectCost: 2`, `listFactor: 10` and treating each `friends` edge as a list
-of estimated size 50, the same query's estimated cost is:
+`objectCost: 2`, `listFactor: 10`, treating each `friends` edge as a list
+and using the simplified per-level estimate `cost(d) = objectCost ×
+listFactor^d` this page has been using throughout:
 
 $$
 \text{cost}(d) = \text{objectCost} \times \text{listFactor}^d = 2 \times 10^d
 $$
 
-Depth 3 costs $2 \times 1{,}000 = 2{,}000$ — already over budget. The query
-above (depth 4) is rejected before execution at a cost estimate of $2 \times
-10{,}000 = 20{,}000$, twenty times the 1,000-point ceiling — the same
-request that would have touched millions of rows is refused for pocket
-change in CPU: one complexity calculation over the parsed query AST.
+At $d = 3$ (the example query's actual nesting) that's $2 \times 1{,}000 =
+2{,}000$ — twice the 1,000-point ceiling, and rejected before execution. One
+more level of nesting ($d = 4$) would cost $2 \times 10{,}000 = 20{,}000$,
+twenty times the ceiling — the request that would have touched millions of
+rows is refused for pocket change in CPU: one complexity calculation over
+the parsed query AST. (A production complexity plugin's exact arithmetic
+sums cost field-by-field rather than using one closed-form power of $d$;
+this simplified version is for the shape of the argument, not a literal
+`graphql-validation-complexity` trace.)
 
-**What the ceiling does when hit.** A rejected query returns a `400` with a
-`GRAPHQL_VALIDATION_FAILED` code and the computed cost versus the limit — no
-partial execution, no partial bill. That is the ceiling working as intended;
-the failure mode below covers what happens when there is no ceiling at all.
+**What the ceiling does when hit.** Apollo Server rejects the query with an
+HTTP `400` and a `GRAPHQL_VALIDATION_FAILED` error code by default — no
+partial execution. Whether the response body also shows the computed cost
+next to the limit depends on the validation rule's error-formatting options
+(`createError` / a custom `formatErrorMessage`); it isn't included
+automatically. Either way, the failure mode below covers what happens when
+there's no ceiling at all.
 
 ## When NOT to use it
 
@@ -179,9 +208,11 @@ GitHub's public GraphQL API enforces a points-based rate limit computed per
 query (visible in the response's `rateLimit` field) rather than a flat
 requests-per-minute cap — the same complexity-budget idea, applied at the
 account level instead of per request. Shopify's Admin API caps query cost
-per request and returns the cost breakdown in `extensions.cost`, explicitly
-so clients can see which field is expensive before they hit the ceiling in
-production.
+per request and returns `requestedQueryCost` and `actualQueryCost` in
+`extensions.cost` by default; a client that adds the
+`Shopify-GraphQL-Cost-Debug: 1` header gets a further field-by-field cost
+breakdown, a development-oriented option that increases response size and
+isn't meant to stay on for production traffic.
 
 ## Failure modes
 
@@ -216,7 +247,7 @@ formula above: `user { posts { comments { author { name } } } }` (three
 nested list fields: `posts`, `comments`, and `author` is a single object).
 — `posts` and `comments` are lists (each ×10), `author` is not: cost $\approx
 2 \times 10 \times 10 = 200$ for the object chain beneath `user`, under a
-1,000-point budget — this one should pass, unlike the depth-4 friends query
+1,000-point budget — this one should pass, unlike the depth-3 friends query
 above, which is the point: complexity budgets pass legitimately deep-but-
 narrow queries and reject shallow-but-wide or exponentially-fanning ones.
 

@@ -70,10 +70,14 @@ app.post('/signup', (req, res) => {
 });
 ```
 
-The schema does three things at once: it rejects shapes it doesn't
-recognize (an unexpected `isAdmin: true` field is dropped, not silently
-trusted — `.strict()` would reject it outright instead), it coerces to the
-right type, and it bounds the range (`.max(120)`, `.max(5)`). `roles` only
+The schema does three things at once. It handles fields it doesn't
+recognize — `z.object()` strips unknown keys by default, so an unexpected
+`isAdmin: true` is silently dropped rather than stored; `.strict()` instead
+makes the same schema reject the whole payload outright when an unknown key
+shows up, which is the better default for anything security-sensitive,
+since silent stripping can hide a client bug that thinks a field was
+accepted. It coerces to the right type. And it bounds the range (`.max(120)`,
+`.max(5)`). `roles` only
 ever allowing `'member'` at signup is the validation layer doing
 authorization's job for one field — the schema is also where "this field
 can never contain a privileged value from this endpoint" gets enforced,
@@ -132,15 +136,29 @@ storage ceiling until the database's own row-size or column limit — for
 Postgres, a single `TEXT` value can reach 1 GB. One request with a
 malicious or buggy 500 MB string field is 500 MB of write I/O, WAL
 generation, and replication lag for every replica, from a single HTTP
-request that a 10 KB `.max()` bound would have rejected at the boundary for
-the cost of a length comparison.
+request that a 10 KB `.max()` bound would have rejected for the cost of a
+length comparison — but only once the schema gets to see it. A schema
+validates the parsed body; the 500 MB still has to be read off the socket
+and buffered into memory by the body parser first, which is its own
+resource cost regardless of what the schema later rejects. A request-body
+size cap at the proxy or body-parser layer (`express.json({ limit: '100kb'
+})`, or the equivalent on the reverse proxy in front of it) is the control
+that stops an oversized payload before parsing, and is a separate line of
+defense from the schema's per-field `.max()` bounds, not a replacement for
+either.
 
-**Ceiling and what happens at it.** A schema validation failure is a `422`
-with field-level errors — cheap, synchronous, and informative. The
-alternative — no schema, relying on the database's constraints to catch
-bad data — turns the same bad input into a `500` from a constraint
-violation, with a stack trace instead of a field name, discovered by
-whoever's paging on database errors instead of by the client that sent it.
+**Ceiling and what happens at it.** A schema validation failure is a
+rejection with field-level errors — cheap, synchronous, and informative —
+returned under whichever status code the API has chosen as its contract for
+that (`422 Unprocessable Entity` and `400 Bad Request` both see wide use;
+pick one and apply it consistently, since neither is a universal standard
+for this case). The alternative — no schema, relying on the database's
+constraints to catch bad data — pushes the same bad input past the boundary
+until a constraint violation fires, and an application that doesn't
+explicitly catch and map that violation back to a structured client error
+turns it into a raw `500` with a stack trace instead of a field name,
+discovered by whoever's paging on database errors instead of by the client
+that sent it.
 
 ## When NOT to use it
 
@@ -161,9 +179,10 @@ whoever's paging on database errors instead of by the client that sent it.
 
 ## Real-world usage
 
-Stripe's API returns structured `422` errors with a `param` field naming
-the exact offending key (`"param": "email"`) — schema validation surfaced
-directly as API contract, not an internal implementation detail. Postgres
+Stripe's API returns structured `400 Bad Request` errors with a `param`
+field naming the exact offending key (`"param": "email"`) — schema
+validation surfaced directly as API contract, not an internal
+implementation detail. Postgres
 itself enforces a hard 1 GB limit per field value regardless of what your
 application layer does, which is why relying on the database as your only
 validation layer still leaves you exposed to everything below that ceiling
@@ -216,11 +235,19 @@ worth checking on every list-typed field in the same review.
 validation gap specific to `PATCH` that a `POST`-only schema wouldn't have?
 — A schema written for full-object creation (`POST`) typically requires
 every field; naively reusing it for `PATCH` either rejects valid partial
-updates or, if fields are made optional to fix that, silently allows a
-partial update to unset a field that should never be nullable (making every
-field optional loses the "required on create" constraint). The fix is a
-separate `.partial()` schema for updates that still enforces per-field
-constraints on whichever fields are present.
+updates or, if fields are made optional to fix that, loses the "required on
+create" constraint entirely. `.partial()` fixes the first problem
+correctly: an *omitted* field is left untouched, and whichever fields are
+present still go through their original per-field constraints. It does not
+fix a second, easy-to-miss problem: `.partial()` doesn't distinguish
+"omitted" from "explicitly sent as `null`" — a field typed with
+`.optional()` alone rejects an explicit `null` in the payload, and one that
+should legitimately accept `null` as a real, distinct value (clearing a
+field on purpose) needs `.nullable()` or `.nullish()`, not just
+`.partial()`. A schema also has to name which fields are immutable after
+creation (an `id` or `createdAt`) and drop them from the update schema
+entirely, since `.partial()` alone would happily accept and apply an
+update to either.
 
 ## Interview answers
 

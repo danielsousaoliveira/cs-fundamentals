@@ -42,7 +42,7 @@ Tokens keep colors and spacing consistent across a documentation site. Grid hand
 
 ## Practice problems
 
-1. A three-column grid overflows at 320 px. Replace fixed columns with `minmax(0, 1fr)`, allow the grid to collapse, and verify the content remains reachable without horizontal scrolling.
+1. A three-column grid overflows at 320 px. Replace fixed columns with `repeat(auto-fit, minmax(min(100%, 16rem), 1fr))` so the track count reduces at narrow widths, and verify the content remains reachable without horizontal scrolling.
 2. A button’s label is clipped at 200% zoom. Remove fixed height, preserve padding, and let text wrap or the control grow.
 
 ## Interview answers

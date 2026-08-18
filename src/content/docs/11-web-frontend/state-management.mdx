@@ -33,7 +33,7 @@ flowchart LR
 
 ## Cost & limits
 
-For a store with `n` subscribers, a change costs the work of notifying the subscribers that the selector says changed. Broadcasting the whole state to all `n` subscribers is O(n); selector-based subscriptions approach O(k), where `k` is the number whose selected slice changed. The real ceiling is render work: 100 cheap subscribers can be fine, while one subscriber that reconstructs a 10,000-row table on every keystroke is not.
+For a store with `n` subscribers, evaluating every selector is O(n). If the store maintains a dependency index that identifies subscribers affected by the changed state slice, notification and render work can approach O(k), where `k` is the number whose selected slice changed; without that index, finding those `k` subscribers still costs O(n). The real ceiling is render work: 100 cheap subscribers can be fine, while one subscriber that reconstructs a 10,000-row table on every keystroke is not.
 
 ## When NOT to use it
 

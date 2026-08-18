@@ -22,7 +22,7 @@ Record a repeatable trace: URL, browser version, device or CPU throttle, network
 
 ## Cost & limits
 
-Example budget, measured on this page’s production build under a cold cache, 4G profile, 4× CPU slowdown, 1365×768 viewport: if the trace records 1.8 s LCP and the product budget is 2.5 s, the remaining margin is `2.5 - 1.8 = 0.7 s`. If JavaScript transfer is 92 KB compressed and the budget is 120 KB, 28 KB remains. These figures are a measurement plan and arithmetic model; they are not universal results until a trace captures them in this repository.
+Illustrative budget assumptions under a cold cache, 4G profile, 4× CPU slowdown, 1365×768 viewport: if an example trace records 1.8 s LCP and the product budget is 2.5 s, the remaining margin is `2.5 - 1.8 = 0.7 s`. If illustrative JavaScript transfer is 92 KB compressed and the budget is 120 KB, 28 KB remains. These figures are a measurement plan and arithmetic model, not measurements from this page’s production build; capture a trace under the stated conditions before treating them as repository results.
 
 The ceiling is the slowest sequential dependency: if HTML waits 400 ms for data, then CSS waits 300 ms, and the LCP image waits 600 ms, the critical path already contains 1.3 s before device paint work. Parallelizing independent work removes a sum; shrinking a non-critical asset does not.
 

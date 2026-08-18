@@ -112,7 +112,8 @@ without a single explicit `scope: Scope.REQUEST` anywhere else in the chain.
 ```text
 incoming request
   → Middleware        (same shape as Express middleware)
-  → Guards             (can() → true/false — authn/authz, short-circuits early)
+  → Guards             (canActivate() → boolean | Promise<boolean> | Observable<boolean>
+                        — authn/authz, short-circuits early on a falsy result)
   → Interceptors (before)   (can transform the request, start timing)
   → Pipes               (validate/transform arguments, e.g. class-validator DTOs)
   → Route handler
@@ -331,14 +332,22 @@ check before concluding that?
 <details>
 <summary>Solution</summary>
 
-Check event loop lag under the same load first — a p99-only regression with
-flat p50 is more consistent with occasional queueing (something intermittently
-blocking the thread) than with a fixed per-request construction cost, which
-would show up as a shift in p50 too, since it is paid on every request
-equally. If lag is flat, the DI container is not the story; look for a guard
-or pipe that does synchronous work on some code path but not others — the
-same class of bug that produces this signature in plain Express, just
-relocated into the request lifecycle this page describes.
+Don't rule out the DI container just because p50 held steady — per-request
+construction adds allocations, and the [Node runtime
+page](/cs-fundamentals/6-languages/node-runtime/) already establishes that
+retained/promoted objects cost more at major-GC time than they cost to
+allocate. A request-scoped provider tree churning enough short-lived objects
+can raise GC frequency and produce exactly a p99-only signature — periodic
+pause spikes that a flat p50 average hides — without shifting the median at
+all. So check three things side by side under the same load: event loop lag
+(intermittent blocking in a guard or pipe), GC pause frequency/duration
+(construction-driven allocation pressure), and p50/p99 on functionally
+identical routes with providers pinned to `DEFAULT` versus left `REQUEST`-
+scoped. If lag is flat and GC is unchanged between the two runs, the DI
+container is not the story — look for a guard or pipe doing synchronous work
+on some code path but not others, the same class of bug that produces this
+signature in plain Express, just relocated into the request lifecycle this
+page describes.
 
 </details>
 

@@ -37,12 +37,14 @@ function percentile(sorted, p) {
 
 const startedAt = performance.now();
 await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
-const wallMs = performance.now() - startedAt;
+const wallMs = Math.round(performance.now() - startedAt);
 
 const sorted = [...latencies].sort((a, b) => a - b);
 
+// Throughput is derived from the same rounded wallMs printed below, so the
+// two figures are always consistent with each other.
 console.log(`${url}  (${total} requests, concurrency ${concurrency})`);
-console.log(`  wallMs: ${Math.round(wallMs)}`);
+console.log(`  wallMs: ${wallMs}`);
 console.log(`  throughput: ${Math.round((completed / wallMs) * 1000)} req/s`);
 console.log(`  p50: ${Math.round(percentile(sorted, 50))}ms`);
 console.log(`  p99: ${Math.round(percentile(sorted, 99))}ms`);

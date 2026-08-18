@@ -9,12 +9,12 @@ import express from 'express';
 const port = Number(process.argv[2] ?? 3000);
 const app = express();
 
-app.get('/fast', async (req, res) => {
+app.get('/fast', async (_req, res) => {
   await Promise.resolve();
   res.json({ ok: true });
 });
 
-app.get('/block', (req, res) => {
+app.get('/block', (_req, res) => {
   const until = Date.now() + 20;
   while (Date.now() < until) {
     // Synchronous busy-loop: occupies the event loop for ~20ms.

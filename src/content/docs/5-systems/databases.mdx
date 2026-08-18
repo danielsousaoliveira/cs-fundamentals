@@ -323,7 +323,9 @@ third party's latency, and their timeout is your outage.
 
 **`EXPLAIN ANALYZE` is the answer to "how would you debug a slow query".**
 `EXPLAIN` shows the plan the planner intends; `EXPLAIN ANALYZE` runs it and shows
-real timings and real row counts. What to look for:
+real timings and real row counts. [PostgreSQL in
+production](/cs-fundamentals/8-databases-storage/postgres/) goes through a real
+plan end to end; the shape of what to look for:
 
 - **`Seq Scan` on a large table** where you expected an index scan.
 - **Bad row estimates** — the plan says `rows=12` and reality is `rows=48000`. The
@@ -352,7 +354,8 @@ WHERE created_at >= '2026-07-22'        -- ✓ a range instead
 The same happens with an implicit cast on a mismatched type, which is harder to
 spot because nothing in the query looks like a function call.
 
-**In MongoDB the normalisation question becomes embed versus reference:**
+**In [MongoDB](/cs-fundamentals/8-databases-storage/mongodb/) the normalisation
+question becomes embed versus reference:**
 
 - **Embed** when the child is always read with the parent, the array is bounded,
   and the child is not queried independently.

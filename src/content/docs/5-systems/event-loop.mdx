@@ -292,6 +292,13 @@ on exactly the same `epoll` idea. Redis being single-threaded is the reason its
 operations are atomic without locks — the same run-to-completion guarantee, used
 deliberately as a feature.
 
+**A framework built on this loop inherits every trade-off above.** [Node
+backend frameworks](/cs-fundamentals/12-backend-apis/node-backends/) covers what
+it costs when a request handler blocks that single thread, and how Express and
+Fastify differ in how much work they do around it. On the client side, [Rendering
+strategies](/cs-fundamentals/11-web-frontend/rendering-strategies/) is the same
+single-thread constraint applied to hydration.
+
 ## Failure modes
 
 Named by symptom first, because the symptom is what you see before you know the

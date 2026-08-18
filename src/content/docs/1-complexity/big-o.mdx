@@ -294,7 +294,15 @@ case requires an adversary who can predict your random numbers.
 numbers attached. A sequential scan is $O(n)$; a B-tree index lookup is
 $O(\log n)$. When the planner ignores your index, it is because it estimated that
 for *this* query's selectivity, the constant factor of random I/O beats the better
-asymptotics — the same trade the widget above shows.
+asymptotics — the same trade the widget above shows. [PostgreSQL in
+production](/cs-fundamentals/8-databases-storage/postgres/) works through that
+trade with a real planner and real row estimates.
+
+**Columnar file formats** push the same estimate-then-choose logic into storage
+itself: a query that touches three of forty columns can skip the other
+thirty-seven's bytes entirely, turning an $O(n)$ scan's constant factor into the
+main lever. See [File Formats and Object
+Storage](/cs-fundamentals/8-databases-storage/file-formats-and-object-storage/).
 
 **The N+1 query problem.** One query for a list, then one per item: $O(n)$ queries.
 Each is fast; the round-trips are not. Batching into a single `WHERE id IN (…)`

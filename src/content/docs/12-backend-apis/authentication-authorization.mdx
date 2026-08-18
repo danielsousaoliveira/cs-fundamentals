@@ -69,7 +69,10 @@ const token = jwt.sign(
   { expiresIn: '15m' },
 );
 // every subsequent request: verify signature + exp, no database round trip
-const claims = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET);
+// pin the algorithm explicitly — never let the token's own header pick it
+const claims = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET, {
+  algorithms: ['HS256'],
+});
 ```
 
 **Access token + refresh token.** The access token above is short-lived (15

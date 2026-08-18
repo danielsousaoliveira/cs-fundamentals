@@ -95,20 +95,45 @@ guarantee, and the honest options are two, not three:
 ```ts
 // Idempotency key makes at-least-once delivery safe to retry.
 async function chargeCard(idempotencyKey: string, amount: number) {
-  const existing = await db.charges.findByKey(idempotencyKey);
-  if (existing) return existing; // already ran — return the prior result
+  // Reserve the key first, with a unique constraint on idempotencyKey.
+  // A concurrent retry's insert fails here instead of both racing past
+  // the read below and both calling the gateway.
+  const reserved = await db.charges
+    .insert({ key: idempotencyKey, status: 'pending' })
+    .onConflict('key')
+    .ignore();
 
-  return db.transaction(async (tx) => {
-    const charge = await paymentGateway.charge(amount, idempotencyKey);
-    await tx.charges.insert({ key: idempotencyKey, ...charge });
-    return charge;
-  });
+  if (!reserved) {
+    return db.charges.findByKey(idempotencyKey); // another attempt owns it
+  }
+
+  // The gateway call itself must be passed the same idempotency key, so
+  // that a retry after a crash here — before the row below is written —
+  // lands on the gateway's own dedup rather than charging twice.
+  const charge = await paymentGateway.charge(amount, idempotencyKey);
+  await db.charges.update({ key: idempotencyKey }, { status: 'done', ...charge });
+  return charge;
 }
 ```
 
-The idempotency key is what turns "retry blindly" into a safe default. Most
-production incidents attributed to "the network is flaky" are actually
-missing idempotency keys on a retried call.
+Two things make this safe where the naive read-then-write version isn't.
+First, the row is reserved with a database-enforced unique constraint before
+any external call happens, so two concurrent retries can't both pass a
+check and both charge the card — one wins the insert, the other reads its
+result. Second, the gateway call itself carries the idempotency key, so if
+the process crashes *after* the gateway charges the card but *before* the
+local row is marked done, a subsequent retry still hits the gateway's own
+idempotency guarantee instead of creating a second charge — the local record
+alone can't cover that gap, because a retry with no stored result looks
+identical to a request that never ran.
+
+The idempotency key is what turns "retry blindly" into a safe default, but
+only when it's enforced with a real constraint end to end — key check plus
+key insert as one atomic step, and the same key passed through to any
+downstream call that isn't itself transactional with the local write. Most
+production incidents attributed to "the network is flaky" are actually a
+check-then-act race or a key that stopped at the local database instead of
+reaching the external call.
 
 ### Timeouts don't mean failure
 

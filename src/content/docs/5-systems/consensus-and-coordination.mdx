@@ -116,8 +116,9 @@ the answer irrelevant to correctness.
 
 ### What a consensus protocol actually gives you
 
-Raft and Paxos (Raft's more implementable, better-documented descendant) both
-guarantee: **at most one value is chosen per decision, and once chosen, it
+Raft and Paxos are separate protocols solving the same problem — Raft was
+designed from scratch as a more understandable alternative to Paxos, not a
+descendant of it, and both guarantee: **at most one value is chosen per decision, and once chosen, it
 survives any minority of failures.** They do not guarantee availability
 during a majority-side failure — if more than half the nodes are down or
 partitioned away, the cluster correctly refuses to make progress rather than
@@ -199,12 +200,13 @@ the mistake a cache-with-a-TTL invites.
 The number worth deriving is **what a majority costs in latency**, since it's
 what every write pays:
 
-- A write to a Raft/Paxos cluster commits only after a majority acknowledges
-  it — so commit latency is bounded by the *median* node's response time
-  among a majority, not the fastest node. A 5-node cluster with one slow
-  node still commits fast, because the slow node isn't needed for the
-  majority; a 5-node cluster with two slow nodes is now waiting on a
-  borderline case.
+- A write to a Raft/Paxos cluster commits once a majority has acknowledged it
+  — the leader counts its own durable write, so in a 5-node cluster it needs
+  only 2 of its 4 followers to ack, not all 4. Commit latency is therefore
+  bounded by the **quorum-th fastest acknowledgment**: the second-fastest
+  follower response, in this case, not the median and not the slowest. A
+  5-node cluster with two slow followers still commits at the speed of the
+  other two, because the slow pair is simply never on the critical path.
 - Fault tolerance and latency trade directly against cluster size: `N` nodes
   tolerate `⌊(N-1)/2⌋` failures, and every write waits on `⌈(N+1)/2⌉` acks.
   Going from 3 to 5 nodes buys one more tolerated failure at the cost of one
@@ -239,8 +241,9 @@ what every write pays:
 etcd (Raft) backs Kubernetes' entire cluster state — every pod, service, and
 config object is a value etcd's consensus layer agrees on, which is why a
 Kubernetes control plane needs an odd-numbered etcd cluster and degrades
-predictably as members are lost. ZooKeeper (a Paxos-family protocol) and
-Consul provide the same leader-election and coordination primitives for
+predictably as members are lost. ZooKeeper (using Zab, its own
+atomic-broadcast protocol, not Paxos or Raft) and Consul provide the same
+leader-election and coordination primitives for
 Kafka, HBase, and countless service-discovery setups. These are named here as
 what to reach for, not compared feature-by-feature — the point is knowing
 what a consensus-backed coordination service guarantees that a plain cache

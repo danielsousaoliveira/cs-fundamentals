@@ -14,7 +14,9 @@ prereqs:
 tags: [resilience, retry, circuit-breaker, timeout, bulkhead, backoff]
 languages: [typescript]
 roles: [backend, cloud]
-sources: []
+sources:
+  - netflix-hystrix-wiki
+  - aws-builders-library-retries
 ---
 
 ## Intuition
@@ -71,13 +73,23 @@ sequenceDiagram
   schedule.
 - **A retry budget, not a per-request retry count.** Cap total retries as
   a *percentage of total request volume* over a sliding window (a common
-  bound is 10%), tracked per-client — once the budget is spent, further
+  bound is 10%), tracked per client — once the budget is spent, further
   failures return immediately with no retry, regardless of how many
   retries any individual request has left. This is the mechanism that
   actually prevents amplification: a per-request cap of 3 retries still
   lets every one of a million requests retry 3 times simultaneously; a
-  budget caps the *aggregate* extra load the client is allowed to
-  generate, independent of how many individual requests are failing.
+  budget caps the extra load *that one client* is allowed to generate,
+  independent of how many individual requests are failing. That guarantee
+  is per instance, not aggregate, unless the budget's counters are shared:
+  a service horizontally scaled to 50 instances, each independently
+  tracking its own 10% budget in memory, can still collectively send up
+  to 50 times a single instance's allotted extra load to the downstream
+  dependency. Getting an aggregate bound out of a fleet requires either a
+  shared counter (a fast, TTL'd counter in a cache like Redis, itself a
+  new dependency to keep off the critical retry path) or a per-instance
+  budget deliberately set to `target_aggregate / instance_count` — which
+  has to be re-tuned every time the fleet autoscales, or it silently
+  drifts from the bound it was meant to enforce.
 - **A circuit breaker.** Tracks the failure rate to a dependency and,
   once it crosses a threshold, stops sending requests entirely for a
   cooldown window — failing fast locally instead of waiting out a timeout

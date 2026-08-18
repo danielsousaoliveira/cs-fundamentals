@@ -103,12 +103,20 @@ be close together in time.
   for "consume," stitched together by the propagated trace context riding
   in the event's headers — the same discipline a synchronous call gets
   automatically from most APM agents.
-- **An audit trail or event log as the source of truth for "what
-  happened."** Because no single service holds the full sequence in
-  choreography, the append-only stream of events itself — often the same
-  log the broker already persists — becomes the artifact you replay to
-  answer "what happened to order 4471," rather than any one service's
-  database.
+- **An event log to reconstruct "what happened."** Because no single
+  service holds the full sequence in choreography, the append-only stream
+  of events becomes the artifact you replay to answer "what happened to
+  order 4471," rather than any one service's database. A broker's own
+  retained topic is not automatically this artifact, though — brokers
+  retain messages for operational reasons (replay after an outage, a
+  finite window for slow consumers), not for audit, and their retention
+  period, compaction rules, and access model are usually tuned for
+  throughput, not for "prove to an auditor what happened eighteen months
+  ago." A business or compliance audit trail — one with guaranteed
+  retention, immutability, and access controls independent of the
+  broker's operational settings — is normally a separate durable store
+  the events are also written to, not a rebranding of whatever the broker
+  happens to still be holding.
 - **Consumer-side status reporting back to a queryable store.** If the
   producer (or an operator) needs to know whether `Billing Service`
   actually processed `OrderPlaced`, that has to be built explicitly —

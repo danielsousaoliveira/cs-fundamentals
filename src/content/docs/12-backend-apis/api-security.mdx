@@ -1,0 +1,280 @@
+---
+title: API Security
+description: >-
+  Defensive coverage of the vulnerabilities that actually show up in backend
+  APIs — every recommendation stated as a threat, a mitigation, and a way to
+  verify it holds.
+sidebar:
+  order: 9
+difficulty: core
+status: complete
+prereqs: ['12-backend-apis/authentication-authorization', '12-backend-apis/rest-apis']
+tags: [security, injection, cors, ssrf, idor, owasp]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+Every item on this page follows the same shape: **a threat model** (who's
+attacking, with what access, toward what goal), **a mitigation** (the
+specific control that closes it), and **a verification step** (how you'd
+know, from the outside, that the control is actually in place — not just
+that the code that's supposed to implement it exists). A mitigation nobody
+verifies is a comment claiming the door is locked.
+
+This page is defensive only: it names failure classes and how to close them,
+not how to build exploit tooling or walk through exploitation. If you need to
+know what the attack traffic looks like to detect it, that's the level of
+detail here — reproducing an exploit end-to-end against a live system is not.
+
+The idea underneath all of it: **almost every API vulnerability is a place
+where the server trusted something the client controlled.** The client's
+claim about who it is, what it's allowed to do, where a request should be
+routed, or how much data it's asking for — each of those, left unchecked, is
+a specific named vulnerability class below.
+
+## Mechanics
+
+**Injection (SQL, NoSQL, command).** Threat: an attacker supplies input
+that gets concatenated into a query or shell command instead of treated as
+data, changing what the query does. Mitigation: parameterized queries /
+prepared statements everywhere, never string concatenation into a query;
+for shell calls, an argument array passed to `execFile`, never a
+template string passed to `exec`.
+
+```typescript
+// vulnerable — string concatenation
+db.query(`SELECT * FROM users WHERE email = '${email}'`);
+
+// mitigated — parameterized
+db.query('SELECT * FROM users WHERE email = $1', [email]);
+```
+
+Verify: a static analyzer that understands SQL/query construction for your
+client or ORM (e.g. a Semgrep SQL-injection ruleset, or the equivalent
+rule set for your query builder) plus a test that submits `' OR '1'='1` as
+input and asserts it's treated as a literal string, not SQL.
+
+**Broken object-level authorization (IDOR).** Threat: an authenticated user
+changes an ID in the URL or payload — `/orders/482` to `/orders/483` — and
+reads or modifies another user's resource, because the handler checked
+*that* a user was logged in but not *whether this user owns this row*.
+Mitigation: an explicit ownership or tenant check at the data-access layer
+on every read and write, not just the route (this is the authorization gap
+covered in depth on the
+[authentication & authorization](/cs-fundamentals/12-backend-apis/authentication-authorization/)
+page). Verify: an automated test suite where every endpoint accepting a
+resource ID is called with a second, unrelated user's token and asserted to
+fail — this is the single highest-value security test an API can have,
+because IDOR is consistently the most common real-world API vulnerability
+class.
+
+**Mass assignment.** Threat: a client sends `{ "role": "admin" }` in a
+profile-update payload, and a handler that blindly assigns the whole
+request body to the user record grants itself admin. Mitigation: an
+explicit allow-list of fields a given endpoint accepts — a validation
+schema (Zod, Joi) that only recognizes `name` and `email` on the profile
+update endpoint, silently dropping or rejecting anything else. Verify: a
+test that sends an extra field the endpoint shouldn't accept and asserts
+the resulting record didn't change on that field.
+
+**SSRF (server-side request forgery).** Threat: a feature that fetches a
+URL on the server's behalf — an image-from-URL importer, a webhook
+verifier — is given `http://169.254.169.254/latest/meta-data/` or an
+internal service address instead of a real external URL, and the server,
+sitting inside the trust boundary, makes the request the attacker
+couldn't make directly. Mitigation: resolve and validate the destination
+against an allow-list of expected hosts/schemes before fetching, reject
+requests to private/link-local IP ranges (RFC 1918, `169.254.0.0/16`) at
+the network layer, and never let a redirect chain silently retarget the
+request after the check ran. A DNS lookup checked once and a connection
+made later is itself a gap — DNS rebinding lets the resolved address
+change between the check and the actual connect — so the enforcement has
+to happen at connect time, not just at validation time: pin the resolved
+address for the request (an HTTP client or egress proxy that validates the
+IP it's actually connecting to, not just the hostname it looked up
+earlier). Verify: a test that submits a URL resolving to a private IP and
+asserts the fetch is rejected before any network call is made, plus a
+rebinding test where the DNS answer changes between the allow-list check
+and the connection attempt, asserting the request is still rejected.
+
+**CORS misconfiguration.** Threat: a server that reflects whatever
+`Origin` header the browser sent back into `Access-Control-Allow-Origin`
+(instead of checking it against a real allow-list) combined with
+`Access-Control-Allow-Credentials: true` lets *any* origin read
+authenticated responses on behalf of a logged-in user's browser — a
+literal `*` alongside credentials is not the exploitable shape, since
+browsers reject that combination outright, but a dynamically reflected
+origin passes the same browser check and gets the same result. Mitigation:
+an explicit allow-list of origins that actually need cross-origin access,
+checked server-side before the origin is ever echoed back, never a
+wildcard or a blind reflection alongside credentialed requests. Verify: an
+integration test that sends a credentialed request from an unlisted
+origin and asserts the actual response — not just the preflight — never
+carries `Access-Control-Allow-Origin` for that origin or
+`Access-Control-Allow-Credentials: true` alongside it; a preflight-only
+check can pass while the real response still leaks the origin reflection.
+
+**Secrets in transit or at rest.** Threat: an API key, database password,
+or signing secret is committed to the repo, logged in plaintext, or sent
+over unencrypted HTTP, giving anyone with read access to logs or history
+the keys to impersonate the service. Mitigation: secrets live in a secret
+manager (not env files in the repo), and every hop the request takes —
+browser to edge, edge to origin, and service to service inside the
+network — is encrypted, certificate-validated TLS, not TLS at the edge
+only; `Strict-Transport-Security` and an HTTP-to-HTTPS redirect are the
+browser-facing pieces of that, not the whole of it, since neither controls
+what happens to the request after it leaves the edge. Structured logging
+redacts known secret-shaped fields before they hit
+a log sink. Verify: a pre-commit hook or CI secret scanner (`gitleaks`,
+`trufflehog`) run against every push, and a log sample audit that confirms
+`authorization` and `password` fields are redacted, not just renamed.
+
+**Rate limiting and brute-force defense.** Threat: an attacker tries
+credentials or tokens at high volume against a login or password-reset
+endpoint. Mitigation: this is the [rate limiting](/cs-fundamentals/5-systems/api-design/)
+page's subject in depth — link it, don't re-derive it here — applied
+specifically per-account (not just per-IP, since credential stuffing
+rotates IPs) on auth endpoints, with exponential backoff or a CAPTCHA
+challenge after a threshold. Verify: a load test that submits failed
+logins past the threshold and asserts the account gets locked or
+challenged, not silently allowed to keep trying.
+
+## Cost & limits
+
+**What each mitigation costs to run, so "add more security" has a number
+attached instead of being free.**
+
+- **Parameterized queries:** binding parameters into a query (as opposed
+  to concatenating them) costs nothing extra — the driver sends the
+  values separately from the query text either way. Server-side *prepared
+  statements* — where the query plan is compiled once and reused across
+  calls — are a related but distinct optimization, and not automatic:
+  `node-postgres`, for instance, only prepares a statement server-side
+  when you give the query a `name` in its config, and how much that saves
+  depends on the driver, the database, and the workload, not a fixed
+  number. Either way, the main cost of doing this correctly is one-time —
+  the review discipline to catch string-concatenated queries before merge.
+- **Per-request IDOR checks:** one additional indexed `WHERE owner_id = ?`
+  clause or a pre-fetch ownership lookup — sub-millisecond against an
+  indexed column, invisible at any realistic request volume. The real cost
+  is coverage: a check missing on one of forty endpoints is a bug that
+  passes every test except the one for that specific endpoint, which is
+  why the practice is "test every endpoint that accepts an ID," not
+  "test the ones we remember."
+- **SSRF allow-list resolution:** a DNS resolution plus an IP-range check
+  before the real fetch, on the order of single-digit milliseconds,
+  against a feature (fetch-a-URL) that's already paying tens to hundreds
+  of milliseconds for the network round trip itself — the check is noise
+  against the operation it's protecting.
+- **Secret scanning in CI:** adds seconds to a pipeline run, once per push
+  — cheap enough that "we'll add it later" is never actually a latency
+  argument, only a prioritization one.
+- **What happens when a mitigation isn't in place:** the cost is not
+  bounded the way the mitigation's cost is. A missing IDOR check doesn't
+  fail loudly at a predictable rate — it fails silently, discovered either
+  by a security review or by an attacker, and the blast radius is "every
+  record of that type," not one request.
+
+## When NOT to use it
+
+- **Don't apply IDOR-style per-request ownership checks to genuinely
+  public resources.** A blog's published-post endpoint has no owner check
+  to make — adding one that always passes is dead code that looks like a
+  control and isn't one; the actual guardrail there is making sure the
+  *unpublished* endpoint is separate and does have the check.
+- **Don't add a CAPTCHA or aggressive rate limit to every endpoint
+  uniformly.** Brute-force defenses belong on authentication, password
+  reset, and other credential-adjacent endpoints specifically; applying
+  them to a read-heavy public search endpoint degrades legitimate usage
+  for a threat that endpoint doesn't have.
+- **Don't roll a custom crypto or auth scheme "for defense in depth."**
+  A hand-written signature scheme sitting alongside TLS and a standard
+  auth flow adds a second attack surface without removing the first one;
+  the defense-in-depth that actually pays off is layering standard,
+  well-reviewed controls (WAF, rate limiting, standard auth), not
+  inventing new primitives.
+- **Don't treat this page as a compliance checklist and stop there.** SOC 2
+  or PCI-DSS controls map to some of what's here, but passing an audit and
+  being resistant to the actual failure mode described in each mitigation
+  above are different claims — verify the mitigation, not the checkbox.
+
+## Real-world usage
+
+The OWASP API Security Top 10 (2023 revision) puts Broken Object Level
+Authorization at #1, ahead of every injection or configuration class — a
+direct reflection of how API vulnerabilities differ from classic web-app
+ones: APIs expose resource IDs directly and rely on the caller to have
+implemented the ownership check server-side, and that check is exactly the
+one most often skipped under deadline pressure. Cloud metadata endpoints
+(`169.254.169.254`) being the canonical SSRF target is why AWS introduced
+IMDSv2, which requires a session token obtained via a `PUT` request first —
+closing the specific hole where a simple `GET` from a vulnerable server
+could exfiltrate instance credentials with no other step required.
+
+## Failure modes
+
+**Symptom: a customer reports seeing another company's data in a
+multi-tenant dashboard.** Cause: a query filtered by resource ID but not by
+tenant ID — the ID happened to be globally unique, so the query "worked,"
+it just worked across tenant boundaries. Fix: add tenant ID to every
+data-access query as a mandatory, non-optional parameter, ideally enforced
+at the ORM or query-builder level so a query without it fails to compile
+rather than fails at runtime. Detect it earlier with a cross-tenant IDOR
+test for every multi-tenant endpoint, run in CI, not just at security
+review time.
+
+**Symptom: outbound network requests from application servers to
+suspicious internal IPs show up in flow logs, with no legitimate feature
+that should be making them.** Cause: an SSRF vulnerability is being
+actively probed or exploited through a URL-accepting feature. Fix: patch
+the vulnerable endpoint with the allow-list mitigation above, and rotate
+any credentials reachable from the metadata endpoint if instance-role
+credentials could have been exposed. Detect it earlier by alerting on
+outbound requests from app servers to RFC 1918 / link-local ranges, which
+legitimate application traffic essentially never generates.
+
+**Symptom: a stream of `401`s from a single IP against `/login`, at a rate
+no human types passwords.** Cause: credential stuffing — a bot trying
+leaked credential pairs from other breaches against this login endpoint.
+Fix: this is what the rate-limiting mitigation above exists for; if it's
+not catching this traffic, check whether the limiter is keyed per-IP only
+(easy to route around with a proxy pool) rather than per-account. Detect it
+earlier with an alert on failed-login rate crossing a threshold well before
+it becomes a security incident.
+
+## Practice problems
+
+**1. A `PATCH /users/me` endpoint updates whatever fields are present in
+the request body.** What's the vulnerability, and the one-line fix? — Mass
+assignment: a client can include `"role": "admin"` in the body. Fix:
+validate the request against an explicit schema listing only the fields
+this endpoint is meant to accept (`name`, `email`), rejecting or stripping
+anything else, rather than passing `req.body` through to the update call
+unfiltered.
+
+**2. An internal webhook-receiver endpoint fetches whatever URL is inside
+an incoming payload, to verify the sender controls it.** What threat model
+applies, and what's the mitigation? — SSRF: the payload is attacker-
+controlled input, and the server making an outbound request on its behalf
+is the exact shape of the vulnerability. Mitigation: resolve the URL's
+host to an IP before fetching and reject private/link-local ranges, apply
+an allow-list of expected domains if the sender population is known, and
+disable following redirects (or re-validate the target after each hop) so
+a validated URL can't retarget to an internal address mid-request.
+
+## Interview answers
+
+**"What's the most common real API vulnerability you'd actually check
+for?"** Broken object-level authorization — a route checks that *someone*
+is logged in and stops there, never confirming the logged-in user actually
+owns the ID in the URL. It's #1 on OWASP's API-specific list for a reason:
+it's invisible in code review unless you're specifically looking for the
+missing `WHERE owner_id = ?`, and every framework's default scaffolding
+makes it trivially easy to build a working endpoint that has this hole.
+The caveat that signals production experience: a security review isn't
+"did we add auth," it's "for each endpoint, run the request as a second,
+unrelated user, and confirm it fails" — that's the test that actually
+catches this class, and most teams don't have it.

@@ -1,0 +1,256 @@
+---
+title: Realtime APIs
+description: >-
+  WebSockets and Server-Sent Events remove polling and hand you reconnection,
+  backpressure, and fan-out instead — and the question that actually matters
+  is what happens to a message sent while the client was gone.
+sidebar:
+  order: 7
+difficulty: core
+status: complete
+prereqs: ['5-systems/api-design']
+tags: [websockets, sse, realtime, reconnection, backpressure]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+[API Design](/cs-fundamentals/5-systems/api-design/) covers request-response:
+a client asks, a server answers, the connection closes. Realtime transports
+exist because some data is server-initiated — a price changes, a message
+arrives, a job finishes — and polling for it wastes both a round trip and a
+freshness window between polls.
+
+The trade realtime makes: you remove the round trip, and you take on
+**a connection with a lifecycle** — one that can drop mid-message, needs
+reconnecting, and during the gap, has to answer a question a stateless
+request-response API never has to: *what happened to the messages sent
+while nobody was listening?* A realtime transport that hasn't answered that
+question hasn't solved polling, it's just moved the data-loss window
+somewhere less visible.
+
+## Mechanics
+
+### Two genuinely different transports
+
+**WebSockets** — a persistent, bidirectional, full-duplex connection over a
+single TCP socket after an HTTP upgrade handshake:
+
+```typescript
+const ws = new WebSocket('wss://api.example.com/orders');
+ws.onmessage = (event) => console.log(JSON.parse(event.data));
+ws.send(JSON.stringify({ type: 'subscribe', channel: 'order:482' }));
+```
+
+The client can send as freely as the server — this is the transport for
+chat, collaborative editing, or anything where the client also pushes.
+
+**Server-Sent Events** — a one-way, server-to-client stream over a regular
+HTTP response the server never closes:
+
+```typescript
+const es = new EventSource('/api/orders/482/stream');
+es.onmessage = (event) => console.log(JSON.parse(event.data));
+```
+
+```
+GET /api/orders/482/stream HTTP/1.1
+Accept: text/event-stream
+
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+
+id: 41
+data: {"status":"shipped"}
+
+id: 42
+data: {"status":"delivered"}
+```
+
+SSE is HTTP — it rides through existing proxies and load balancers without
+a protocol upgrade, gets automatic browser reconnection for free (below),
+and is far simpler to run at the edge. It cannot carry client-to-server
+messages on the same stream; a client that needs to send data does so over
+an ordinary separate `POST`.
+
+**The trade, stated plainly:** WebSockets buys bidirectionality at the cost
+of a stateful connection every proxy, load balancer, and firewall between
+client and server has to be configured to allow and sustain. SSE buys
+operational simplicity — it's just HTTP — at the cost of one-way data flow
+only. Picking WebSockets for a use case that only ever pushes server-to-
+client (a live dashboard, a notification feed) buys bidirectionality you'll
+never use and pays its operational cost anyway.
+
+### Reconnection and the `Last-Event-ID`
+
+SSE's killer feature is built-in resumption. Every event can carry an `id`;
+on reconnect, the browser automatically sends the last `id` it saw:
+
+```
+GET /api/orders/482/stream HTTP/1.1
+Last-Event-ID: 42
+```
+
+The server can then replay everything after event 42 from a buffer, instead
+of the client silently missing whatever happened during the gap. WebSockets
+have no equivalent built into the protocol — resumption has to be
+application-level: the client tracks its own last-seen sequence number and
+requests a replay from it explicitly after reconnecting.
+
+```typescript
+let lastSeq = 0;
+function connect() {
+  const ws = new WebSocket(`wss://api.example.com/orders?since=${lastSeq}`);
+  ws.onmessage = (e) => { lastSeq = JSON.parse(e.data).seq; };
+  ws.onclose = () => setTimeout(connect, backoff());
+}
+```
+
+### Backpressure
+
+A slow consumer on a fast producer's stream either buffers unboundedly
+(memory grows until the process dies) or drops. On the server, each
+client's connection object (from Node's `ws` package, say) exposes
+`bufferedAmount` — the pending-send queue size for that one socket — so the
+server can choose deliberately per connection:
+
+```typescript
+// socket: a per-client connection on the server, not the browser's WebSocket
+if (socket.bufferedAmount > MAX_BUFFER) {
+  socket.close(1013, 'Try again later'); // or drop non-critical messages
+}
+```
+
+## Cost & limits
+
+**In-flight messages across a disconnect — the number that has to be
+derived, not assumed.** A client drops for $t$ seconds during a stream
+producing messages at rate $r$ per second. Without a replay buffer, exactly
+$r \times t$ messages are lost — not "some," a specific count, and it scales
+linearly with both how chatty the stream is and how long reconnection
+logic takes to kick back in. At $r = 5$ messages/s (a live order-status
+feed) and a 30-second mobile network handoff, that's 150 messages gone
+silently unless the server buffered them.
+
+**The bound applied.** A ring buffer sized to the maximum tolerable gap
+bounds both the loss and the server's memory cost:
+
+$$
+\text{buffer size} = r \times t_{\max}
+$$
+
+The buffer belongs to the topic or channel (`order:482`), not to any one
+client's subscription — many clients can reconnect and replay from the same
+buffer, so it isn't duplicated per connection. At $r = 5$/s and a chosen
+$t_{\max} = 300$ s (five minutes — anything longer requires a full resync,
+not a replay), that's 1,500 buffered messages per topic. At 200 bytes per
+message and 10,000 concurrently *active* topics, the buffers cost $1{,}500
+\times 200\text{ B} \times 10{,}000 \approx 2.9\text{ GB}$ of memory — a real
+number to size infrastructure against, not an open-ended "keep everything."
+
+Behind a load balancer with more than one server instance, that buffer
+either lives in a shared store with a globally consistent sequence per
+topic (so any instance can serve a replay), or each topic is routed stickily
+to one instance that owns its buffer — in which case a failover to another
+instance loses the buffer and has to fall back to a full resync rather than
+a replay. Past $t_{\max}$, the server drops the buffer and the client falls
+back to a full state resync (a plain `GET` for current state) instead of an
+unbounded replay log.
+
+**Connection cost at scale.** Each open WebSocket holds a TCP socket, TLS
+state, and per-connection memory (typically 10–50 KB depending on buffer
+sizes) on the server for its entire lifetime, whether or not it's actively
+sending — 100,000 idle connections is multiple GB of memory doing nothing
+but existing, which is why a realtime tier scales primarily on open
+connections, not on request throughput the way a REST tier does.
+
+## When NOT to use it
+
+- **Data that changes slower than a reasonable poll interval.** A dashboard
+  refreshing every 30 s doesn't need a persistent connection's operational
+  cost — polling with `ETag`-backed `304`s (see the
+  [REST APIs](/cs-fundamentals/12-backend-apis/rest-apis/) page) is simpler
+  to run, debug, and scale.
+- **You haven't decided what happens on disconnect.** Shipping a
+  WebSocket or SSE stream with no replay buffer and no client-side gap
+  detection isn't a simpler realtime system, it's a polling system that
+  silently drops data instead of a polling system that's merely slow.
+- **Strict per-message delivery guarantees (exactly-once, ordered, durable)
+  at the application's core.** That's a message broker's job, not a
+  browser-facing transport's — terminate the durable queue server-side and
+  bridge it to WebSocket/SSE for the client leg, don't ask the client
+  transport to be the durable log.
+
+## Real-world usage
+
+Slack's Socket Mode reconnects over WebSocket (opened via
+`apps.connections.open`) and calls REST endpoints to fetch anything missed
+rather than trusting the socket layer to replay it — the durable state
+lives server-side, the socket is just the live-update channel. This
+replaced the older RTM API, which worked the same way in spirit
+(`rtm.start` opened the socket) but is now legacy. GitHub's live-updating UI (PR checks,
+notifications) uses SSE specifically because the data flow is one-way
+server-to-client and SSE's automatic reconnect-with-`Last-Event-ID` removes
+a whole reconnection-logic class of client bug for free.
+
+## Failure modes
+
+**Symptom: a mobile client shows stale data for minutes after regaining
+signal, then jumps to current state with no transition.** Cause: no replay
+buffer — the client detected the disconnect, reconnected, and got only new
+messages going forward, silently missing everything in between until the
+UI's next full refresh papered over it. Fix: a bounded replay buffer keyed
+by sequence number or `Last-Event-ID`, and a client-side gap check (did the
+sequence number jump?) that triggers an explicit resync instead of trusting
+the stream implicitly.
+
+**Symptom: server memory grows steadily and node restarts fix it
+temporarily.** Cause: `ws.send()` queues messages faster than a slow client
+drains them, and nothing capped `bufferedAmount` — the buffer for one stuck
+connection grows without limit. Fix: check `bufferedAmount` before sending
+and close or drop-and-flag connections past a threshold; alert on the
+distribution of buffer sizes across connections, not just total memory.
+
+**Symptom: a load balancer restart disconnects every client simultaneously,
+and the server gets hammered by a reconnection storm.** Cause: naive
+reconnect logic retries immediately with no jitter or backoff, so every
+client hits the server in the same second. Fix: exponential backoff with
+jitter (`backoff() = base * 2^attempt + random(0, base)`), and a server-side
+connection-accept rate limit so a storm degrades gracefully instead of
+taking the service down entirely.
+
+## Practice problems
+
+**1. Size the replay buffer** for a stream producing 20 messages/s per
+topic, where product has decided a 2-minute network gap must be fully
+recoverable, each message averages 150 bytes, and 50,000 topics are active
+concurrently. — $20 \times 120 = 2{,}400$ messages/topic $\times$ 150 B $=
+360$ KB/topic $\times$ 50,000 $\approx 18$ GB. At that size, either shrink
+$t_{\max}$, compress buffered messages, or move the buffer off any single
+instance's memory into a shared, replay-capable store — Redis Streams
+(bounded with `MAXLEN`), not Redis Pub/Sub, which is fire-and-forget and
+keeps no history for a client that reconnects after the fact.
+
+**2. A WebSocket client's `onclose` handler reconnects immediately with no
+backoff.** Under what condition does this go from "fine" to "an outage,"
+and what's the minimal fix? — Fine while disconnects are isolated; becomes
+an outage when the server itself is the thing restarting (a deploy, a
+crash-loop), because every connected client's `onclose` fires within the
+same second and the reconnection flood is what keeps the server from coming
+back up cleanly. Minimal fix: add jitter to the very first reconnect delay,
+not just to the exponential backoff after repeated failures.
+
+## Interview answers
+
+**"WebSocket or SSE — how do you choose?"** By direction of data flow, not
+by feature checklist: if the client only receives, SSE is simpler to
+operate (plain HTTP, automatic reconnection, works through existing
+infrastructure) and gives up nothing you needed. If the client also sends
+on the same channel — chat, collaborative editing — WebSockets are the
+right primitive. The caveat that signals production use: the transport
+choice is the easy 20% of the problem; the hard 80% is what happens to a
+message sent while the client was gone, and that has to be answered with a
+sized, bounded buffer and an explicit resync path — not left to "the socket
+reconnects, so it's fine."

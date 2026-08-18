@@ -1,0 +1,273 @@
+---
+title: Graph Query APIs
+description: >-
+  GraphQL solves over-fetching by letting the client shape the query — which
+  means the client now also shapes the cost, and an unbounded query is an
+  unbounded bill.
+sidebar:
+  order: 5
+difficulty: core
+status: complete
+prereqs: ['5-systems/api-design']
+tags: [graphql, dataloader, query-cost, n+1, caching]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+[API Design](/cs-fundamentals/5-systems/api-design/) already covers the two
+bugs that show up in a GraphQL resolver — N+1 queries and a shared
+`DataLoader` leaking data across requests. This page is about the problem
+one level up: **REST bounds cost per endpoint, because you wrote the query
+the endpoint runs. GraphQL lets the client compose the query, which means
+the client also composes the cost, and nothing stops them composing an
+expensive one.**
+
+The trade is real, not a design flaw: over-fetching (REST) and unbounded
+query cost (GraphQL) are the same tension — "who decides what work the
+server does" — resolved in opposite directions. A graph API without a query
+cost budget hasn't avoided that tension, it has just handed the decision to
+whoever sends the query, including an attacker.
+
+## Mechanics
+
+### The schema and a naive resolver
+
+```graphql
+type User {
+  id: ID!
+  name: String!
+  friends: [User!]!
+}
+
+type Query {
+  user(id: ID!): User
+}
+```
+
+```graphql
+query {
+  user(id: "1") {
+    friends {
+      friends {
+        friends {
+          name
+        }
+      }
+    }
+  }
+}
+```
+
+Each `friends` field fans out to every friend of every friend. A resolver
+that fetches `friends` with one database call per node — no batching — is
+the N+1 problem the prerequisite page covers. This page's problem survives
+even after you fix N+1 with a `DataLoader`: the *shape* of the query is
+still unbounded, batching just makes each unbounded query cheaper per node,
+not bounded in total.
+
+### Depth limiting
+
+```typescript
+import depthLimit from 'graphql-depth-limit';
+```
+
+A query nesting `friends` five levels deep is rejected during validation —
+after the query is parsed, but before any resolver runs. Depth alone is a
+blunt instrument — it caps nesting but not breadth, so `friends { name }`
+requested with an `edges(first: 10000)` argument at depth 2 still walks past
+it.
+
+### Complexity budgets
+
+```typescript
+import { createComplexityLimitRule } from 'graphql-validation-complexity';
+
+const ComplexityLimit = createComplexityLimitRule(1000, {
+  scalarCost: 1,
+  objectCost: 2,
+  listFactor: 10,
+});
+```
+
+Each field costs points; a list multiplies the cost of everything beneath it
+by an estimate of its size. This is the mechanism that catches what depth
+limiting misses — wide-but-shallow queries — because it prices breadth, not
+just nesting. Both rules run in the same validation pass, registered
+together:
+
+```typescript
+const server = new ApolloServer({
+  schema,
+  validationRules: [depthLimit(4), ComplexityLimit],
+});
+```
+
+A depth limit alone would have let the wide-but-shallow query through;
+dropping the complexity rule from `validationRules` and keeping only
+`depthLimit` is the easy way to end up unprotected against exactly the case
+depth limiting can't see.
+
+### Persisted queries
+
+Apollo's *automatic* persisted queries (APQ) send a hash instead of the
+query text:
+
+```typescript
+// Client sends a hash, not the query text
+{ "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "ecf4edb..." } } }
+```
+
+This is not by itself a safelist. If the server doesn't recognize the hash,
+the standard APQ flow has the client retry with the full query text
+attached, and the server registers it — meaning *any* query text a client
+sends can end up persisted, arbitrary-query risk and all. APQ's win is
+bandwidth (short hash instead of full query text on repeat requests), not
+access control.
+
+A genuine safelist — a fixed set of operations registered at build time from
+the client's own query files, with every other operation rejected outright,
+no retry-with-full-text fallback — is what removes arbitrary-query risk from
+a public-facing endpoint. That's a separate mechanism (a persisted query
+list / operation allowlist) layered on top of, or instead of, plain APQ.
+
+## Cost & limits
+
+**Deriving the cost of the unbounded query above.** Suppose each `User` has
+on average $f$ friends. A query nesting `friends` to depth $d$ visits:
+
+$$
+1 + f + f^2 + \dots + f^d = \frac{f^{d+1} - 1}{f - 1}
+$$
+
+nodes, and — without batching — issues one database round trip per node.
+The example query above nests `friends` three times (`friends { friends {
+friends { name } } }`), so $d = 3$. With $f = 50$ (a realistic social-graph
+fan-out):
+
+$$
+\frac{50^4 - 1}{50 - 1} \approx 127{,}551\text{ node visits from a single request}
+$$
+
+At a conservative 2 ms per round trip (with `DataLoader` batching collapsing
+same-level fetches, so this is per *level*, not per *node*, once batched)
+the query still touches on the order of $50^3 = 125{,}000$ distinct users at
+the leaf level alone — likely more rows than the query's author intended one
+request to reach, and the count grows to the tens of millions if a client
+adds one more level of nesting.
+
+**The bound applied.** With `complexityLimit(1000)`, `scalarCost: 1`,
+`objectCost: 2`, `listFactor: 10`, treating each `friends` edge as a list
+and using the simplified per-level estimate `cost(d) = objectCost ×
+listFactor^d` this page has been using throughout:
+
+$$
+\text{cost}(d) = \text{objectCost} \times \text{listFactor}^d = 2 \times 10^d
+$$
+
+At $d = 3$ (the example query's actual nesting) that's $2 \times 1{,}000 =
+2{,}000$ — twice the 1,000-point ceiling, and rejected before execution. One
+more level of nesting ($d = 4$) would cost $2 \times 10{,}000 = 20{,}000$,
+twenty times the ceiling — the request that would have touched millions of
+rows is refused for pocket change in CPU: one complexity calculation over
+the parsed query AST. (A production complexity plugin's exact arithmetic
+sums cost field-by-field rather than using one closed-form power of $d$;
+this simplified version is for the shape of the argument, not a literal
+`graphql-validation-complexity` trace.)
+
+**What the ceiling does when hit.** Apollo Server rejects the query with an
+HTTP `400` and a `GRAPHQL_VALIDATION_FAILED` error code by default — no
+partial execution. Whether the response body also shows the computed cost
+next to the limit depends on the validation rule's error-formatting options
+(`createError` / a custom `formatErrorMessage`); it isn't included
+automatically. Either way, the failure mode below covers what happens when
+there's no ceiling at all.
+
+## When NOT to use it
+
+- **A fixed, small set of access patterns.** If every client needs the same
+  three shapes of data, GraphQL's flexibility is pure overhead — you pay for
+  a query planner and a cost-governance system to solve a problem REST's
+  fixed endpoints don't have.
+- **You cannot staff the cost-governance work.** Depth limits, complexity
+  budgets, and persisted queries are not optional add-ons, they are the
+  price of admission for a public GraphQL endpoint. A team that ships the
+  schema without them has shipped an open query planner to anonymous
+  callers.
+- **Caching matters more than query flexibility.** REST's per-URL caching
+  (CDN, browser, `ETag`) has no clean GraphQL equivalent — a single `POST
+  /graphql` endpoint returning different shapes per request defeats URL-based
+  caching outright, and response-level caching has to be built by hand
+  (normalized client caches, persisted-query-keyed server caching).
+
+## Real-world usage
+
+GitHub's public GraphQL API enforces a points-based rate limit computed per
+query (visible in the response's `rateLimit` field) rather than a flat
+requests-per-minute cap — the same complexity-budget idea, applied at the
+account level instead of per request. Shopify's Admin API caps query cost
+per request and returns `requestedQueryCost` and `actualQueryCost` in
+`extensions.cost` by default; a client that adds the
+`Shopify-GraphQL-Cost-Debug: 1` header gets a further field-by-field cost
+breakdown, a development-oriented option that increases response size and
+isn't meant to stay on for production traffic.
+
+## Failure modes
+
+**Symptom: the database falls over minutes after a GraphQL endpoint goes
+public, with no obvious traffic spike in request count.** Cause: request
+*count* stayed flat while request *cost* did not — a handful of nested
+queries from a scraper or a misbehaving client did the work of thousands of
+simple ones. Fix: add a complexity budget (not just a rate limit) and reject
+before execution; backfill query-cost logging so this is visible next time
+without database metrics as the only signal.
+
+**Symptom: a resolver batches with `DataLoader` but users occasionally see
+another user's cached field values.** Cause: a `DataLoader` instance was
+created once at server startup and reused across requests instead of once
+per request — its cache now spans users. Fix: instantiate `DataLoader` per
+request (in the GraphQL context factory), never at module scope. This is
+the specific bug the prerequisite page names; it resurfaces here because
+cost limiting and correct batching are easy to treat as the same fix when
+they are not — one bounds cost, the other bounds cross-request leakage.
+
+**Symptom: p99 latency on one query shape degrades gradually over months
+with no code change.** Cause: `listFactor` estimates in the complexity rule
+were calibrated against list sizes from launch, and the lists grew — a
+query priced as depth-3-cheap when the average user had 20 friends is
+depth-3-expensive at 500. Fix: recalibrate complexity weights against
+current data distributions on a schedule, not once at launch.
+
+## Practice problems
+
+**1. Price this query** against `objectCost: 2, listFactor: 10` per the
+formula above: `user { posts { comments { author { name } } } }` (three
+nested list fields: `posts`, `comments`, and `author` is a single object).
+— `posts` and `comments` are lists (each ×10), `author` is not: cost $\approx
+2 \times 10 \times 10 = 200$ for the object chain beneath `user`, under a
+1,000-point budget — this one should pass, unlike the depth-3 friends query
+above, which is the point: complexity budgets pass legitimately deep-but-
+narrow queries and reject shallow-but-wide or exponentially-fanning ones.
+
+**2. A persisted-queries deployment breaks a partner integration overnight.**
+Why, and what's the fix that doesn't reopen the cost problem? — The partner
+was sending ad hoc queries against a schema that just started rejecting
+unregistered query hashes. Fix: register the partner's specific query
+shapes as persisted queries (an allowlist, not a hash of *their* choosing)
+rather than disabling persisted queries entirely, which would return to
+unbounded ad hoc access for everyone.
+
+## Interview answers
+
+**"What's the actual risk in exposing a GraphQL endpoint?"** The client
+composes the query, so the client composes the cost — an unbounded nested
+or wide query can do database work that scales combinatorially with depth
+while looking like one request in your access logs. The fix is layered:
+depth limits catch deep queries, complexity budgets catch wide ones,
+persisted queries remove the ad hoc surface entirely for public endpoints.
+The caveat that signals production experience: complexity weights are not
+"set once" — they drift as your data grows, and a budget calibrated at
+launch quietly stops meaning anything a year later unless someone owns
+recalibrating it.

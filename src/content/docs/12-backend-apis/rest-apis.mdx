@@ -1,0 +1,209 @@
+---
+title: REST APIs
+description: >-
+  The parts of REST that only bite you past the first CRUD endpoint —
+  caching headers, content negotiation, versioning, and the hypermedia
+  question everyone skips.
+sidebar:
+  order: 4
+difficulty: core
+status: complete
+prereqs: ['5-systems/api-design']
+tags: [rest, http, caching, versioning, openapi]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+[API Design](/cs-fundamentals/5-systems/api-design/) establishes the contract:
+nouns as URLs, methods as verbs, safe and idempotent as promises to
+infrastructure you do not control. This page is what happens once that
+contract has to survive a second client, a second version, and a cache
+sitting between you and the caller.
+
+The idea that survives all of that: **HTTP is not a transport you tunnel
+through, it is a protocol with its own opinions about caching, conditional
+requests, and content types — and every one you ignore is a feature you
+reimplement badly in application code.**
+
+## Mechanics
+
+### Conditional requests: `ETag` and `If-None-Match`
+
+A resource that changes rarely should not be re-served in full on every poll.
+
+```
+GET /orders/482 HTTP/1.1
+
+HTTP/1.1 200 OK
+ETag: "a1b2c3"
+Cache-Control: private, max-age=0, must-revalidate
+
+GET /orders/482 HTTP/1.1
+If-None-Match: "a1b2c3"
+
+HTTP/1.1 304 Not Modified
+```
+
+`304` carries no body. The client keeps its cached copy, and the server did
+the one thing it is actually good at: a hash comparison instead of a
+serialization pass. The same header pair, `If-Match`, turns a `PUT` or
+`PATCH` into an optimistic-concurrency check — the write only applies if the
+`ETag` still matches, which is the cheap alternative to row locking for a
+"last write wins" race between two editors.
+
+### Content negotiation
+
+`Accept` and `Content-Type` are not decoration:
+
+```
+GET /orders/482 HTTP/1.1
+Accept: application/vnd.acme.order+json;version=2
+
+HTTP/1.1 200 OK
+Content-Type: application/vnd.acme.order+json;version=2
+```
+
+A vendor media type in `Accept` is one way to version without a URL change —
+the resource identity (`/orders/482`) stays stable while its representation
+changes, which matters because URLs get bookmarked, cached, and hard-coded
+in ways headers don't.
+
+### Versioning: URL, header, or none
+
+| Strategy | Looks like | Cost |
+|---|---|---|
+| URL path | `/v2/orders` | Simple, cacheable per-version, but every consumer sees version churn in the URL they store |
+| `Accept` header | `Accept: application/vnd.acme+json;v=2` | Keeps the URL stable; harder to test from a browser address bar, easy to forget in a proxy's cache key |
+| No version, additive-only | Same URL forever | Cheapest for clients, but every field is permanent — you can add, you cannot remove or repurpose |
+
+Additive-only is the default worth defending: most "we need v2" conversations
+are actually "we removed a field a client still reads." A field nobody reads
+anymore costs nothing to leave in place; a breaking change costs every
+consumer a migration.
+
+### Hypermedia: HATEOAS in practice
+
+The purist version of REST expects responses to carry their own next steps:
+
+```json
+{
+  "id": 482,
+  "status": "shipped",
+  "_links": {
+    "self": { "href": "/orders/482" },
+    "cancel": { "href": "/orders/482/cancel" }
+  }
+}
+```
+
+Almost nobody ships full HATEOAS, and the reason is not laziness: a client
+that follows `_links` at runtime still has to know what `cancel` *means* out
+of band, so the discoverability HATEOAS promises rarely pays for the extra
+response weight and client complexity. The part worth keeping without the
+whole apparatus: including `_links.next` on a paginated collection, so
+pagination logic lives in one place (the server) instead of being
+reconstructed by every client from a `page` query parameter.
+
+## Cost & limits
+
+**Bytes saved by `304` versus re-serving.** A `GET /orders/482` response body
+is 2 KB. A client polling every 10 s for an 8-hour shift makes 2,880
+requests. If the resource changes twice in that shift, `ETag` turns 2,878 of
+those into a ~200-byte `304` instead of a 2 KB `200`:
+
+$$
+2{,}878 \times (2000 - 200)\text{ bytes} \approx 5.2\text{ MB saved per client, per shift}
+$$
+
+At 500 concurrent clients doing the same poll, that is roughly 2.6 GB of
+egress avoided per shift — the conditional-request header pair is doing the
+job a Redis cache-aside layer would otherwise exist to do, for free, using
+infrastructure (browser and CDN caches) you did not have to run.
+
+**Version fan-out.** Each live API version is a codepath you test and a
+security patch you backport. Two versions in production roughly doubles
+integration-test runtime and the on-call surface for a schema bug; three
+versions is where teams start scripting version sunset dates into the
+contract itself, because "supported forever" was never actually decided —
+it just accumulated.
+
+## When NOT to use it
+
+- **Chatty client-driven UIs.** A dashboard rendering a device tree three
+  levels deep needs one REST round trip per level unless you build a custom
+  aggregation endpoint — at that point you are hand-rolling the query
+  flexibility the [graph query APIs](/cs-fundamentals/12-backend-apis/graphql-apis/)
+  page covers, worse, one endpoint at a time.
+- **Sub-millisecond internal RPC.** Service-to-service calls inside one
+  trust boundary pay for HTTP semantics (headers, status-code parsing, JSON
+  serialization) they never use. gRPC or a binary protocol wins there.
+- **True push semantics.** REST is request-response. A price feed clients
+  need pushed to them the moment it changes belongs on the
+  [realtime APIs](/cs-fundamentals/12-backend-apis/realtime-apis/) page, not
+  behind a polling loop dressed up as REST.
+
+## Real-world usage
+
+Stripe's API is the textbook case for additive-only versioning: accounts pin
+to the API version active when they were created, and a new field is safe to
+add because old integrations never see it unless they opt in. GitHub's REST
+API uses `Accept`-header versioning (`Accept: application/vnd.github+json`)
+specifically so the URL — which ends up in scripts, docs, and bookmarks —
+never has to change under a client.
+
+## Failure modes
+
+**Symptom: a client's cached list is stale for hours after a write.**
+Cause: `Cache-Control` was set generously on a collection endpoint
+(`max-age=3600`) without a corresponding invalidation path — the write
+succeeded, but nothing told the CDN the cached `GET /orders` was now wrong.
+Fix: either shorten the TTL to match acceptable staleness, or invalidate the
+specific cache key on write (a CDN purge API call, or a `Vary` header keyed
+to something that changes). Detect it earlier by asserting cache headers in
+contract tests, not just response bodies.
+
+**Symptom: a mobile app update breaks overnight for users who haven't
+updated.** Cause: a field was renamed or removed on the same URL instead of
+added alongside — "v2" without the version marker. Fix: revert the removal,
+add the new field under a new name, deprecate the old one with a sunset
+header (`Sunset: <date>`) and a metrics dashboard tracking who still reads
+it. Detect it earlier with a contract test that diffs the response schema
+against the last released version and fails on any field removal.
+
+**Symptom: two users' concurrent edits to the same record silently
+overwrite each other.** Cause: no `If-Match` / `ETag` check on `PUT`, so
+"last write wins" is enforced by network timing, not intent. Fix: require
+`If-Match` on writes to that resource and return `412 Precondition Failed`
+on mismatch, forcing the client to reload and reapply.
+
+## Practice problems
+
+**1. A `304` response is showing a `Content-Length: 2048` header.** What's
+wrong, and why does it matter? — A `304` must not carry a body, so a
+`Content-Length` matching the full resource means either a proxy is
+rewriting the response incorrectly or the server is not actually short-
+circuiting the serialization pass; the client saved no bandwidth even though
+the status code implies it did. Verify by checking whether the byte count on
+the wire matches the header.
+
+**2. Design the sunset path for a field.** A `discount_code` field is being
+replaced by `discount` (an object with `code` and `percent`). Write the
+three-step rollout that keeps existing clients working. — (1) Add `discount`
+alongside `discount_code`, both populated from the same write; (2) mark
+`discount_code` deprecated in docs and response headers, track read volume
+by client; (3) remove `discount_code` only after read volume drops to zero
+or a announced sunset date passes, never on a fixed calendar alone.
+
+## Interview answers
+
+**"Why does REST matter if I could just POST everything to one endpoint?"**
+Because the safe/idempotent split is a contract with infrastructure you do
+not control — caches, proxies, retries — not a style preference. Collapse it
+and you reimplement caching and retry-safety by hand, usually worse and
+usually only after the first outage caused by a `GET` with a side effect.
+The caveat that signals real production use: knowing when it isn't worth
+it — a purely internal RPC surface gains nothing from HTTP semantics it
+never triggers, and forcing REST there is cargo-culting, not discipline.

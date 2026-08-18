@@ -85,6 +85,7 @@ const VARIANTS: Record<string, Section[]> = {
   '11-web-frontend': ENGINEERING,
   '12-backend-apis': ENGINEERING,
   '13-architecture': ENGINEERING,
+  '14-production': ENGINEERING,
 };
 
 /** The top-level section directory a page lives in, e.g. `10-ai-engineering`. */

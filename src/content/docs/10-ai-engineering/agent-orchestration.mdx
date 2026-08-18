@@ -329,6 +329,61 @@ orchestration layer.
 the [agents](/cs-fundamentals/10-ai-engineering/agents/) page needs an
 orchestration-level equivalent.
 
+### Circular waits: the deadlock version, not the livelock version
+
+The loop above still makes progress, however uselessly -- messages keep
+moving, tokens keep being spent, the step budget is what eventually stops it.
+A genuine deadlock is worse and looks different: two agents each **block**
+on a call they made to the other, and neither can resume until the other
+does, so nothing moves at all.
+
+```text
+Planner  --- calls --->  Booking
+   ^                          |
+   |                          |
+   +------ calls back --------+
+```
+
+Planner calls Booking and awaits the response. Mid-handling, Booking calls
+back into Planner and awaits *that*. Planner is not free to answer, because
+it is itself still waiting inside its own call to Booking. Both sit idle
+until a timeout eventually kills the request -- this is the multi-agent
+version of the database deadlock covered at
+[`5-systems/databases.mdx`](/cs-fundamentals/5-systems/databases/): two
+holders, each waiting on a resource (here, a completed response) the other
+holds, and no forward progress is possible from inside the wait itself.
+
+**Symptom:** requests involving both agents hang until timeout, with no
+error pointing at either agent individually -- each agent's own logs show
+only "waiting," which is indistinguishable from a slow but healthy call.
+
+**Cause:** peer-to-peer calling with no rule against a callee calling back
+into its caller, synchronously, within the same logical request.
+
+**Fix, in order of how structural it is:**
+
+- **Remove peer-to-peer calls entirely.** Route every inter-agent call
+  through a central orchestrator (the pattern from [the patterns, in
+  increasing order of cost](#the-patterns-in-increasing-order-of-cost)
+  above). A cycle cannot form if no agent is ever allowed to call another
+  agent directly -- every call goes up to the orchestrator and back down,
+  never sideways.
+- **Bound recursion depth**, independent of the step budget above. A step
+  budget catches a loop that keeps making distinguishable progress; a depth
+  counter passed through every call and checked on entry catches a cycle
+  specifically, by refusing a call that would revisit a point already on the
+  current call stack.
+- **Give the whole request a timeout budget, not each call its own.**
+  Splitting a 30-second budget as "30 seconds per agent" lets a two-agent
+  cycle burn 60 seconds before either individual timeout fires; a single
+  budget for the entire request, decremented as it's consumed, bounds the
+  damage to the budget actually promised to the caller.
+- **Validate the dependency graph before deploy**, not after. If the set of
+  agents and which ones are permitted to call which others is known ahead of
+  time, a cycle in that permission graph is detectable statically -- reject
+  the deployment rather than discovering the cycle in production the first
+  time two specific agents happen to both be invoked on the same request.
+
 ## Practice problems
 
 **1. The split that made it worse.**

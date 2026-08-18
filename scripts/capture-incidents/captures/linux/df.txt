@@ -1,0 +1,6 @@
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         453G   42G  388G  10% /
+tmpfs            64M     0   64M   0% /dev
+shm              64M     0   64M   0% /dev/shm
+/dev/vda1       453G   42G  388G  10% /etc/hosts
+tmpfs           4.0K     0  4.0K   0% /proc/scsi

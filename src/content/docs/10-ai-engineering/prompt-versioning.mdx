@@ -1,0 +1,248 @@
+---
+title: Prompt versioning — treating a prompt as a deployable artefact
+description: >-
+  A prompt edit that quietly regresses quality is a deploy with no diff, no
+  review, and no rollback unless prompts are versioned, tested, and released
+  like code — not typed into a string constant and shipped.
+sidebar:
+  order: 23
+difficulty: core
+status: complete
+prereqs:
+  - 10-ai-engineering/evaluation
+  - 10-ai-engineering/llmops
+tags: [prompt-versioning, prompt-registry, rollback, ab-testing]
+languages: [python, typescript]
+roles: [ai, backend]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+A prompt is code. It determines what the system does, in production, for
+every user. Treated as a string constant edited in place and shipped with
+the next deploy, it inherits none of the discipline applied to actual code —
+no diff review focused on it specifically, no independent rollback, no
+record of which version produced which behaviour. Treated as a **versioned
+artefact** — the same discipline applied to a model version on
+[llmops](/cs-fundamentals/10-ai-engineering/llmops/#shipping-a-model-change) —
+a bad prompt edit becomes a fast, isolated rollback instead of a mystery
+regression discovered days later with no clear cause.
+
+## Mechanics
+
+### The minimum version: an id, not just a string
+
+```python
+PROMPTS = {
+    "support-triage-v17": "You are a support triage assistant. Given a ticket...",
+    "support-triage-v18": "You are a support triage assistant. Read the ticket "
+                            "carefully and classify it as one of: billing, "
+                            "technical, account. Given a ticket...",
+}
+
+ACTIVE_VERSION = "support-triage-v17"
+```
+
+The specific mechanism matters less than the property it buys: **every
+response can be traced back to the exact prompt text that produced it**,
+and switching versions is a one-line change to `ACTIVE_VERSION`, not a
+re-edit of the string followed by hoping the diff is clean. This is the
+prompt equivalent of `prompt_hash` already logged per request on
+[llmops](/cs-fundamentals/10-ai-engineering/llmops/#what-to-log) — the
+version id is what that hash should resolve back to.
+
+### Review and testing, before a version goes active
+
+A prompt change should go through the same review a code change does — a
+diff someone else reads before it ships — plus, specifically, a run against
+the [golden set](/cs-fundamentals/10-ai-engineering/evaluation/#start-with-a-golden-set)
+already covered on the evaluation page. A prompt edit that reads as an
+obvious improvement in isolation can still regress specific cases the
+golden set would have caught; the review catches intent, the eval run
+catches regression.
+
+```text
+support-triage-v18 vs v17, on the golden set:
+  accuracy:        0.91 -> 0.89  (regression)
+  avg tokens:       210 -> 340   (cost increase)
+```
+
+A version that regresses the eval score is exactly the kind of change a
+code review process would block on a failing test — the same gate, applied
+to a prompt instead of a function.
+
+### Rollback: as fast as the model rollback it complements
+
+```python
+# incident: support-triage-v18 shipped an hour ago, quality complaints rising
+ACTIVE_VERSION = "support-triage-v17"  # one-line revert, no redeploy of logic
+```
+
+Because the prompt text lives in a registry keyed by version rather than
+inline in application code, reverting doesn't require a full application
+deploy — the same argument made for feature-flagging a broken feature on
+[incident-method](/cs-fundamentals/14-production/incident-method/): the
+faster the mitigation, the less customer impact accumulates while the root
+cause is investigated properly.
+
+### A/B testing prompts, the same shape as canary model rollout
+
+```text
+90% of traffic -> support-triage-v17 (known-good)
+10% of traffic -> support-triage-v18 (candidate)
+```
+
+Structurally identical to the [canary rollout for a model
+version](/cs-fundamentals/10-ai-engineering/llmops/#shipping-a-model-change) —
+a small fraction of real traffic on the candidate, outcome metrics (not just
+the offline eval score) watched before ramping. A prompt change that looked
+like a clear improvement on the golden set can still behave differently
+against the full diversity of real production traffic, which is exactly
+what the canary stage exists to catch before it's serving everyone.
+
+## Cost & limits
+
+**A prompt registry and versioning discipline is real infrastructure to
+build and maintain** — it doesn't happen by accident, and a team that hasn't
+invested in it defaults to prompts as inline strings, which is faster to
+write and slower to debug or roll back later. The investment pays off in
+proportion to how often prompts actually change and how costly a bad change
+is to leave in production undetected.
+
+**Running every prompt candidate through the full evaluation set before
+shipping has a real time and compute cost**, the same cost already named on
+[evaluation](/cs-fundamentals/10-ai-engineering/evaluation/#what-an-evaluation-run-costs) —
+a large golden set run against every minor prompt tweak can become a
+bottleneck on iteration speed, which is the argument for a fast, cheap
+subset check for small changes and the full set for anything larger.
+
+## When NOT to use it
+
+**Do not version every prompt in the system with full registry, review, and
+canary ceremony if the prompt is genuinely low-stakes and low-traffic** — an
+internal debugging prompt used by one engineer doesn't need the same
+process as a customer-facing production prompt serving thousands of
+requests a day. Match the ceremony to the blast radius.
+
+**Do not treat passing the golden set as sufficient sign-off for a prompt
+change, skipping the canary stage.** The evaluation page's own caveat
+applies here directly: a golden set that's comprehensive still isn't the
+same distribution as live traffic, and a prompt change that passes offline
+can still behave differently once it meets the full diversity of real
+inputs — which is exactly what the canary stage is for.
+
+## Real-world usage
+
+Teams operating LLM features at any meaningful scale converge on some form
+of prompt versioning once they've been burned once by an untracked prompt
+edit that regressed quality with no clear way to identify which change
+caused it or revert cleanly — the same maturation path most engineering
+teams go through with configuration management generally, applied to
+prompts specifically because they change more often and more informally
+than most other production configuration.
+
+## Failure modes
+
+**The regression nobody could trace to a cause.** A prompt edited in place,
+deployed as part of a larger release, causes a quality drop that shows up
+days later in user feedback — by which point identifying which specific
+change caused it requires reconstructing git history and guessing, because
+nothing recorded which prompt version was active when, or logged which
+version produced which response.
+
+**The rollback that required a full redeploy.** An incident traced to a bad
+prompt change takes far longer to mitigate than necessary because the
+prompt was inline in application code rather than in a versioned registry —
+reverting it means going through the full deploy pipeline again, rather than
+flipping a version pointer, adding minutes to an incident that a registry
+would have resolved in seconds.
+
+**The A/B test that shipped to everyone before anyone checked outcome
+metrics.** A prompt candidate that passed the golden set gets ramped to
+100% of traffic immediately, skipping the canary stage — and a subtle
+regression that only shows up against the full diversity of real traffic
+(not represented in the golden set) reaches every user at once instead of
+the 10% a canary stage would have limited it to.
+
+## Practice problems
+
+**1. A team edits a production prompt directly in the codebase, ships it as
+part of a routine deploy, and a week later notices response quality has
+dropped. What made this harder to diagnose than it needed to be?**
+
+The prompt change wasn't tracked as its own versioned artefact — it was one
+line inside a larger deploy, with no record of exactly what changed, when,
+or which responses came from the old versus new prompt text. Diagnosing it
+required reconstructing the change from git history rather than simply
+checking which prompt version was active before and after the quality drop,
+and reverting required a redeploy rather than a one-line version-pointer
+change.
+
+**2. A candidate prompt version scores higher than the current production
+version on the golden set. A team ships it to 100% of traffic immediately.
+What's missing from this rollout, and what could go wrong?**
+
+A canary stage — ramping the candidate to a small percentage of real
+traffic first and watching outcome metrics, not just the offline eval
+score. The golden set, however comprehensive, isn't the same distribution
+as live traffic; a prompt that scores well on the golden set can still
+behave differently against inputs the golden set doesn't represent, and
+shipping straight to 100% means any such gap affects every user
+immediately rather than the fraction a canary would have limited it to.
+
+**3. A team wants to know exactly which prompt version produced a specific
+customer complaint's response, from three weeks ago. What needs to have
+been in place for this to be answerable at all?**
+
+Per-request logging of the prompt version (or a hash resolving to a
+specific version) alongside the response, the same discipline as the
+`prompt_hash` field already covered on
+[llmops](/cs-fundamentals/10-ai-engineering/llmops/#what-to-log). Without
+that link recorded at request time, there's no way to reconstruct which
+prompt text actually produced a given historical response — the versioning
+discipline only answers this question if it's connected to the logging
+discipline, not maintained as a separate, disconnected practice.
+
+<Quiz
+  client:visible
+  id="prompt-versioning-canary"
+  kind="concept"
+  question="A prompt candidate scores higher than production on the golden set. Why might shipping it directly to 100% of traffic still be risky?"
+  options={[
+    { label: "It isn't risky -- a golden set score is a complete guarantee of production behavior" },
+    { label: "The golden set, however comprehensive, isn't the same distribution as live traffic -- a canary stage on real traffic can catch a regression the golden set doesn't represent, before it reaches every user", correct: true },
+    { label: "Golden sets can only be used for model versions, never for prompts" },
+    { label: "Shipping to 100% is always faster and therefore always preferable" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>A golden set is a fixed, curated sample -- useful for catching known regressions but never a perfect stand-in for the full diversity of real production traffic. The same canary discipline used for model rollouts applies to prompt changes: ramp to a small percentage first, watch real outcome metrics, then increase -- so a gap between golden-set performance and real-world behavior is caught while it's only affecting a fraction of users, not everyone at once.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How would you manage prompt changes for a production LLM feature?"**
+Version prompts as distinct, identified artefacts rather than inline
+strings edited in place — a registry keyed by version, with every response
+traceable back to the exact prompt text that produced it. Changes go
+through review and a golden-set evaluation run before being marked active,
+and rollback is a version-pointer change, not a redeploy. The caveat that
+shows this was actually operated: passing the golden set isn't sufficient
+sign-off on its own — a canary stage on real traffic, the same discipline
+used for model version rollouts, catches the gap between offline evaluation
+and real-world behavior before it reaches every user.
+
+**"Why treat a prompt like code instead of just editing the string when it
+needs to change?"** A prompt determines production behavior for every user,
+the same as any other code path — editing it in place with no version
+history, no review focused specifically on the prompt, and no independent
+rollback path means a regression is both harder to detect and slower to fix
+than it needs to be. The caveat: the ceremony should scale with the blast
+radius — a low-traffic internal prompt doesn't need the same registry,
+review, and canary process as a customer-facing production prompt serving
+significant volume, and applying full ceremony everywhere trades iteration
+speed for a safety margin that isn't always worth its cost.

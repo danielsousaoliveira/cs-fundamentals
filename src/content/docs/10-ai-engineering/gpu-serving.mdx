@@ -1,0 +1,275 @@
+---
+title: GPU serving — memory, batching, and the throughput you're leaving on the table
+description: >-
+  GPU memory and GPU utilisation are different numbers measuring different
+  things, continuous batching is why vLLM serves several times the traffic of
+  a naive loop, and CUDA OOM is almost never "just add more VRAM."
+sidebar:
+  order: 21
+difficulty: core
+status: complete
+prereqs:
+  - 10-ai-engineering/agents
+  - 9-cloud-infra/kubernetes
+tags: [gpu, cuda, vllm, kv-cache, batching, quantization, self-hosting]
+languages: [bash, python]
+roles: [ai, cloud]
+sources:
+  - vllm-serving-2026
+  - cuda-oom-2026
+  - quantization-tradeoffs-2026
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Self-hosting an LLM (rather than calling a provider's API) means the GPU
+itself is now something you provision, monitor, and debug — and the single
+idea that unlocks most of it: **GPU memory and GPU compute utilisation are
+two separate resources, consumed independently, and a dashboard showing one
+tells you nothing about the other.** A GPU can be nearly full on memory and
+almost idle on compute, or the reverse, and each combination means something
+completely different for what to do next.
+
+This page cannot be measured locally — there is no GPU on the machine this
+site is built on. Every claim below is sourced and dated; treat the specific
+numbers as approximate and re-check them before relying on them for a
+capacity decision.
+
+## Mechanics
+
+### The KV cache: why memory fills up faster than you'd expect
+
+Every token generated requires attending back over every previous token in
+the context, and recomputing that from scratch on every new token would be
+wildly wasteful — so inference engines cache the key/value tensors from
+every previous token, called the **KV cache**. [It is the dominant consumer
+of GPU memory during inference, and how it's managed determines how many
+concurrent requests a GPU can actually serve](https://www.digitalapplied.com/blog/kv-cache-optimization-techniques-2026-engineering-guide).
+A longer context window or more concurrent conversations means a larger KV
+cache, which is why "GPU memory is full" and "the model is large" are not
+the same problem — a small model serving many long conversations can fill
+GPU memory just as surely as a large model serving few short ones.
+
+**PagedAttention** — the technique vLLM introduced and that [every major
+production inference stack ships by default in
+2026](https://www.spheron.network/blog/llm-serving-optimization-continuous-batching-paged-attention/) —
+treats KV cache memory like an operating system treats virtual memory: fixed-size
+pages, allocated on demand, addressed through a page table rather than
+requiring one large contiguous allocation per request. [The trade is a
+small per-token compute overhead (roughly 2-5%) for a large gain in
+effective memory utilisation (95%+)](https://www.spheron.network/blog/llm-serving-optimization-continuous-batching-paged-attention/),
+which is what makes serving many concurrent requests on one GPU practical
+rather than requiring gross over-provisioning for the worst case.
+
+### Continuous batching: why a naive request-at-a-time loop wastes most of the GPU
+
+```text
+Naive batching: wait for a full batch, run it, wait for the next full batch
+Continuous batching: as soon as one request in the batch finishes,
+                      slot the next waiting request into its place
+```
+
+[Continuous (iteration-level) batching processes new requests at every
+decode step rather than waiting for a whole batch to complete together —
+new requests slot in the moment a slot opens, mid-generation](https://tianpan.co/blog/2026-04-09-continuous-batching-llm-inference).
+Requests in an LLM workload have wildly different output lengths (a
+one-word answer versus a long explanation), so naive batching means the GPU
+sits mostly idle waiting for the longest request in the batch to finish
+before starting the next batch. [Together, continuous batching and
+PagedAttention are what let a modern serving stack handle roughly 3-5x more
+traffic than a naive PyTorch inference loop on the same hardware — 4-8x on a
+mixed chat workload with highly variable output lengths](https://www.spheron.network/blog/llm-serving-optimization-continuous-batching-paged-attention/).
+
+### Latency versus throughput, the same tradeoff as everywhere else, with GPU-specific numbers
+
+Batching more requests together generally improves total throughput
+(requests served per second, aggregated) while potentially adding a small
+amount of latency to any individual request, because it may now share GPU
+time with others rather than getting the whole device to itself. This is
+the identical tradeoff covered generally on the
+[capacity-estimation](/cs-fundamentals/14-production/capacity-estimation/)
+page, specific to GPU serving: a service optimising purely for one user's
+fastest possible response should batch less aggressively; one optimising
+for total requests served per GPU per second should batch more.
+
+### CUDA out of memory: rarely "just add more VRAM"
+
+```text
+RuntimeError: CUDA out of memory. Tried to allocate ... GiB
+```
+
+[The root cause of most CUDA OOM errors during inference is oversized batch
+or context-length configuration, or memory that was allocated and never
+released, rather than the GPU genuinely lacking enough physical
+VRAM](https://markaicode.com/errors/cuda-out-of-memory-fix/). [Practical
+fixes for a serving stack: capping the KV cache size explicitly rather than
+letting it grow unbounded with context length, tuning the fraction of GPU
+memory the serving process is allowed to claim, and — for production
+serving specifically — ensuring memory is genuinely released after every
+request, including failed ones, rather than accumulating across
+requests](https://markaicode.com/errors/vllm-out-of-memory-fix/). Adding
+more GPU memory masks a leak or a misconfiguration rather than fixing it —
+the same class of mistake as increasing a timeout to paper over a slow
+dependency, covered on the
+[cascading-failures](/cs-fundamentals/14-production/cascading-failures/)
+page.
+
+### Quantization: trading a small quality loss for real throughput
+
+Running a model at lower numeric precision (FP8, INT8, or lower) than it was
+trained at reduces both its memory footprint and its compute cost, at a
+measurable but usually small quality cost. [FP8 is the current default
+recommendation on Hopper-generation-or-newer GPU hardware, with a typical
+quality regression of roughly 0.3-0.5 points across benchmark suites for a
+throughput lift of about 1.4-1.7x](https://appscale.blog/en/blog/llm-quantization-production-inference-int8-fp8-awq-gguf-2026);
+[a real deployment of Llama 3.3-70B at FP8 reported 99%+ quality recovery,
+roughly 30% latency reduction, and roughly 50% throughput
+improvement](https://appscale.blog/en/blog/llm-quantization-production-inference-int8-fp8-awq-gguf-2026).
+INT8 is the fallback where FP8 hardware support isn't available, at a
+slightly larger typical quality cost.
+
+## Cost & limits
+
+**GPU capacity is provisioned in discrete, expensive units, unlike CPU
+autoscaling** — a GPU instance can't be resized by 10% the way a container's
+CPU request can; the practical unit of scaling is "add another whole GPU (or
+node)," which means both under- and over-provisioning are more consequential
+mistakes than the equivalent CPU-sizing error.
+
+**Quantization is not free precision reduction — it's a deliberate,
+measurable quality trade**, and the right amount depends entirely on the
+task: a customer-facing generation task may tolerate the ~0.3-0.5 point
+regression FP8 typically introduces; a task requiring precise numeric
+reasoning may not, and needs the tradeoff evaluated against the site's own
+[evaluation](/cs-fundamentals/10-ai-engineering/evaluation/) discipline
+before shipping, not assumed acceptable.
+
+## When NOT to use it
+
+**Do not self-host a model before confirming a hosted API genuinely doesn't
+meet the need.** Self-hosting trades a per-token API cost for full
+infrastructure ownership — GPU provisioning, serving-stack operation, and
+everything on this page — which is a substantial ongoing commitment that
+only pays off past a real, measured volume or a hard requirement (data
+residency, latency, cost at scale) a hosted API can't satisfy.
+
+**Do not add GPU memory in response to a CUDA OOM error before checking
+whether it's a leak or a misconfiguration.** As with any resource limit
+hit repeatedly, the first question is "why is usage growing or exceeding
+budget," not "how do we raise the ceiling" — raising the ceiling on a
+genuine leak just delays the same failure at a higher, more expensive
+threshold.
+
+## Real-world usage
+
+Any organisation self-hosting an open-weight model for cost, latency, or
+data-residency reasons runs some version of vLLM, TensorRT-LLM, or a
+similar continuous-batching, PagedAttention-based serving stack — [these
+techniques are close to universal in production inference stacks as of
+2026](https://www.spheron.network/blog/llm-serving-optimization-continuous-batching-paged-attention/)
+specifically because the throughput difference versus a naive serving loop
+is large enough to change the GPU count (and therefore the cost) needed to
+serve a given traffic level by several times over.
+
+## Failure modes
+
+**The GPU that looked underutilised while actually being memory-bound.** A
+dashboard showing GPU compute utilisation at 40% while requests queue and
+new ones fail to start looks like spare capacity, when the actual
+constraint is KV cache memory — every available page is allocated to
+existing long conversations, and there's no room for a new request even
+though the compute engine itself has spare cycles.
+
+**The CUDA OOM that recurred after "fixing" it by adding memory.** A team
+hits OOM, provisions a larger GPU, and the same error recurs weeks later at
+a higher traffic level — because the underlying cause (unbounded KV cache
+growth, or memory not released on a failed request) was never addressed,
+only given more room to grow into before hitting the ceiling again.
+
+**The quantization rollout that quietly degraded quality on one specific
+task.** A model quantized to FP8 for a broad throughput win performs
+indistinguishably on most tasks but measurably worse on the one task most
+sensitive to precision loss — caught only if that specific task is
+represented in the evaluation set used to sign off the change, which is the
+same discipline covered on the
+[evaluation](/cs-fundamentals/10-ai-engineering/evaluation/) page applied
+here.
+
+## Practice problems
+
+**1. A GPU serving dashboard shows compute utilisation at 35% and memory
+utilisation at 97%. New requests are being rejected. What's the bottleneck,
+and would adding more compute (a faster GPU) help?**
+
+Memory, specifically the KV cache, is the bottleneck — compute is nowhere
+near saturated. A faster GPU with the same memory capacity wouldn't help at
+all, since the constraint is available memory for KV cache pages, not
+compute throughput; the fix is either a GPU with more memory, capping
+context length or concurrent conversation count, or a quantization change
+that shrinks the KV cache footprint per token.
+
+**2. A team hits CUDA OOM under load, provisions a GPU with double the
+memory, and sees the same error return three weeks later at a similar
+traffic level. What does this pattern suggest, and what should be checked
+before provisioning again?**
+
+The pattern suggests a genuine leak or unbounded growth (KV cache not being
+capped, memory not released after failed requests) rather than a one-time
+capacity shortfall — doubling memory bought time, not a fix, which is why
+the same failure recurred once usage grew back into the new ceiling. Before
+provisioning further, check whether memory is being released correctly
+after every request (including failures) and whether context length or
+concurrent request count has an explicit cap.
+
+**3. A team considers quantizing their production model to FP8 for a
+throughput win. What's the one thing that needs to happen before shipping
+it, beyond confirming the throughput improvement?**
+
+Run the existing evaluation set (or build one, per the
+[evaluation](/cs-fundamentals/10-ai-engineering/evaluation/) page's
+discipline) against the quantized model specifically, not just spot-check a
+few examples — the typical quality regression is small in aggregate but can
+be concentrated on specific task types the aggregate number hides, and the
+only way to know whether this deployment's specific workload tolerates it
+is to measure that workload directly.
+
+<Quiz
+  client:visible
+  id="gpu-serving-memory-vs-utilization"
+  kind="concept"
+  question="A GPU shows 97% memory utilisation and 35% compute utilisation, with new requests being rejected. Would adding a faster GPU (more compute, same memory) fix this?"
+  options={[
+    { label: "Yes -- faster compute always increases the number of requests a GPU can serve" },
+    { label: "No -- the bottleneck is memory (almost certainly the KV cache), which a faster but not larger GPU does nothing to relieve", correct: true },
+    { label: "It depends on the model's parameter count" },
+    { label: "GPU memory and compute utilisation always move together, so this reading is impossible" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>GPU memory and compute are separate, independently consumed resources. Here compute is nowhere near saturated (35%) while memory -- almost always the KV cache under real serving load -- is essentially full (97%). A faster GPU with the same memory capacity would not relieve the actual constraint at all; the fix has to address memory specifically, whether that's more memory, a shorter context cap, fewer concurrent long conversations, or quantization to shrink the KV cache footprint.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What's the difference between GPU memory and GPU utilisation, and why
+does it matter for serving?"** Utilisation measures how busy the compute
+cores are; memory measures how much VRAM is allocated, dominated during
+inference by the KV cache. The caveat that shows real serving experience:
+they're independent, and a GPU can be memory-saturated while compute sits
+mostly idle — which means "add a faster GPU" and "add a GPU with more
+memory" solve completely different problems, and reading the wrong one off
+a dashboard leads to the wrong provisioning decision.
+
+**"How does continuous batching improve GPU throughput over naive
+batching?"** Naive batching waits for an entire batch to finish before
+starting the next one, so the GPU sits idle waiting on whichever request in
+the batch has the longest output; continuous batching slots a new request
+into a freed spot the moment any request in the batch finishes, at the
+token level rather than the batch level. The caveat: this is specifically
+valuable for LLM workloads because output length varies enormously between
+requests — a workload with uniform, short outputs would see much less
+benefit from the technique, since there'd be little idle time for
+continuous batching to reclaim in the first place.

@@ -1,0 +1,4 @@
+[  587.980714] Tasks state (memory values in pages):
+[  587.980714] [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+[  587.980717] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=306e7e039dfffe04c48048eeae9d036833a37235cbdb20c721aecb54ab4fe223,mems_allowed=0,oom_memcg=/docker/306e7e039dfffe04c48048eeae9d036833a37235cbdb20c721aecb54ab4fe223,task_memcg=/docker/306e7e039dfffe04c48048eeae9d036833a37235cbdb20c721aecb54ab4fe223,task=MainThread,pid=17104,uid=0
+[  587.980895] Memory cgroup out of memory: Killed process 17104 (MainThread) total-vm:1331612kB, anon-rss:99228kB, file-rss:2600kB, shmem-rss:0kB, UID:0 pgtables:852kB oom_score_adj:0

@@ -1,0 +1,45 @@
+{
+  "allocatedResources": {
+    "memory": "50Mi"
+  },
+  "containerID": "containerd://4ed2db3b991b9a868139d0e9e736474c8ca7be50291d618cb963e0cc157124c3",
+  "image": "docker.io/library/node:24-slim",
+  "imageID": "docker.io/library/node@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03",
+  "lastState": {},
+  "name": "hog",
+  "ready": false,
+  "resources": {
+    "limits": {
+      "memory": "50Mi"
+    },
+    "requests": {
+      "memory": "50Mi"
+    }
+  },
+  "restartCount": 0,
+  "started": false,
+  "state": {
+    "terminated": {
+      "containerID": "containerd://4ed2db3b991b9a868139d0e9e736474c8ca7be50291d618cb963e0cc157124c3",
+      "exitCode": 137,
+      "finishedAt": "2026-08-05T18:09:37Z",
+      "reason": "OOMKilled",
+      "startedAt": "2026-08-05T18:03:51Z"
+    }
+  },
+  "user": {
+    "linux": {
+      "gid": 0,
+      "supplementalGroups": [0],
+      "uid": 0
+    }
+  },
+  "volumeMounts": [
+    {
+      "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+      "name": "kube-api-access-qkp5r",
+      "readOnly": true,
+      "recursiveReadOnly": "Disabled"
+    }
+  ]
+}

@@ -41,6 +41,8 @@ test('the sidebar is auto-derived and covers all six sections', async ({ page })
     ['CosmosDB', '8-databases-storage/cosmosdb'],
     ['Terraform', '9-cloud-infra/terraform'],
     ['Kubernetes', '9-cloud-infra/kubernetes'],
+    ['Reading the symptoms', '14-production/reading-the-symptoms'],
+    ['Distributed tracing', '14-production/distributed-tracing'],
   ] as const) {
     const link = page.locator(`a[href$="/${page_}/"]:visible`).first();
     await expect(link, `${section} should be reachable from the nav`).toBeVisible();
@@ -69,6 +71,10 @@ test('every internal link on a page resolves — no base-path 404s', async ({
 });
 
 test('no page throws a hydration error', async ({ page }) => {
+  // The sweep now covers 14 pages; each does a full scroll-and-settle pass,
+  // so the default 30s budget is too tight once the list grows this long.
+  test.setTimeout(60_000);
+
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
 
@@ -94,6 +100,9 @@ test('no page throws a hydration error', async ({ page }) => {
     '8-databases-storage/indexes-and-query-plans/',
     '8-databases-storage/cosmosdb/',
     '9-cloud-infra/terraform/',
+    '14-production/reading-the-symptoms/',
+    '14-production/cascading-failures/',
+    '14-production/distributed-tracing/',
   ]) {
     await page.goto(url);
 

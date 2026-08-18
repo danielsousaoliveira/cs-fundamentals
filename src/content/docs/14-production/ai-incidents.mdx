@@ -1,0 +1,261 @@
+---
+title: AI incident catalogue — the failure modes unique to LLM systems
+description: >-
+  Prompt growth silently turning into a latency and cost regression, a retry
+  loop between two agents that never terminates, a retrieval pipeline that
+  went quiet — the incident shapes that don't show up in a normal backend's
+  playbook.
+sidebar:
+  order: 8
+difficulty: core
+status: complete
+prereqs:
+  - 14-production/reading-the-symptoms
+  - 14-production/cascading-failures
+  - 10-ai-engineering/llmops
+tags: [ai-incidents, agents, deadlock, prompt-growth, retrieval-failure]
+languages: [bash]
+roles: [ai, backend, cloud]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Everything in this section so far applies to any backend system — CPU vs
+latency, cascading failures, tracing. AI systems have those same failure
+modes *plus* a distinct set that come from the specific shape of an
+LLM-backed pipeline: the cost and latency of a request scale with input and
+output size in a way a typical CRUD endpoint's doesn't, agents can call each
+other in patterns that never terminate, and a retrieval pipeline can fail
+silently — returning a confident, fluent, wrong answer instead of an error.
+
+This page is a catalogue of the incident shapes specific to that pipeline
+shape, each one pointing to the page in [10-ai-engineering](/cs-fundamentals/10-ai-engineering/)
+that covers the underlying mechanism in depth.
+
+## Mechanics
+
+### Prompt growth as a silent latency and cost regression
+
+A request that used to send 1,200 tokens of context now sends 14,000, and
+nobody changed anything that looks like a deploy — the growth came from
+conversation history being appended without a cap, one turn at a time,
+until a long-running conversation quietly crossed a threshold where latency
+and cost both jumped. This is covered in mechanism at
+[context-engineering](/cs-fundamentals/10-ai-engineering/context-engineering/)
+and [llmops](/cs-fundamentals/10-ai-engineering/llmops/) — the incident
+version of it is specifically that **the regression has no single deploy to
+correlate against**, because it accumulates gradually across a session
+rather than shipping in one change. The [incident method](/cs-fundamentals/14-production/incident-method/)'s
+"did anything change" question needs a different answer here: not "what
+deployed," but "has the average prompt size drifted upward," which is why
+`llmops.mdx`'s logged token counts per request matter — without them, this
+regression is invisible until someone happens to compare an old bill to a
+new one.
+
+### Retrieval that returned nothing, read as "the model is hallucinating"
+
+A RAG pipeline where the retriever returns zero documents doesn't error —
+it returns an empty context, and the model, asked to answer from context it
+doesn't have, either hedges or fabricates a plausible-sounding answer. Read
+in isolation, the symptom looks like a model-quality problem; the actual
+fault is upstream, in retrieval, and no amount of prompt tuning fixes it.
+This exact misdiagnosis, and the vector-search-side causes (index rebuilds,
+overly strict metadata filters, similarity thresholds tuned too high), is
+covered in depth at [rag](/cs-fundamentals/10-ai-engineering/rag/#the-vague-answer-that-is-really-a-retrieval-failure)
+and [vector-search](/cs-fundamentals/10-ai-engineering/vector-search/). The
+incident-response version of the lesson: **before touching the prompt, check
+whether the retriever returned anything at all** — it's a five-second check
+that rules out an entire, expensive-to-explore branch of hypotheses.
+
+### Embedding version mismatch, read as "search quality just degraded"
+
+A corpus embedded with one model and queried with another produces vectors
+that are no longer comparable, even though both sides are the same
+dimensionality and the system raises no error — similarity scores just
+become meaningless. Covered in full at
+[embeddings](/cs-fundamentals/10-ai-engineering/embeddings/#the-index-and-the-query-drift-into-different-spaces).
+As an incident, the tell is a *sudden*, *system-wide* drop in retrieval
+quality with no gradual decline — consistent with a model version changing
+at a specific point in time, not with organic corpus drift.
+
+### Agent deadlock: two agents, each waiting on the other
+
+Distinct from the agent step-loop already covered in
+[agents](/cs-fundamentals/10-ai-engineering/agents/#the-retry-loop) and the
+livelock in [agent-orchestration](/cs-fundamentals/10-ai-engineering/agent-orchestration/#loops-between-agents) —
+this is a genuine circular wait: Agent A calls Agent B and blocks on the
+response; B, mid-handling A's request, calls back into A and blocks on
+*that* response. Neither can progress, because each is waiting on a call it
+already made to the other.
+
+```text
+Planner  ---calls--->  Booking
+   ^                        |
+   |                        |
+   +------calls back--------+
+   (Planner is now waiting on a request it hasn't finished handling)
+```
+
+This is a genuine deadlock, structurally identical to the database deadlocks
+covered at [`5-systems/databases.mdx`](/cs-fundamentals/5-systems/databases/) —
+two holders, each waiting on a resource (here, a completed response) the
+other holds. The full treatment — detection via correlated tracing,
+prevention via a central orchestrator instead of peer-to-peer agent calls,
+maximum call depth, and per-request timeout budgets — lives in
+[agent-orchestration](/cs-fundamentals/10-ai-engineering/agent-orchestration/),
+which this incident should be read alongside.
+
+### Cost explosion with no traffic change
+
+Requests per second is flat, latency is flat, and the bill is 3-10x higher
+than yesterday. This is [covered as a full worked incident in
+llmops](/cs-fundamentals/10-ai-engineering/llmops/#costs-rise-with-no-deploy) —
+the short version: check the input/output token split first (which side grew),
+then whether the model routing changed, then whether a retry loop or a
+duplicate-request bug is multiplying calls that used to happen once. **Flat
+request count with rising cost always means cost-per-request grew** — the
+diagnosis is entirely about what changed on a per-request basis, not about
+volume.
+
+## Cost & limits
+
+**Every mitigation available for these incidents costs either latency,
+accuracy, or money — never none of the three.** Capping conversation history
+to control prompt growth trades some conversational continuity for cost and
+latency control; a stricter retrieval similarity threshold trades recall for
+precision; a maximum agent call depth trades the ability to handle
+genuinely deep multi-step tasks for guaranteed termination. None of these
+are free fixes — they're deliberate trades made once the shape of the
+problem is understood, which is the entire reason diagnosis has to come
+before mitigation for these specific incidents.
+
+## When NOT to use it
+
+**Do not assume every quality regression is a retrieval or embedding
+problem before checking whether the model or prompt actually changed.** The
+diagnostic order matters: check what changed first (a prompt edit, a model
+version bump), and only reach for the AI-specific mechanisms above once the
+simpler, more common causes are ruled out.
+
+**Do not add a maximum call depth or timeout budget as a blanket fix without
+understanding which specific interaction pattern needs it.** A depth limit
+sized far below what a legitimate multi-step task requires breaks that task
+outright; sized too generously, it doesn't actually prevent the deadlock it
+was meant to catch.
+
+## Real-world usage
+
+Every production system built on RAG or multi-agent orchestration
+eventually hits some version of these — a slow prompt-growth regression, a
+retrieval pipeline that goes quiet without erroring, an agent interaction
+that doesn't terminate. Teams operating these systems at any real scale
+build the specific logging this catalogue depends on (prompt token counts
+per request, retrieved-document counts per query, a correlated run ID across
+every agent call) *before* the incident, precisely because these failure
+modes are close to undiagnosable after the fact without it — unlike a
+database slow query, there's no `EXPLAIN ANALYZE` equivalent for "why did
+the model say that" after the request has already completed.
+
+## Failure modes
+
+**The two-week prompt-rewrite effort that fixed nothing**, because the real
+cause was a retriever silently returning zero documents, not a prompt
+quality problem — exactly the misdiagnosis this page's retrieval section
+exists to prevent, and one that's expensive precisely because it consumes
+weeks of the wrong kind of effort before anyone checks the actual retrieval
+count.
+
+**The agent deadlock that looked like a hung request**, timing out with no
+error message pointing anywhere useful, until correlated tracing across both
+agents' calls revealed the circular wait — invisible from either agent's own
+logs in isolation, visible immediately once both are read together under a
+shared run ID.
+
+**The bill that tripled with nobody noticing until finance asked**, because
+no dashboard tracked cost per request or the input/output token split — only
+the aggregate monthly total, which moves too slowly and too indirectly to
+catch a per-request regression until it's compounded for weeks.
+
+## Practice problems
+
+**1. A RAG-backed support bot starts giving vague, unhelpful answers after
+being fine for months, with no deploy in the relevant window. What's the
+first thing to check, and why not start with the prompt?**
+
+Check whether the retriever is returning documents at all — a `0`-document
+retrieval, silently unlogged, produces exactly this symptom: a fluent but
+unhelpful response, because the model is answering from empty context.
+Starting with the prompt risks weeks of tuning effort against a problem that
+isn't in the prompt at all; checking retrieved-document count first is a
+near-instant check that either confirms or rules out this entire category.
+
+**2. Two agents, Planner and Booking, each call into the other as part of
+handling a request, and requests involving both time out with no useful
+error. What's the likely structural cause, and what's the long-term fix?**
+
+A circular wait — Planner calling Booking while Booking is, in the same
+logical request, calling back into Planner, so both are blocked waiting on
+a response that can't arrive until the other progresses. The long-term fix
+is architectural: route both agents' calls through a central orchestrator
+rather than allowing direct peer-to-peer calls, so no two agents can ever
+form a cycle, backed by a maximum call depth and a per-request timeout
+budget as defense in depth.
+
+**3. Cost per day has tripled over the past week with flat request volume
+and flat latency. What does "flat volume, flat latency, higher cost" already
+rule out, and what should be checked first?**
+
+It rules out a traffic spike and a general performance regression as the
+cause — the cost increase must be per-request, not volume-driven. Check the
+token counts first: whether prompt size grew (conversation history
+appended without a cap is the most common cause), whether the model routing
+changed to a more expensive model, or whether a retry or duplicate-call bug
+is multiplying billed requests without changing the visible request count a
+dashboard reports.
+
+<Quiz
+  client:visible
+  id="ai-incidents-retrieval-vs-prompt"
+  kind="concept"
+  question="A RAG chatbot starts giving vague, unhelpful answers. Before spending time rewriting the prompt, what's the fastest check that could rule out an entire category of cause?"
+  options={[
+    { label: "Whether the model's temperature setting changed" },
+    { label: "Whether the retriever is actually returning documents -- a silent zero-document retrieval produces exactly this symptom and no prompt change fixes it", correct: true },
+    { label: "Whether the user's browser is up to date" },
+    { label: "Whether the response was cached" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>A retriever returning zero documents doesn't error -- the model just answers from empty context, hedging or fabricating a plausible response. This looks exactly like a prompt or model quality problem from the outside, and checking retrieved-document count is a near-instant way to rule it in or out before committing to a much more expensive prompt-rewriting effort that would fix nothing if the real fault is upstream in retrieval.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"What production incidents are specific to AI/LLM systems that a
+traditional backend engineer might not anticipate?"** Prompt growth that
+silently regresses latency and cost without a corresponding deploy, a
+retrieval pipeline that fails silently (returning nothing rather than an
+error, which the model then hallucinates around), embedding version
+mismatches that break search with no error raised, and agent-to-agent
+deadlocks from peer-to-peer call patterns. The caveat that shows real AI
+production experience: none of these show up as a clean error in a log —
+they're all silent-by-default failures that require specific,
+purpose-built logging (token counts, retrieved-document counts, correlated
+agent run IDs) captured *before* the incident, because there's no
+after-the-fact equivalent of `EXPLAIN ANALYZE` for a model's output once the
+request has completed.
+
+**"How would you debug a multi-agent system where requests are timing out
+with no clear error?"** Start with correlated tracing across every agent
+involved, using a shared run ID — a single agent's own logs won't show a
+circular wait, because from each agent's perspective it's just waiting on a
+response, not aware the caller it's waiting on is itself waiting on it. The
+caveat: this is exactly the same deadlock shape as two database transactions
+waiting on each other's locks, and the long-term fix is the same class of
+solution — remove the possibility of a cycle structurally (a central
+orchestrator instead of peer-to-peer calls), rather than relying on timeouts
+alone to eventually break every occurrence.

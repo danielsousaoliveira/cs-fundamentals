@@ -1,0 +1,30 @@
+[  166.508744] docker0: port 1(veth9280dae) entered disabled state
+[  166.508916] veth9280dae (unregistering): left allmulticast mode
+[  166.508917] veth9280dae (unregistering): left promiscuous mode
+[  166.508918] docker0: port 1(veth9280dae) entered disabled state
+[  436.010784] br-dd6512bf594d: port 1(veth753e23b) entered blocking state
+[  436.010787] br-dd6512bf594d: port 1(veth753e23b) entered disabled state
+[  436.010788] veth753e23b: entered allmulticast mode
+[  436.010806] veth753e23b: entered promiscuous mode
+[  436.017979] eth0: renamed from veth5243ddd
+[  436.018278] br-dd6512bf594d: port 1(veth753e23b) entered blocking state
+[  436.018281] br-dd6512bf594d: port 1(veth753e23b) entered forwarding state
+[  436.018788] ICMPv6: NA: 46:06:72:ea:62:c2 advertised our address fc00:f853:ccd:e793::2 on eth0!
+[  436.192687] systemd-journald[87]: Collecting audit messages is disabled.
+[  436.199148] systemd-journald[87]: Received client request to flush runtime journal.
+[  437.019176] ICMPv6: NA: 46:06:72:ea:62:c2 advertised our address fc00:f853:ccd:e793::2 on eth0!
+[  438.021465] ICMPv6: NA: 46:06:72:ea:62:c2 advertised our address fc00:f853:ccd:e793::2 on eth0!
+[  454.678576] docker0: port 1(vethc9c995a) entered blocking state
+[  454.678587] docker0: port 1(vethc9c995a) entered disabled state
+[  454.678590] vethc9c995a: entered allmulticast mode
+[  454.678604] vethc9c995a: entered promiscuous mode
+[  454.679963] eth0: renamed from veth6743d97
+[  454.680140] docker0: port 1(vethc9c995a) entered blocking state
+[  454.680142] docker0: port 1(vethc9c995a) entered forwarding state
+[  503.469910] docker0: port 2(vethb248c0f) entered blocking state
+[  503.469912] docker0: port 2(vethb248c0f) entered disabled state
+[  503.469915] vethb248c0f: entered allmulticast mode
+[  503.469930] vethb248c0f: entered promiscuous mode
+[  503.471607] eth0: renamed from veth701903b
+[  503.471816] docker0: port 2(vethb248c0f) entered blocking state
+[  503.471818] docker0: port 2(vethb248c0f) entered forwarding state

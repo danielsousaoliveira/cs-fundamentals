@@ -1,0 +1,5 @@
+NAME             READY   STATUS             RESTARTS      AGE   IP           NODE                      NOMINATED NODE   READINESS GATES
+bad-image        0/1     ImagePullBackOff   0             14m   10.244.0.5   incidents-control-plane   <none>           <none>
+crashloop-demo   0/1     CrashLoopBackOff   7 (88s ago)   12m   10.244.0.7   incidents-control-plane   <none>           <none>
+oomkill-demo     0/1     OOMKilled          0             12m   10.244.0.6   incidents-control-plane   <none>           <none>
+pending-demo     0/1     Pending            0             12m   <none>       <none>                    <none>           <none>

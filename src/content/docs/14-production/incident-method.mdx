@@ -1,0 +1,234 @@
+---
+title: The incident method — why fixing is step seven
+description: >-
+  Detect, isolate, mitigate, investigate, fix, prevent — the order production
+  incidents actually get resolved in, and why jumping straight to a fix is
+  the single most common mistake under pressure.
+sidebar:
+  order: 1
+difficulty: core
+status: complete
+prereqs:
+  - 9-cloud-infra/observability
+tags: [incident-response, on-call, root-cause, rollback]
+languages: [bash]
+roles: [cloud, backend, ai]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+An alert fires. The instinct — especially under pressure, especially at 2am
+— is to jump straight to a fix: restart the server, bump the timeout,
+increase the memory limit. That instinct is wrong often enough that it's
+worth replacing with a fixed sequence: **detect, isolate, mitigate,
+investigate, fix, prevent.**
+
+Notice where "fix" sits. Fifth. Not first. The reason isn't process for its
+own sake — it's that a fix applied before the scope and cause are understood
+is a guess, and a guess that happens to work teaches nothing about why it
+worked, which means the same incident recurs the next time conditions line
+up slightly differently.
+
+## Mechanics
+
+### The sequence, and what each step is actually for
+
+**Detect** — an alert fired, or a user reported something. Before anything
+else: is this real? A single slow request isn't an incident; a sustained
+shift in p95 latency, error rate, or a saturated resource is.
+
+**Isolate** — scope the blast radius before touching anything. Every request,
+or only some? One endpoint, one region, one customer tier? This single
+question does more to narrow the investigation than any dashboard, because
+it immediately separates hypotheses that explain a partial failure from ones
+that only explain a total one.
+
+**Mitigate** — reduce customer impact *before* the root cause is known.
+Mitigation and root-causing are different activities with different time
+pressure: a rollback, a feature flag, a circuit breaker, or shedding load
+buys time without requiring you to understand anything yet. The default
+mitigation, in the absence of a better one, is **rollback if the timing
+lines up with a deploy** — it's usually the fastest lever back to a known-good
+state, and it doesn't require diagnosis first.
+
+**Investigate** — now, with impact reduced, find out what actually happened.
+This is where [reading the symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)
+and the rest of this section's diagnostic tools come in.
+
+**Fix** — the actual code or configuration change that addresses the root
+cause, deployed through the normal pipeline, not as an emergency hotfix
+skipping review unless the situation genuinely demands it.
+
+**Prevent** — the step most often skipped once the pressure is off. A test
+that would have caught this, an alert that would have caught it sooner, a
+runbook entry, a guardrail that makes the same mistake structurally
+impossible rather than merely documented against.
+
+### "Did anything change?" is the highest-value question in the whole sequence
+
+Before any dashboard, before any log query: was there a deployment, a config
+change, a dependency version bump, a traffic pattern shift, in the window
+before the symptom started? Correlating the incident's start time against a
+deploy timeline is frequently the fastest path to a hypothesis, because most
+production incidents are triggered by *something changing*, not by a stable
+system spontaneously failing.
+
+```text
+14:00  deploy orders-api v42
+14:02  p95 latency: 210ms -> 4.8s
+```
+
+Two minutes is not a coincidence worth ignoring.
+
+### Rollback as a default, not a last resort
+
+A rollback is not an admission of failure — it's the cheapest, fastest,
+best-understood mitigation available when a deploy correlates with the
+incident's start. The alternative many teams reach for instead — "let's just
+increase the timeout" or "let's add a retry" — is usually slower to
+implement, harder to reason about under pressure, and can make things worse
+(see [cascading failures](/cs-fundamentals/14-production/cascading-failures/)
+for exactly why a longer timeout compounds an outage rather than
+absorbing it).
+
+## Cost & limits
+
+**Mitigation has a cost too, and it's worth being honest about it.** A
+rollback discards the deploy's intended change along with whatever caused
+the incident — if the deploy also shipped a security fix or a data
+migration, rolling back isn't free. Feature-flagging off a broken feature
+protects the rest of the system but removes functionality users may depend
+on. Every mitigation trades something; the point of doing it anyway is that
+the trade is almost always better than leaving customers exposed while you
+investigate at leisure.
+
+**The prevent step has a real, ongoing cost that competes with feature
+work.** A test suite that would catch every possible regression is not
+economical to build; the judgment call is which specific gap this incident
+exposed is worth closing permanently versus accepting as a residual risk.
+
+## When NOT to use it
+
+**Do not skip straight to "fix" when the cause is genuinely, immediately
+obvious and low-risk to correct** — a typo in a config value with an
+unambiguous, single-line correction doesn't need the full six-step ceremony.
+The sequence exists for the case where the cause is *not* obvious, which is
+most production incidents that reach an on-call engineer at all; the ones
+that are obvious rarely page anyone.
+
+**Do not treat "prevent" as optional busywork after the incident is
+resolved.** An incident that recurs because nobody closed the gap that
+caused it is a more expensive outcome than the time spent writing the
+postmortem action item — this is the step most often skipped under the
+pressure to move to the next thing, and skipping it is exactly why some
+organizations see the same incident shape recur every few months.
+
+## Real-world usage
+
+Every mature on-call practice — SRE teams at large tech companies, platform
+teams at mid-size companies, solo engineers running their own production
+service — converges on some version of this sequence, because the failure
+mode of skipping it (guessing at a fix under pressure, without first
+understanding scope) is expensive and recurring enough that the discipline
+pays for itself quickly. Postmortem templates at companies with a mature
+practice explicitly separate "what mitigated customer impact" from "what was
+the root cause" from "what prevents recurrence" as three different questions
+with three different owners and timelines.
+
+## Failure modes
+
+**The fix that wasn't a fix.** An engineer restarts the affected service
+under pressure, the symptom disappears, and the incident is closed —
+without anyone determining why the restart helped. Two days later, the same
+symptom returns, because the underlying cause (a slow memory leak, a
+poisoned cache entry, a stuck connection pool) was never addressed, only
+reset.
+
+**The rollback that happened too late because nobody checked the deploy
+timeline first.** Twenty minutes are spent investigating dashboards and
+logs before someone finally asks "did we deploy recently?" — and the answer
+was yes, two minutes before the symptom started. Checking this first is
+nearly free and frequently decisive.
+
+**The incident closed with no prevention step**, followed by the same
+incident recurring in a different on-call rotation, investigated from
+scratch by someone with no memory of the first occurrence — because nothing
+was written down, and no guardrail was added.
+
+## Practice problems
+
+**1. An alert fires for elevated error rate. A deploy went out four minutes
+before the alert. What's your first action, and why is it not "investigate
+the logs"?**
+
+Check whether the deploy is the likely cause and, if it correlates cleanly,
+mitigate by rolling back — before spending time on log investigation. The
+four-minute correlation is strong evidence, and rolling back is a mitigation
+that doesn't require first understanding the root cause; it buys time to
+investigate calmly afterward instead of under the pressure of ongoing
+customer impact.
+
+**2. A team fixes an incident by restarting the affected pods. The
+postmortem lists the fix as "restarted pods; issue resolved." What's missing,
+and why does it matter?**
+
+The root cause. A restart is a mitigation (or, if it genuinely resolved
+things without recurrence, a coincidence worth being suspicious of), not a
+diagnosis — "restarting fixed it" is consistent with a memory leak, a stuck
+lock, a poisoned cache entry, or several other causes, and without
+identifying which one, there's no way to know whether — or when — it
+recurs, and no prevention step is possible because there's nothing specific
+to prevent.
+
+**3. Two hypotheses remain equally plausible after ten minutes of
+investigation: a database issue, or a downstream provider issue. Customer
+impact is ongoing. What do you do?**
+
+Mitigate for the impact you can address regardless of which hypothesis is
+correct — a circuit breaker or fallback path that reduces blast radius from
+either cause — while continuing to narrow the investigation. Waiting for
+certainty before mitigating trades ongoing customer impact for diagnostic
+comfort; the two aren't mutually exclusive, and a mitigation that helps
+under either hypothesis doesn't require picking one first.
+
+<Quiz
+  client:visible
+  id="incident-method-rollback-first"
+  kind="concept"
+  question="A deploy went out two minutes before an alert fired. What should generally happen before deep log investigation begins?"
+  options={[
+    { label: "Nothing -- always investigate fully before taking any action" },
+    { label: "Consider rolling back, since the tight correlation with the deploy makes it the strongest early hypothesis and rollback is a fast, low-risk mitigation", correct: true },
+    { label: "Immediately increase server resources" },
+    { label: "Wait for a second alert to confirm the first one wasn't a fluke" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>A deploy correlating tightly with an incident's start is the single highest-value piece of evidence available, and rollback is usually the fastest, best-understood mitigation -- it doesn't require first diagnosing the root cause. Investigating logs is still valuable, but it happens in parallel with or after mitigating, not as a prerequisite to reducing customer impact.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Walk me through how you'd handle a production incident."** Detect
+whether it's real and how widely it's affecting users, isolate the blast
+radius, mitigate customer impact — checking first whether it correlates with
+a recent deploy, in which case rollback is usually the fastest mitigation —
+then investigate the root cause once impact is under control, fix it
+properly, and add whatever test, alert, or guardrail would have caught it
+sooner or made it structurally impossible. The caveat that shows real
+on-call experience: fixing is step five, not step one — a fix applied before
+scope and cause are understood is a guess, and guesses that happen to work
+don't tell you why, which means the same incident can recur.
+
+**"What's the difference between mitigation and root-causing an incident,
+and why does the order matter?"** Mitigation reduces customer impact without
+requiring you to understand the cause — a rollback, a feature flag, shedding
+load; root-causing is the actual diagnosis of why it happened. The caveat:
+doing them in the wrong order — insisting on full diagnosis before taking any
+action — leaves customers exposed for the entire investigation, while doing
+mitigation first buys the time to investigate properly instead of under
+pressure to restore service immediately.

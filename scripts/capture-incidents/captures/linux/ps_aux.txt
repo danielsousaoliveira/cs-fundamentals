@@ -1,0 +1,6 @@
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   2232  1012 ?        Ss   17:58   0:00 sleep infinity
+root         452 99.8  0.0   2232   920 ?        R    17:58   0:06 yes
+root         459 99.8  0.0   2232   928 ?        R    17:58   0:06 yes
+root         467 99.6  0.0   3312  2188 ?        R    17:58   0:06 dd if=/dev/zero of=/dev/null bs=1M
+root         480  0.0  0.0   7984  3852 ?        Rs   17:58   0:00 ps aux

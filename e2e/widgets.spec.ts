@@ -553,3 +553,42 @@ test('TerraformPlanDiff flips between update and replace by attribute', async ({
   await expect(widget.locator('.tfplan__plan')).toContainText('forces replacement');
   await expect(widget.locator('.tfplan__warning')).toBeVisible();
 });
+
+test('IncidentConsole shows opposite CPU signatures for slow-dependency vs cpu-bound', async ({
+  page,
+}) => {
+  await page.goto('14-production/reading-the-symptoms/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  // slow-dependency is the default fault: near-zero CPU despite high latency.
+  await expect(widget.locator('.ic__metric-label', { hasText: 'CPU' })).toBeVisible();
+
+  // Switch to cpu-bound and step to the end -- CPU should read pegged.
+  await widget.getByRole('button', { name: 'CPU-bound work' }).click();
+  await widget.getByRole('button', { name: /Play|▶/ }).click();
+  await page.waitForTimeout(9000);
+
+  await expect(widget.locator('.ic__verdict-headline')).toContainText(/pegged/i);
+});
+
+test('LatencyBudget total tracks the dragged downstream span', async ({ page }) => {
+  await page.goto('14-production/distributed-tracing/');
+  const widget = await hydrate(page, '.viz-frame');
+
+  const totalBefore = await widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'total request time' })
+    .locator('.viz-counters__value')
+    .innerText();
+  expect(totalBefore).toContain('3024');
+
+  const slider = widget.getByRole('slider');
+  await slider.fill('0');
+
+  const totalAfter = await widget
+    .locator('.viz-counters__item')
+    .filter({ hasText: 'total request time' })
+    .locator('.viz-counters__value')
+    .innerText();
+  expect(parseInt(totalAfter, 10)).toBeLessThan(parseInt(totalBefore, 10));
+});

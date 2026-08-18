@@ -1,0 +1,5 @@
+{
+  "label": "Production Engineering",
+  "icon": "🚨",
+  "description": "What it looks like to actually operate a system — reading a symptom, running an investigation with real evidence, and knowing which failure mode produces which signature."
+}

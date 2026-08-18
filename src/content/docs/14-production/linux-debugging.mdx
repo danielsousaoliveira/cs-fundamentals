@@ -1,0 +1,271 @@
+---
+title: Linux production debugging — top, free, ss, dmesg, and what they actually mean
+description: >-
+  Real captured Linux command output from a genuinely loaded container — what
+  every column in top means, why free's "used" number lies by omission, and
+  the kernel's own record of an OOM kill in dmesg.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs:
+  - 14-production/reading-the-symptoms
+tags: [linux, top, free, ss, dmesg, oom, debugging]
+languages: [bash]
+roles: [cloud, backend]
+sources:
+  - captured-linux-debian-12
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Dashboards answer "what changed." Linux commands, run against the actual
+host or container, answer "what is happening right now, in detail the
+dashboard didn't capture." SSHing in and typing commands should be the
+second step, not the first — [reading the
+symptoms](/cs-fundamentals/14-production/reading-the-symptoms/) off a
+dashboard already narrows the search, and the commands below are for
+finishing that narrowing, not starting from zero.
+
+Every example below is a real capture: a Debian 12 container, genuinely
+loaded with two CPU-spinning processes and a real memory allocator, all run
+through `docker exec` — not invented output shaped to look plausible.
+
+## Mechanics
+
+### `top`, decoded column by column
+
+```text
+top - 17:58:40 up 7 min,  0 user,  load average: 0.64, 0.16, 0.05
+Tasks:   5 total,   4 running,   1 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.0 us, 25.0 sy,  0.0 ni, 75.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   7935.7 total,   4130.0 free,   1319.5 used,   2693.8 buff/cache
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+    452 root      20   0    2232    920    824 R 100.0   0.0   0:03.51 yes
+    459 root      20   0    2232    928    828 R 100.0   0.0   0:03.46 yes
+    467 root      20   0    3312   2188   1068 R 100.0   0.0   0:03.40 dd
+```
+
+**Load average** (`0.64, 0.16, 0.05`) — the average number of processes
+wanting CPU time, over 1, 5, and 15 minutes. On a single-core system, `1.0`
+means fully loaded; on this container's underlying multi-core host, `0.64`
+is nowhere near saturated. The three numbers rising left-to-right (1-minute
+higher than 15-minute) means load is *increasing right now* — worth watching.
+
+**`%CPU`** per process (`100.0` for two `yes` processes and one `dd`) — this
+is genuine, real CPU consumption; three real processes doing real work,
+captured while actually running.
+
+**`RES`** — resident memory, what's actually in RAM right now, as opposed to
+`VIRT` (virtual address space reserved, frequently far larger than what's
+actually used — a process can reserve gigabytes of virtual address space and
+touch almost none of it).
+
+**`S`** (process state) — `R` running, `S` sleeping (waiting, using no CPU),
+`D` uninterruptible sleep (usually waiting on disk I/O — a process stuck in
+`D` state cannot even be killed with `SIGKILL` until the I/O completes,
+which is the specific reason a `D`-state process hanging around is worth
+treating as its own alert).
+
+### `free -h`, and why "used" undercounts what's actually available
+
+```text
+               total        used        free      shared  buff/cache   available
+Mem:           7.7Gi       1.3Gi       4.0Gi        10Mi       2.6Gi       6.5Gi
+Swap:          1.0Gi       1.9Mi       1.0Gi
+```
+
+The instinctive read — "1.3Gi used out of 7.7Gi, plenty free" — undersells
+it in the other direction from what people usually fear. Linux uses spare
+RAM for page cache (`buff/cache`, 2.6Gi here) because unused RAM is wasted
+RAM; that cache is reclaimed instantly under memory pressure. **`available`**
+(6.5Gi) is the number that answers "how much can a new process actually get
+without swapping" — it already accounts for reclaimable cache. `free`
+(4.0Gi) undercounts available capacity; `used` overcounts memory pressure.
+Neither raw column alone tells you what you actually want to know.
+
+**Swap** is the number to watch for real trouble: `1.9Mi used` here is
+negligible. Swap climbing toward its total means the kernel is actively
+paging memory to disk — thousands of times slower than RAM — and everything
+on the box gets slow at once, not just the process that triggered it.
+
+### `ss -tulpn` — what's actually listening, and to what
+
+```text
+Netid State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+tcp   LISTEN 0      1            0.0.0.0:8080      0.0.0.0:*    users:(("nc",pid=519,fd=3))
+```
+
+`-t` TCP, `-u` UDP, `-l` listening sockets only, `-p` show the owning
+process, `-n` numeric ports (skip DNS resolution, which is slow and often
+irrelevant). This single line answers "is anything actually listening on the
+port I expect" and "which process owns it" — the first thing to check when
+a service that should be reachable isn't, before assuming the network or a
+firewall rule is at fault.
+
+### `dmesg` — the kernel's own record, including the one no application log has
+
+```text
+oom-kill:constraint=CONSTRAINT_MEMCG,...,task=MainThread,pid=17104,uid=0
+Memory cgroup out of memory: Killed process 17104 (MainThread)
+  total-vm:1331612kB, anon-rss:99228kB, file-rss:2600kB, shmem-rss:0kB
+```
+
+Genuinely captured from a container that was killed by its own 100MB
+`--memory` cgroup limit. `dmesg` shows kernel-level messages, and an OOM
+kill is exactly that — the kernel deciding a process must die to protect the
+system (or, in a container, the cgroup's boundary), and it happens
+*underneath* the application, which is why the application's own logs often
+show nothing at all: there's no exception to catch, no error path taken, the
+process simply stops existing mid-instruction. `anon-rss:99228kB` — almost
+exactly the container's memory limit — is the kernel's own confirmation of
+what triggered it.
+
+### `ps aux`, `df -h`, `lsof` — the rest of the toolkit, briefly
+
+`ps aux` lists every process with its owning user, CPU/memory share, and
+full command line — useful for spotting a duplicate process, a zombie, or a
+process nobody expected to be running at all. `df -h` reports filesystem
+usage; a disk at 100% breaks writes silently for logs, WAL files, and
+temporary files, in ways that look like unrelated application failures until
+someone checks disk space specifically. `lsof` lists every open file
+handle — sockets, pipes, regular files — and is the tool for "too many open
+files" errors, which mean a process has hit its file-descriptor limit,
+usually from leaking connections or handles rather than legitimately needing
+that many.
+
+## Cost & limits
+
+**These commands are point-in-time snapshots, not time series.** `top -b
+-n1` captures one instant; a process spiking to 100% CPU for 200ms between
+two samples a second apart is invisible to a human running commands by hand.
+This is exactly the gap continuous metrics collection (already on the
+dashboard, ideally) is meant to fill — Linux commands are for confirming and
+detailing what the dashboard already flagged, not for catching things a
+dashboard would have shown first.
+
+**Running these against a production host under load has its own, small,
+real cost** — `ps aux` on a host with thousands of processes, or `lsof` with
+no filter, can itself consume noticeable CPU and I/O at exactly the moment
+the system is least able to spare it.
+
+## When NOT to use it
+
+**Do not reach for Linux commands before checking what the dashboard already
+knows.** If Grafana already shows CPU and memory are both nominal, spending
+five minutes rediscovering that via `top` wastes the most valuable resource
+during an incident — time. Use the highest-level evidence already available
+first, and drop to Linux commands specifically to fill in a detail the
+dashboard doesn't have.
+
+**Do not treat a single snapshot as conclusive for anything transient.** A
+`top -b -n1` that happens to catch a quiet moment proves nothing about a
+CPU spike that comes and goes; either sample repeatedly (`top -b -n5 -d1`)
+or use the continuous metrics that were already being collected.
+
+## Real-world usage
+
+Every on-call runbook worth having includes a short, specific list of
+commands to run for a given symptom class — not "SSH in and look around,"
+but "if CPU is suspected, run `top`; if memory, `free` and check `dmesg`
+for OOM kills; if connectivity, `ss`." The value of Linux fluency in an
+incident isn't knowing every flag — it's knowing which command answers which
+specific question fastest, so the investigation moves in a straight line
+instead of poking around.
+
+## Failure modes
+
+**The OOM kill nobody found because they only checked application logs.**
+An engineer investigates a service that "just disappeared" — no crash
+stack trace, no exception — and spends twenty minutes confused before
+checking `dmesg`, which had the kernel's own record of the kill the whole
+time. Application-level observability has a blind spot exactly here: the
+kernel killed the process *before* it could log anything about its own
+death.
+
+**The "plenty of free memory" conclusion from misreading `free`.** An
+engineer sees a low `free` column and a high `buff/cache` column and
+concludes the system is nearly out of memory, when `available` — the column
+that actually answers the question — showed comfortable headroom the whole
+time. The opposite misreading also happens: someone sees a healthy `free`
+number without checking `available` under real memory pressure, and misses
+that swap has already started climbing.
+
+**The connectivity issue that wasn't the network.** A service reports
+"can't reach the database," and twenty minutes are spent on firewall rules
+and DNS before `ss -tulpn` on the database host reveals it was never
+actually listening on the expected port — a config error, not a network
+problem, that a thirty-second command would have shown immediately.
+
+## Practice problems
+
+**1. `free -h` shows `used: 1.3Gi`, `buff/cache: 2.6Gi`, `available: 6.5Gi`
+on a 7.7Gi system. A teammate says the system is "almost out of memory
+because used plus cache is nearly 4Gi." What's wrong with that reasoning?**
+
+`buff/cache` is reclaimable — the kernel is using otherwise-idle RAM to
+cache disk data, and it gives that memory back instantly the moment an
+application actually needs it. `available` (6.5Gi) is the number that
+already accounts for this and answers "how much can a new process actually
+get" — the system has substantial headroom, not almost none.
+
+**2. A container was killed with no application-level error logged. Where
+would you look, and what would you expect to find if it was an OOM kill?**
+
+`dmesg` — kernel-level messages, captured outside and underneath the
+application's own logging. An OOM kill shows a line like `Memory cgroup out
+of memory: Killed process <pid>` with the process's resident memory at the
+time, which is why the application logged nothing: the kernel terminated it
+mid-execution, before any exception-handling or logging code could run.
+
+**3. `ss -tulpn` on a host that's supposed to be running a web server on
+port 8080 shows nothing listening on that port. What does this rule out,
+and what should you check next?**
+
+It rules out a network-layer problem (firewall, routing, DNS) as the
+*immediate* cause of "can't connect" — if nothing is listening, no amount of
+network configuration would make the connection succeed. Check next whether
+the service process actually started, crashed on startup, or is
+misconfigured to listen on a different port or interface than expected.
+
+<Quiz
+  client:visible
+  id="linux-debugging-free-available"
+  kind="concept"
+  question="free -h shows low 'free' memory but high 'buff/cache' and a large 'available' figure. Is the system actually low on memory?"
+  options={[
+    { label: "Yes -- 'free' is the number that matters, and it's low" },
+    { label: "No -- 'available' already accounts for reclaimable page cache and is the number that answers whether new processes can get memory", correct: true },
+    { label: "It depends entirely on the swap column, nothing else matters" },
+    { label: "free -h cannot answer this question at all" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Linux uses otherwise-idle RAM for page cache because unused memory is wasted memory -- that cache is instantly reclaimable the moment an application needs it. The 'free' column undercounts what's actually available for that reason; 'available' is computed specifically to answer "how much memory can a new process actually get" and is the number worth watching, not 'free' in isolation.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Walk me through what you'd check on a Linux host during a production
+incident."** Start from whatever the dashboard already narrowed down, then
+drop into specific commands to fill in detail: `top` for per-process CPU and
+memory, `free -h` (reading `available`, not `free`) for real memory
+pressure, `ss -tulpn` for what's actually listening, `dmesg` for kernel-level
+events like an OOM kill that never surface in application logs. The caveat
+that shows real operational experience: these are point-in-time snapshots,
+not a substitute for continuous metrics — useful for confirming and
+detailing a hypothesis the dashboard already suggested, not for discovering
+something the dashboard would have shown first.
+
+**"A container died with no application error logged. How do you find out
+why?"** Check `dmesg` for a kernel-level OOM kill — the kernel terminates a
+process that exceeds its cgroup memory limit before any application code,
+including logging, gets a chance to run, which is exactly why the
+application's own logs show nothing. The caveat: this blind spot is
+structural, not a logging bug to fix in the application — it's a reason
+container memory limits and OOM events need their own dashboard-level
+alerting, independent of whatever the application chooses to log.

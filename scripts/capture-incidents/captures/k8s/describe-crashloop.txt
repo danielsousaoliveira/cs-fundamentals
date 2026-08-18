@@ -1,0 +1,67 @@
+Name:             crashloop-demo
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             incidents-control-plane/172.18.0.2
+Start Time:       Wed, 05 Aug 2026 19:03:46 +0100
+Labels:           <none>
+Annotations:      <none>
+Status:           Running
+IP:               10.244.0.7
+IPs:
+  IP:  10.244.0.7
+Containers:
+  crasher:
+    Container ID:  containerd://dbfefd7d37707be6ee8419b9e8adfa484ee6e10ba82ba81ce0bc27a5fbc13349
+    Image:         busybox
+    Image ID:      docker.io/library/busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      sh
+      -c
+      echo 'starting up'; sleep 2; echo 'fatal error, exiting'; exit 1
+    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       Error
+      Exit Code:    1
+      Started:      Wed, 05 Aug 2026 19:07:07 +0100
+      Finished:     Wed, 05 Aug 2026 19:07:09 +0100
+    Ready:          False
+    Restart Count:  5
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-stndr (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       False 
+  ContainersReady             False 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-stndr:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    Optional:                false
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason     Age                  From               Message
+  ----     ------     ----                 ----               -------
+  Normal   Scheduled  5m7s                 default-scheduler  Successfully assigned default/crashloop-demo to incidents-control-plane
+  Normal   Pulled     5m1s                 kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 2.222s (6.304s including waiting). Image size: 1925780 bytes.
+  Normal   Pulled     4m57s                kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 688ms (688ms including waiting). Image size: 1925780 bytes.
+  Normal   Pulled     4m39s                kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 959ms (959ms including waiting). Image size: 1925780 bytes.
+  Normal   Pulled     4m7s                 kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 650ms (650ms including waiting). Image size: 1925780 bytes.
+  Normal   Pulled     3m12s                kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 704ms (704ms including waiting). Image size: 1925780 bytes.
+  Normal   Pulling    107s (x6 over 5m7s)  kubelet            spec.containers{crasher}: Pulling image "busybox"
+  Normal   Created    107s (x6 over 5m1s)  kubelet            spec.containers{crasher}: Container created
+  Normal   Pulled     107s                 kubelet            spec.containers{crasher}: Successfully pulled image "busybox" in 794ms (794ms including waiting). Image size: 1925780 bytes.
+  Normal   Started    106s (x6 over 5m)    kubelet            spec.containers{crasher}: Container started
+  Warning  BackOff    31s (x6 over 4m55s)  kubelet            spec.containers{crasher}: Back-off restarting failed container crasher in pod crashloop-demo_default(4858c776-87e5-41df-8410-2749ae6ddf26)

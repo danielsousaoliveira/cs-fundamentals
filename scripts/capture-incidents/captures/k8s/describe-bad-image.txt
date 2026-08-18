@@ -1,0 +1,53 @@
+Name:             bad-image
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             incidents-control-plane/172.18.0.2
+Start Time:       Wed, 05 Aug 2026 19:01:45 +0100
+Labels:           run=bad-image
+Annotations:      <none>
+Status:           Pending
+IP:               10.244.0.5
+IPs:
+  IP:  10.244.0.5
+Containers:
+  bad-image:
+    Container ID:   
+    Image:          nonexistent-registry.invalid/does-not-exist:v1
+    Image ID:       
+    Port:           <none>
+    Host Port:      <none>
+    State:          Waiting
+      Reason:       ImagePullBackOff
+    Ready:          False
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-t4sjd (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       False 
+  ContainersReady             False 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-t4sjd:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    Optional:                false
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason     Age                    From               Message
+  ----     ------     ----                   ----               -------
+  Normal   Scheduled  7m8s                   default-scheduler  Successfully assigned default/bad-image to incidents-control-plane
+  Normal   Pulling    3m54s (x5 over 7m7s)   kubelet            spec.containers{bad-image}: Pulling image "nonexistent-registry.invalid/does-not-exist:v1"
+  Warning  Failed     3m46s (x5 over 6m59s)  kubelet            spec.containers{bad-image}: Failed to pull image "nonexistent-registry.invalid/does-not-exist:v1": failed to pull and unpack image "nonexistent-registry.invalid/does-not-exist:v1": failed to resolve reference "nonexistent-registry.invalid/does-not-exist:v1": failed to do request: Head "https://nonexistent-registry.invalid/v2/does-not-exist/manifests/v1": dial tcp: lookup nonexistent-registry.invalid on 192.168.65.254:53: server misbehaving
+  Warning  Failed     3m46s (x5 over 6m59s)  kubelet            spec.containers{bad-image}: Error: ErrImagePull
+  Warning  Failed     115s (x18 over 6m59s)  kubelet            spec.containers{bad-image}: Error: ImagePullBackOff
+  Normal   BackOff    72s (x21 over 6m59s)   kubelet            spec.containers{bad-image}: Back-off pulling image "nonexistent-registry.invalid/does-not-exist:v1"

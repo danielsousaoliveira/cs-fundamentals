@@ -1,0 +1,246 @@
+---
+title: Cascading failures — how one slow dependency becomes a total outage
+description: >-
+  A downstream 429 turned into a 5x amplification, captured for real —
+  bulkheads, backpressure, and load shedding as the three mechanisms that
+  stop one failure from becoming every failure.
+sidebar:
+  order: 6
+difficulty: core
+status: complete
+prereqs:
+  - 14-production/reading-the-symptoms
+  - 5-systems/message-brokers
+tags: [cascading-failure, bulkhead, backpressure, load-shedding, retry-storm]
+languages: [bash]
+roles: [cloud, backend, ai]
+sources:
+  - captured-incident-telemetry
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+import { IncidentConsole } from '../../../components/viz/widgets/IncidentConsole.tsx';
+
+## Intuition
+
+A cascading failure is not one big failure — it's a small failure that
+propagates, amplifying at each step, until the whole system is affected by
+something that started as one degraded dependency. The mechanism is almost
+always the same shape: something downstream gets slow or starts failing,
+something upstream responds in a way that makes more load rather than less
+(retrying, queueing, holding resources open longer), and that increased load
+degrades the next thing in the chain.
+
+## Mechanics
+
+### The retry storm, captured for real
+
+<IncidentConsole client:visible />
+
+Switch to **retry storm** above. The upstream service serves under 900
+requests per second; its naive, no-backoff retry loop against a flaky
+downstream generates over **4,000 downstream calls per second** — better
+than a 4x amplification — with **85% of those calls genuinely rejected with
+HTTP 429**. This is the mechanism in miniature: a downstream that's already
+struggling receives *more* load specifically because it's struggling, from a
+client trying to compensate for failures by trying harder.
+
+### The general shape: how one slow dependency becomes many failures
+
+```text
+1. Downstream A slows down
+2. Workers calling A hold their slots longer, waiting
+3. Fewer worker slots available for other requests
+4. Requests queue; queue depth grows
+5. Queued requests eventually time out
+6. Clients (internal or external) retry the timed-out requests
+7. Retry volume adds to the load on an already-struggling system
+8. Go to 2
+```
+
+Every step is a plausible, individually reasonable local decision — a
+worker waiting for a response, a queue absorbing burst traffic, a client
+retrying a failed request — and the aggregate is a system that gets worse
+under its own defensive mechanisms. This is the reason cascading failures
+are hard to reason about from any single component's perspective: nothing
+in the chain is behaving incorrectly in isolation.
+
+### Bulkheads: isolate the failure domain
+
+Named for a ship's watertight compartments — flooding in one compartment
+doesn't sink the ship, because the compartments are isolated. Applied to
+software: separate worker pools, separate connection pools, separate thread
+pools per downstream dependency or per workload type, so that one dependency
+saturating its pool doesn't consume the capacity another workload needs.
+
+```text
+Without bulkheads:            With bulkheads:
+  all requests                  chat requests -> pool A (20 workers)
+  -> one shared pool             image gen    -> pool B (10 workers)
+  -> image gen backs up          if B saturates, A is unaffected
+  -> chat starves too
+```
+
+### Backpressure: refuse work rather than accept unboundedly
+
+A system under more load than it can handle has two choices: accept
+everything and degrade uniformly (queue depth grows without bound, latency
+climbs for every request), or **push back** — reject or slow down new work
+once a threshold is crossed, keeping the requests it does accept fast. The
+counterintuitive part: rejecting some requests immediately, with a clear
+error, is usually a better outcome for the system as a whole than accepting
+all of them and having everything degrade together.
+
+### Load shedding: drop the least important work first
+
+A refinement of backpressure — when forced to reject work, reject the
+*least valuable* work first. A background batch job and an interactive user
+request competing for the same resource should not be treated equally under
+load; shedding the batch job's requests preserves the interactive
+experience, which is usually where the actual cost of degradation is
+concentrated.
+
+## Cost & limits
+
+**Bulkheads cost provisioning efficiency.** Splitting one shared pool of 30
+workers into three isolated pools of 10 each means a burst in one workload
+can't borrow idle capacity from another, even when that capacity is sitting
+unused — isolation and utilisation are in direct tension, and the right
+split depends on how correlated the workloads' load patterns actually are.
+
+**Backpressure and load shedding both mean some requests are deliberately
+failed that could, in principle, have succeeded** if the system had more
+capacity. The trade is a smaller number of fast failures now instead of a
+larger number of slow failures (or a total outage) once the cascade fully
+develops — a real cost, accepted deliberately rather than discovered by
+accident mid-incident.
+
+## When NOT to use it
+
+**Do not add bulkheads before confirming which workloads actually need
+isolation.** Splitting every dependency into its own pool by default adds
+operational complexity (more pools to size, more places for a
+misconfiguration to hide) without benefit if the workloads never
+meaningfully compete for the same resource in practice.
+
+**Do not implement retries without also implementing backoff and a retry
+ceiling.** A retry policy with no backoff and no maximum attempt count is
+not a resilience mechanism — it's the exact amplification mechanism
+demonstrated above. Retries only help if they're bounded and spaced out;
+unbounded, immediate retries are the cascading-failure trigger, not the fix
+for one.
+
+## Real-world usage
+
+Every major outage postmortem from a large-scale production system that's
+publicly documented tends to describe some version of this pattern — a
+component degrades, an amplifying response (retries, connection pool
+exhaustion, cache stampede) turns a partial, contained problem into a
+systemic one. Bulkheads, backpressure, and load shedding are the standard,
+named mitigations, and mature systems build them in before an incident
+forces the issue, specifically because retrofitting isolation during an
+active cascade is much harder than designing for it up front.
+
+## Failure modes
+
+**The retry storm mistaken for "the API got slower."** The upstream-facing
+symptom — elevated latency, maybe some errors — gives no indication that the
+real cause is a downstream call being retried five times per request with no
+backoff, multiplying load on an already-struggling dependency; the fix
+(bounded retries with backoff) is simple once the amplification is actually
+seen, which requires comparing upstream and downstream request volume
+directly.
+
+**The bulkhead that wasn't actually isolated**, because the "separate" pools
+shared an underlying resource nobody accounted for — the same database
+connection limit, the same network interface, the same CPU. Isolation at
+the application layer doesn't help if the layer beneath it is still shared
+and saturates anyway.
+
+**The load-shedding policy that shed the wrong thing.** A system under load
+sheds requests by arrival order (oldest or newest first) rather than by
+actual priority, and ends up rejecting paying customers' interactive
+requests while a low-priority background job keeps running — because
+priority was never encoded anywhere the shedding logic could see it.
+
+## Practice problems
+
+**1. Using the captured retry-storm fixture above: upstream rps sits around
+850, downstream rps sits around 4,000, and 85% of downstream calls are
+rejected with 429. If the retry loop added exponential backoff with a
+maximum of 3 attempts, what would you expect to happen to the downstream
+rps, and why?**
+
+Downstream rps would drop substantially — bounded retries with backoff mean
+each upstream request generates at most a few downstream calls, spaced out,
+rather than hammering the endpoint continuously until success or an
+unbounded attempt count. The 429 rate downstream would likely also drop,
+since the reduced call volume gives the downstream service room to recover
+rather than staying saturated by retry traffic.
+
+**2. A system shares one connection pool across three different endpoint
+types: fast health checks, medium user requests, and slow batch report
+generation. Batch report generation starts taking much longer than usual.
+What happens to the other two endpoint types, and what's the fix?**
+
+Health checks and user requests start queuing behind the batch report
+requests holding pool connections for longer than usual — a slowdown in one
+workload type degrades the other two, even though they're unrelated in
+purpose. The fix is a bulkhead: separate connection pools per workload type,
+so batch report generation running slow only affects its own pool's
+capacity, not the shared resource every workload was drawing from.
+
+**3. A system under sudden heavy load has two choices: accept every request
+and let latency degrade for everyone, or reject some requests immediately
+with a clear error once a threshold is crossed. Which is generally the
+better outcome, and why?**
+
+Rejecting some requests immediately (backpressure) is usually better — the
+requests that are accepted stay fast, and the rejected ones fail
+immediately and visibly rather than degrading slowly and unpredictably.
+Accepting everything trades a smaller number of clear, fast failures for a
+larger number of slow, ambiguous ones (timeouts, which look identical to
+"still processing" until they finally fail), which is worse for both the
+system's stability and the caller's ability to react.
+
+<Quiz
+  client:visible
+  id="cascading-failures-retry-amplification"
+  kind="concept"
+  question="A service retries every failed downstream call immediately, with no backoff and no maximum attempt count. What's the risk during a downstream outage?"
+  options={[
+    { label: "None -- retrying failed calls is always the correct response to a failure" },
+    { label: "The retry loop can amplify load on the already-struggling downstream service, turning a partial outage into a worse one -- the mechanism captured in the retry-storm fixture above", correct: true },
+    { label: "Retries only affect the client's own CPU usage, never the downstream service" },
+    { label: "This only matters if the downstream service is a database" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Unbounded, immediate retries are the amplification mechanism, not a resilience feature -- the captured fixture shows a client generating over 4x its own request rate in downstream calls, with the overwhelming majority rejected. A retry policy only helps if it's bounded (a maximum attempt count) and spaced out (backoff), so it gives a struggling dependency room to recover instead of adding to exactly the load that's already overwhelming it.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"Explain how a cascading failure happens, using a concrete example."** A
+downstream dependency slows down; callers waiting on it hold resources
+(worker slots, connections) longer than usual; fewer resources are
+available for other requests, which queue and eventually time out; clients
+retry the timed-out requests, adding load to a downstream that's already
+struggling. The caveat that shows this was actually operated: every
+individual step is a locally reasonable decision — nothing in the chain is
+misbehaving on its own — which is exactly why cascading failures are hard to
+see coming from any single component's dashboard and need to be designed
+against structurally, not caught by watching one metric.
+
+**"What are bulkheads, backpressure, and load shedding, and how do they
+differ?"** Bulkheads isolate failure domains so one dependency saturating
+doesn't starve unrelated workloads of shared resources; backpressure rejects
+or slows new work once a threshold is crossed, rather than accepting
+everything and degrading uniformly; load shedding is backpressure with a
+priority order, dropping the least valuable work first. The caveat: all
+three trade some amount of capacity or completeness for stability under
+load — bulkheads cost provisioning efficiency, backpressure and shedding
+mean some requests are deliberately failed that might otherwise have
+succeeded — and that trade should be made deliberately, before an incident
+forces the issue, not discovered mid-cascade.

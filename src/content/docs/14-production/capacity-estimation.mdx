@@ -1,0 +1,246 @@
+---
+title: Capacity estimation — the back-of-the-envelope math that catches a bad plan early
+description: >-
+  QPS, storage, bandwidth, and Little's Law worked as real arithmetic, not
+  asserted — the estimate that tells you a plan won't work before you've
+  built anything.
+sidebar:
+  order: 7
+difficulty: core
+status: complete
+prereqs:
+  - 14-production/reading-the-symptoms
+  - 5-systems/databases
+tags: [capacity-planning, littles-law, back-of-the-envelope, qps, throughput]
+languages: [bash]
+roles: [cloud, backend, ai]
+sources: []
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+
+## Intuition
+
+Back-of-the-envelope capacity estimation is arithmetic done *before* the
+system is built, or before an incident, to answer one question: **does this
+plan work at the scale it needs to work at, or does the math already rule it
+out?** It's deliberately rough — order-of-magnitude, not precise — because
+the point isn't a perfect number, it's catching a plan that's off by 100x
+before money and time are spent building it.
+
+## Mechanics
+
+### Little's Law: the one formula that connects concurrency, arrival rate, and latency
+
+$$L = \lambda W$$
+
+The number of requests in the system at any moment ($L$) equals the
+arrival rate ($\lambda$, requests per second) times the average time each
+request spends in the system ($W$, in seconds). This single relationship
+is the reason "in-flight requests" and "pool waiting" are such
+high-signal metrics on any dashboard — they're a direct, measurable
+consequence of arrival rate and latency multiplying together, not an
+independent thing to reason about from scratch.
+
+Worked example: a service handling 500 requests/second where each request
+takes 200ms (0.2s) has, on average, $L = 500 \times 0.2 = 100$ requests
+in flight at any given moment. If that service is backed by a connection
+pool sized at 20, the arithmetic already says it's undersized before a
+single request times out — 100 concurrent requests against 20 available
+slots means the other 80 are always queued.
+
+### QPS: working from a monthly number to a peak number
+
+A common mistake: sizing capacity from an average, when peak is what
+actually determines whether the system falls over. A service handling 10
+million requests a day is not evenly 116 requests/second around the clock —
+real traffic has a diurnal pattern, and peak hour commonly carries several
+times the average rate.
+
+```text
+10,000,000 requests/day / 86,400 seconds/day  ≈ 116 requests/sec (average)
+Peak-to-average ratio, typical for a consumer-facing service: 3-5x
+Estimated peak QPS: ~350-580 requests/sec
+```
+
+The peak number, not the average, is the one to provision against —
+provisioning for average QPS means the system falls over precisely during
+its busiest, most consequential moments.
+
+### Storage: rows/objects × size, with growth over time
+
+```text
+1,000,000 users
+× 50 events/user/day
+× 365 days/year
+× 200 bytes/event (a small structured record)
+= 3.65 TB/year of raw event data
+```
+
+The arithmetic itself is trivial multiplication; the value is doing it
+*before* choosing a storage system, because it changes the answer. 3.65
+TB/year fits comfortably in a single well-indexed Postgres instance for
+several years; the same estimate at 500x the event volume changes the
+conversation entirely, toward partitioning, a columnar store, or a
+managed data warehouse — a decision worth making from the estimate, not
+discovered after the fact when a single table becomes unmanageable.
+
+### Bandwidth: response size × QPS, and where it turns into real cost
+
+```text
+580 requests/sec (peak, from above)
+× 50 KB average response size
+= 29 MB/sec ≈ 232 Mbps sustained at peak
+```
+
+Cross-referencing this against the [egress pricing tiers on the cloud cost
+page](/cs-fundamentals/9-cloud-infra/cloud-cost/) turns "sustained 232
+Mbps" into an actual monthly dollar figure before the service ships, rather
+than as a surprise on the first invoice.
+
+### Connection and worker math: sizing a pool from real numbers, not a guess
+
+Combining Little's Law with a known per-request duration gives a defensible
+pool size, rather than a round number picked because it "seemed reasonable":
+
+```text
+Target: 500 req/sec, average request duration 100ms (0.1s)
+In-flight via Little's Law: L = 500 x 0.1 = 50
+Pool size should comfortably exceed 50 -- say 75, for headroom during a burst
+```
+
+## Cost & limits
+
+**These estimates are deliberately imprecise, and that's the point, not a
+flaw.** An order-of-magnitude estimate that takes ten minutes and catches a
+1000x sizing error is worth far more than a precise model that takes two
+weeks to build and catches nothing an order-of-magnitude estimate wouldn't
+have. Precision is worth adding only once the rough number says the plan is
+plausible and worth refining.
+
+**An estimate is only as good as its input assumptions**, and the most
+common failure is an unrealistic peak-to-average ratio or a response-size
+assumption that doesn't match what the system actually returns once
+built — the arithmetic is trivial; the judgment is in the inputs.
+
+## When NOT to use it
+
+**Do not treat a back-of-the-envelope estimate as a substitute for load
+testing before a real launch.** The estimate tells you whether a plan is
+plausible; it does not tell you the actual behaviour of the real system
+under real traffic patterns, real data distributions, and real failure
+modes — those need to be measured, not estimated.
+
+**Do not spend hours refining an estimate's precision when the rough number
+already clearly passes or clearly fails.** If the rough math says a plan
+needs 50x more storage than reasonably available, refining the estimate to
+three significant figures doesn't change the conclusion — the ten-minute
+version already did its job.
+
+## Real-world usage
+
+Capacity estimation is a standard part of system-design interviews
+specifically because it's a fast, cheap way to test whether a candidate's
+proposed architecture is grounded in real numbers or vibes — a design that
+sounds reasonable and falls apart under five minutes of QPS arithmetic is a
+common and revealing outcome. In real engineering practice, the same
+math — done informally, on a whiteboard or in a design doc — is what
+catches "this approach needs a distributed system" or "this fits on one
+box comfortably" before either becomes an expensive discovery mid-project.
+
+## Failure modes
+
+**The system sized for average load that fell over at peak.** A service
+provisioned against its average QPS (116/sec in the worked example above)
+rather than its peak (350-580/sec) performs fine most of the day and falls
+over during exactly the traffic spikes that matter most — Black Friday,
+a viral moment, the start of a business day — because the sizing decision
+never accounted for the peak-to-average ratio at all.
+
+**The storage plan that assumed today's volume forever.** A schema and
+storage choice made for the current data volume, with no estimate of growth
+over the following year or two, becomes a forced, urgent migration once
+volume outgrows what the original choice can handle gracefully — a cost
+that a five-minute growth estimate at design time would have surfaced early
+enough to plan around instead of firefight.
+
+**The connection pool sized by copying a number from another service's
+config**, rather than deriving it from this service's actual request rate
+and duration via Little's Law — sometimes too small (queueing under normal
+load) and sometimes wastefully large (holding resources the workload never
+needs), because the number was never actually computed for this specific
+workload.
+
+## Practice problems
+
+**1. A service handles 200 requests/second, with each request taking an
+average of 150ms. Using Little's Law, how many requests are in flight at
+any given moment, and what does that imply about connection pool sizing?**
+
+$L = 200 \times 0.15 = 30$ requests in flight on average. A connection
+pool needs to comfortably exceed 30 to avoid queueing under normal load —
+sizing it at exactly 30 leaves no headroom for any burst above average, and
+sizing it well below 30 (say, 10) guarantees queueing even at steady-state
+load.
+
+**2. A team estimates their service needs to handle 5 million requests per
+day and plans capacity for 58 requests/second (the 24-hour average). What's
+wrong with this plan, and what additional number do they need?**
+
+Provisioning for the average ignores that real traffic isn't evenly
+distributed across 24 hours — peak hour traffic is typically several times
+the average. They need an estimated peak-to-average ratio (commonly 3-5x
+for consumer-facing traffic) to arrive at a peak QPS figure, and should
+provision against that peak number, not the average, since the average is
+never the moment the system is at risk of falling over.
+
+**3. A new feature is estimated to add 2 KB of data per user action, with
+10 million users each taking an average of 20 actions per day. Roughly how
+much storage does this add per year, and why is doing this estimate before
+building the feature valuable?**
+
+$2\text{KB} \times 10{,}000{,}000 \times 20 \times 365 \approx 146\text{
+TB/year}$. Doing this estimate before building surfaces, early and cheaply,
+whether the planned storage approach (a single database, a specific managed
+service, a specific retention policy) can actually accommodate that volume
+— a question far cheaper to answer with ten minutes of arithmetic than by
+discovering the answer is "no" after the feature has shipped and the table
+is already unmanageably large.
+
+<Quiz
+  client:visible
+  id="capacity-estimation-littles-law"
+  kind="concept"
+  question="A service handles 400 requests/second, and each request takes 250ms on average. Using Little's Law, roughly how many requests are in flight at any moment?"
+  options={[
+    { label: "400 -- the requests-per-second number is the answer" },
+    { label: "100 -- Little's Law gives L = arrival rate x average time in system, so 400 x 0.25s = 100", correct: true },
+    { label: "1,600 -- divide the request rate by the duration" },
+    { label: "There isn't enough information to answer this" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Little's Law (L = &lambda;W) connects arrival rate and average time-in-system directly to concurrency: 400 requests/second, each spending 0.25 seconds in the system, means on average 100 requests are in flight simultaneously. This is exactly the arithmetic behind sizing a connection pool or worker count from real traffic numbers rather than a guess.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"How would you estimate the QPS a system needs to handle?"** Start from a
+known volume (daily active users, requests per day) and convert to an
+average QPS by dividing by seconds in the relevant window, then apply a
+peak-to-average ratio — commonly 3-5x for consumer traffic — to get the peak
+QPS the system actually needs to be provisioned against. The caveat that
+shows real system-design experience: provisioning for the average number is
+a common and serious mistake, because the average is specifically the
+traffic level the system is never at risk during — it's the peak that
+determines whether the design survives contact with real usage.
+
+**"What's Little's Law, and why does it matter for capacity planning?"** $L
+= \lambda W$ — the number of requests in a system equals the arrival rate
+times the average time each request spends in the system. The caveat that
+signals real use: this turns "how big should the connection pool be" from a
+guess into arithmetic — given a target request rate and a known or estimated
+request duration, the required concurrency (and therefore a defensible pool
+size) falls straight out of the formula, rather than being picked as a round
+number that might be badly wrong in either direction.

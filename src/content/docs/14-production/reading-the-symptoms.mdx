@@ -1,0 +1,236 @@
+---
+title: Reading the symptoms — CPU, latency, and what each combination rules out
+description: >-
+  Low CPU and high latency means waiting, not working — measured from a real
+  service genuinely faulted six different ways, not asserted. The single
+  fact this whole section is built around.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 14-production/incident-method
+  - 9-cloud-infra/observability
+tags: [symptoms, cpu, latency, diagnosis, telemetry]
+languages: [bash]
+roles: [cloud, backend, ai]
+sources:
+  - captured-incident-telemetry
+---
+
+import { Quiz } from '../../../components/mdx/Quiz.tsx';
+import { IncidentConsole } from '../../../components/viz/widgets/IncidentConsole.tsx';
+
+## Intuition
+
+Two numbers — CPU utilisation and request latency — and the four
+combinations they can take, rule out most of the wrong hypotheses before you
+open a single log line. **High latency with high CPU means the process is
+genuinely busy** — computing something, for real wall-clock time. **High
+latency with low, flat CPU means the process is waiting** — for a database,
+a downstream API, a lock, a connection pool slot, anything that isn't CPU
+work. These are not similar failures wearing different clothes. They point
+in opposite directions, and confusing them is the single most common
+misdiagnosis in a live incident.
+
+This isn't a rule of thumb. It's measured, below, from a real Node service
+genuinely driven into six different failure modes.
+
+## Mechanics
+
+### The contrast, captured for real
+
+Two fixtures, same server, same load pattern, one difference:
+
+```text
+cpu-bound         cpu: 100%   p50: 960ms    (real SHA-256 loop, blocking the event loop)
+slow-dependency   cpu: 0.9%   p50: 3000ms   (real 3s async wait for a downstream call)
+```
+
+Both are slow. Only one of them is *busy*. If you only looked at latency,
+you'd reach for the same fix for both — and it would be wrong for one of
+them. Scaling CPU or optimising code helps `cpu-bound` and does nothing for
+`slow-dependency`, because `slow-dependency`'s process spends its time
+sitting idle, waiting on a promise to resolve — there is no CPU work to
+speed up.
+
+<IncidentConsole client:visible />
+
+### Reading the rest of the signal set
+
+CPU and latency alone don't finish the diagnosis — they narrow it. The next
+signals split the remaining hypotheses further, and each of the six captured
+faults above demonstrates a distinct signature:
+
+**Pool waiting, pegged, with flat CPU** — `pool-exhaustion`, captured above,
+shows `pool_waiting` sitting at its ceiling while `p95` climbs from ~2s to
+over 20s as the queue backs up, all while CPU stays under 1%. This is a
+*bounded resource* problem: more requests are arriving than the pool has
+slots to serve, and every additional request just waits longer than the last.
+
+**Downstream call volume far exceeding upstream request volume** —
+`retry-storm`, captured above, shows the service issuing over 4,000
+downstream calls per second while itself serving under 900 upstream requests
+per second — a ~5x amplification, with 85% of those downstream calls
+genuinely rejected with HTTP 429. The upstream symptom (elevated latency, no
+errors visible to the client) hides an underlying retry loop hammering a
+dependency that's already struggling.
+
+**RSS climbing steadily with no other signal moving** — `memory-leak`,
+captured above, shows RSS climbing from ~57MB to ~196MB over about fifteen
+seconds while CPU, latency, and error rate all stay unremarkable — until the
+process is killed. `containerState.OOMKilled` in the fixture is copied
+verbatim from a real `docker inspect` call: `true`, exit code `137`. Nothing
+about the request-serving metrics announces this failure coming; only memory
+does, which is exactly why memory needs its own dashboard, not just a glance
+when something else looks wrong.
+
+**Everything rising together** — `load-spike`, captured above, shows rps,
+latency, CPU, and queue depth all climbing in the same direction. This is
+the "boring" case: more traffic than the system is provisioned for, not a
+bug. The diagnosis is fast precisely because nothing is decoupled from
+anything else.
+
+### Building the decision table from the evidence, not from memory
+
+| CPU | Latency | Most likely |
+|---|---|---|
+| High | High | genuinely CPU-bound work (blocking code, a hot loop, expensive serialization) |
+| Low, flat | High | waiting on a dependency — network call, DB, lock, pool slot |
+| Low, flat | High, with pool/queue metrics pegged | a bounded resource is saturated — this is `pool-exhaustion`'s signature specifically |
+| Normal | Normal, but errors climbing | not a performance problem — a correctness or availability problem downstream |
+| Normal | Normal, RSS climbing | a slow leak, not yet critical — the clock is running though |
+
+## Cost & limits
+
+**None of these signals are free to collect at high resolution.** Sampling
+CPU, memory, and latency once a second across a fleet is cheap; sampling
+every metric at sub-second resolution for every request is not, and most
+production systems settle on 1-10 second aggregation windows as the
+practical floor — fine-grained enough to catch the signatures above, coarse
+enough not to become its own cost centre.
+
+**A dashboard only rules things out if the reader knows what each
+combination means** — the arithmetic above is simple once seen, but a
+dashboard showing "CPU 12%, latency 9s" teaches nothing to someone who
+doesn't already know that combination points away from CPU-bound work. The
+decision table is the artefact worth memorising; the dashboard is just where
+the numbers live.
+
+## When NOT to use it
+
+**Do not conclude "waiting on a dependency" from low CPU alone, without also
+checking that latency actually moved.** Low CPU during a quiet period is
+just... a quiet period. The diagnostic power is in the *combination*, not
+either signal read alone.
+
+**Do not stop at "CPU is high, therefore code is slow" without checking
+whether the CPU work is legitimate.** High CPU during a real traffic spike
+(more requests, proportionally more CPU) is a scaling question; high CPU at
+constant traffic is a code or algorithm question. Same signature, different
+fix, and conflating them sends the investigation toward code changes when
+the real answer is capacity.
+
+## Real-world usage
+
+This is the first thing an experienced on-call engineer checks, before
+opening a single log — because it costs nothing (the numbers are usually
+already on the default dashboard) and it eliminates entire categories of
+hypothesis in seconds. Teams that build effective on-call runbooks encode
+this decision table explicitly, often as the very first triage step, precisely
+because it's cheap, fast, and reliably narrows the search before any deeper
+tool (tracing, profiling, log queries) gets involved.
+
+## Failure modes
+
+**The "let's scale up the pods" fix that didn't help**, because the real
+cause was `slow-dependency` — waiting on an external call — and more
+replicas just meant more processes waiting on the same overloaded
+dependency, at greater cost, with the same latency.
+
+**The retry storm that looked like "the API got slower"**, when the real
+signature — downstream call volume many times upstream volume, mostly
+rejected — was sitting one query away in the metrics the whole time,
+because nobody thought to compare upstream and downstream request counts.
+
+**The memory leak that had no warning until the crash**, because the
+dashboard everyone was watching showed request-serving metrics, and nothing
+on it moves as a leak grows — until the container is killed and the
+symptom is a crash, not a gradual degradation anyone could have caught
+earlier by watching RSS specifically.
+
+## Practice problems
+
+**1. Dashboard shows CPU at 18%, p95 latency at 8.6 seconds, error rate
+normal. What's the first thing this combination rules out, and what would
+you check next?**
+
+It rules out "the process itself is doing expensive work" — CPU this low
+during 8.6s latency means the process is mostly idle, waiting. Next: a
+trace or a dependency-latency breakdown to find *what* it's waiting on —
+database, cache, an external API — rather than anything inside the
+application's own compute path.
+
+**2. Using the captured `pool-exhaustion` fixture above: CPU never exceeds
+1%, but p95 latency grows from about 2 seconds to over 20 seconds across
+the captured window, and `pool_waiting` stays pegged near its ceiling the
+whole time. What's happening, and why does the latency keep growing rather
+than staying flat?**
+
+A bounded resource (a worker/connection pool) is saturated, and each
+additional request queues behind the ones already waiting — latency grows
+because the queue itself grows, not because any individual operation is
+getting slower. The fix is either provisioning more pool capacity (if the
+downstream resource being pooled can actually support more concurrent
+operations) or reducing how long each operation holds a slot.
+
+**3. RSS is climbing steadily on a dashboard nobody normally watches
+closely, while every request-serving metric (latency, error rate, CPU)
+looks completely normal. Is this worth acting on, and why might it be easy
+to miss?**
+
+Yes — it's the exact signature of a slow leak, captured above in the
+`memory-leak` fixture, where every request-facing metric looked unremarkable
+right up until the container was killed. It's easy to miss precisely
+because none of the metrics an on-call engineer checks by habit (which are
+almost always request-serving metrics) move until the crash — which is the
+argument for memory having its own explicit alert threshold, not just a
+glance when something else looks wrong.
+
+<Quiz
+  client:visible
+  id="reading-symptoms-cpu-latency"
+  kind="concept"
+  question="A service shows p95 latency at 8 seconds and CPU at 12%. What does this combination most strongly suggest, measured from the real slow-dependency and cpu-bound fixtures above?"
+  options={[
+    { label: "The application code is doing expensive computation and needs optimising" },
+    { label: "The process is mostly idle, waiting on something external -- a dependency, a lock, or a saturated pool, not computing", correct: true },
+    { label: "The CPU metric is broken and should be ignored" },
+    { label: "More CPU cores need to be added to fix the latency" },
+  ]}
+>
+  <Fragment slot="explanation">
+    <p>Captured directly: the cpu-bound fault pegs CPU near 100% while slow-dependency never exceeds about 1% CPU, and both produce comparably high latency. Low, flat CPU alongside high latency is the signature of waiting, not computing -- adding CPU capacity does nothing for a process that's idle, because there's no CPU work to speed up.</p>
+  </Fragment>
+</Quiz>
+
+## Interview answers
+
+**"CPU is low but latency is high. What does that tell you?"** The process
+is waiting, not working — for a database, a downstream API, a lock, or a
+saturated connection pool, not doing CPU-bound computation. The caveat that
+shows this was actually operated rather than memorised: the fix that helps a
+CPU-bound problem (more compute, faster code) does nothing for a
+waiting-bound one, and applying it anyway is a common, expensive
+misdiagnosis — the two failure modes are opposites, not variations on the
+same theme, and telling them apart from these two signals alone takes seconds.
+
+**"What metrics would you check first when paged for high latency, and in
+what order?"** CPU and latency together, first — that combination alone
+rules out entire categories of cause before opening a single log. Then,
+depending on which quadrant the reading falls in: for high-CPU cases, a
+profiler or recent deploy diff; for low-CPU-high-latency cases, pool/queue
+metrics and a trace to find which dependency is slow. The caveat: checking
+logs first, before this cheap first pass, is a common but slower path — logs
+answer "what happened," but CPU-vs-latency answers "where to even look" in
+seconds, for free, off a dashboard that's usually already open.

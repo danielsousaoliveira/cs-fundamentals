@@ -153,7 +153,7 @@ fulfillment, and billing are each a distinct bounded context with
 through published domain events rather than a shared schema — Amazon's
 and Shopify's service architectures are both organized this way at the
 top level, with each context owned by a separate team and its own
-datastore. In banking, "account" inside the ledger context (a append-only
+datastore. In banking, "account" inside the ledger context (an append-only
 sequence of postings) is a deliberately different model from "account"
 inside the customer-onboarding context (a KYC record with a status), and
 conflating them is a recurring source of production incidents in that

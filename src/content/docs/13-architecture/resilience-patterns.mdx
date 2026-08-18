@@ -16,7 +16,7 @@ languages: [typescript]
 roles: [backend, cloud]
 sources:
   - netflix-hystrix-wiki
-  - aws-builders-library-retries
+  - aws-architecture-blog-exponential-backoff-and-jitter
 ---
 
 ## Intuition
@@ -66,11 +66,14 @@ sequenceDiagram
 **The bound: retry budget + backoff + jitter + circuit breaker.**
 
 - **Exponential backoff with jitter.** Instead of retrying immediately,
-  wait `base * 2^attempt`, capped, with random jitter added so that a
-  thousand clients that all failed at the same instant don't all retry at
-  the same instant again — synchronized retries reproduce the thundering
-  herd even with backoff if every client backs off on the identical
-  schedule.
+  wait a random duration up to `min(cap, base * 2^attempt)` — jitter
+  drawn from inside that capped window, not added on top of it, so the
+  delay itself never exceeds the cap — so that a thousand clients that
+  all failed at the same instant don't all retry at the same instant
+  again. Synchronized retries reproduce the thundering herd even with
+  backoff if every client backs off on the identical schedule; jitter is
+  what breaks the synchronization, the cap is what bounds the worst-case
+  wait.
 - **A retry budget, not a per-request retry count.** Cap total retries as
   a *percentage of total request volume* over a sliding window (a common
   bound is 10%), tracked per client — once the budget is spent, further
@@ -189,11 +192,16 @@ circuit-breaker libraries) popularized exactly this bound — per-dependency
 circuit breakers with configurable failure thresholds and fallback
 methods — specifically because a microservice architecture with dozens of
 internal HTTP calls per request turns "one dependency has a bad
-five-minute stretch" into a total outage without it. AWS's own SDKs ship
-exponential backoff with jitter by default on retryable API calls,
-because early versions without it were a documented contributor to
-regional AWS incidents where a mass of clients backing off in lockstep
-prolonged an outage past the original triggering event.
+five-minute stretch" into a total outage without it. Several AWS SDKs
+now ship exponential backoff with jitter on retryable API calls under
+their newer retry modes — the specific default and how it's enabled
+varies by SDK, version, and configured retry mode, and older SDK
+defaults did not include jitter. AWS's own architecture guidance
+(published as "Exponential Backoff and Jitter") describes why: fixed or
+unjittered exponential backoff still lets a large number of clients that
+failed together retry together, reproducing the synchronized-retry
+problem this page opened with even though each individual client is
+technically backing off.
 
 ## Failure modes
 
@@ -209,11 +217,14 @@ corresponding spike in real user traffic.
 **The circuit breaker that never closes.** A breaker's half-open probe
 keeps failing because the cooldown window is too short relative to the
 dependency's actual recovery time (a database restart, a cold cache
-warming up) — the breaker cycles open → half-open → open indefinitely,
-and the dependency never gets a clean window of reduced traffic long
-enough to actually recover, because every cooldown ends with a probe that
-reopens it. The fix is a longer or exponentially increasing cooldown, not
-a shorter one.
+warming up) — the breaker cycles open → half-open → open indefinitely.
+A single lightweight probe rarely causes the underlying problem itself;
+what a too-short cooldown does is repeatedly test before recovery is
+actually done and reopen on every failed probe, which delays the moment
+the breaker *detects* the dependency is healthy and starts sending real
+traffic again — while the operator, watching the breaker stay open, may
+reasonably read that as the dependency still being down. The fix is a
+longer or exponentially increasing cooldown, not a shorter one.
 
 **Silent budget exhaustion.** A retry budget quietly caps retries at 10%
 of volume, requests start failing fast with no retry, and because "fail
@@ -231,16 +242,21 @@ hasn't reset yet."
    pause. Trace what happens to the request queue over the next 60
    seconds, and identify the point at which adding backoff alone (no
    budget, no breaker) would still fail to prevent an outage.
-2. Given a retry budget of 10% over a 1-minute sliding window and a
-   dependency that's failing 40% of requests, compute the steady-state
-   extra load the client contributes once the budget is exhausted, versus
-   what a naive 3x-per-request retry would have contributed at the same
-   failure rate.
+2. A dependency fails 40% of requests, each retry attempt independently
+   failing with the same 40% probability. Under a naive policy of up to 3
+   retries per original request, compute the *expected* extra calls per
+   original request (0.4 + 0.4² + 0.4³ ≈ 0.624) versus the cap a 10%
+   retry budget — measured as a share of original request volume over a
+   1-minute sliding window — places on that same client. Once the budget
+   is exhausted, what happens to the requests that would otherwise have
+   retried, and is 10% above or below the naive policy's expected extra
+   load at this failure rate?
 3. A circuit breaker's half-open state sends one probe request every 5
    seconds. The dependency takes 90 seconds to fully recover after a
    restart. Sketch the breaker's state transitions over those 90 seconds
-   and explain why a probe interval this short can itself prevent
-   recovery.
+   and explain why a 5-second probe interval delays the breaker
+   *detecting* recovery and closing, even though the probes themselves
+   aren't what's keeping the dependency down.
 
 ## Interview answers
 

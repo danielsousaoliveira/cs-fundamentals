@@ -58,19 +58,50 @@ flowchart LR
 - **Row-level security (RLS).** The same shared table, but the database
   itself enforces the tenant filter as a policy attached to the table,
   evaluated on every query regardless of whether the application code
-  remembered to add a `WHERE tenant_id = ?` clause:
+  remembered to add a `WHERE tenant_id = ?` clause. The guarantee only
+  holds for the trust boundary it's actually installed at — a policy is
+  enforced against the connecting role, and in Postgres a table owner or
+  any role with `BYPASSRLS` skips it entirely, so the application must
+  connect as a plain, non-owner role with no bypass privilege, and the
+  table needs `FORCE ROW LEVEL SECURITY` so even the owner is bound by
+  it when the app does connect as owner for migrations. The tenant
+  context itself should come from the authenticated request and be set
+  per transaction, not left as a session default a later query on a
+  pooled connection could inherit from a different request:
 
   ```sql
-  CREATE POLICY tenant_isolation ON orders
-    USING (tenant_id = current_setting('app.current_tenant')::uuid);
-
   ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE orders FORCE ROW LEVEL SECURITY;
+
+  CREATE POLICY tenant_isolation ON orders
+    USING (
+      tenant_id = nullif(current_setting('app.current_tenant', true), '')::uuid
+    );
   ```
+
+  ```sql
+  -- per transaction, after authenticating the request:
+  SET LOCAL app.current_tenant = '3f2e...';
+  ```
+
+  `current_setting(..., true)` — the `missing_ok` form — returns `NULL`
+  instead of raising when no tenant context has been set, so a code path
+  that forgets to set it fails closed (the policy compares `tenant_id` to
+  `NULL`, which matches nothing) rather than erroring in a way that might
+  get caught and swallowed. `SET LOCAL` scopes the value to the current
+  transaction, which matters on a pooled connection: a `SET` without
+  `LOCAL` persists on the connection and can leak into whatever request
+  reuses it next. Application-level filtering (a `WHERE tenant_id = ?`
+  the app remembers to add) is a weaker fallback for databases without
+  policy enforcement, not a substitute for it — it moves the guarantee
+  from "the database enforces it structurally" back to "every engineer
+  remembered," which is the exact gap RLS closes.
 
   This moves the isolation guarantee from "every engineer remembered" to
   "the database enforces it structurally" — a forgotten `WHERE` clause
   now returns zero rows instead of another tenant's rows, which turns a
-  data breach into a visible bug.
+  data breach into a visible bug, provided the role connecting has no
+  bypass and the table has `FORCE ROW LEVEL SECURITY` set.
 - **Schema-per-tenant.** Each tenant gets its own schema within a shared
   database instance — stronger blast-radius containment (a migration
   gone wrong, or a bug in one schema's data, doesn't touch another
@@ -210,10 +241,12 @@ in a migration tracking table nobody thought to check first.
    available in the next five minutes versus the one that actually fixes
    it long-term.
 3. A product currently runs shared-table-with-RLS for 500 tenants. An
-   enterprise prospect's security review requires "logical isolation
-   demonstrable in an audit." Which isolation tier satisfies that
-   requirement, and what does adopting it cost operationally that RLS
-   didn't?
+   enterprise prospect's security review requires storage and compute
+   dedicated to their data, verifiable without trusting a shared
+   database's policy configuration — RLS's logical, policy-enforced
+   isolation is explicitly not sufficient for their compliance bar. Which
+   isolation tier satisfies that requirement, and what does adopting it
+   cost operationally that RLS didn't?
 
 ## Interview answers
 

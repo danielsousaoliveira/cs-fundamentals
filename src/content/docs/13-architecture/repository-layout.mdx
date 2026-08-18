@@ -13,7 +13,6 @@ languages: [bash]
 roles: [backend, fullstack]
 sources:
   - google-engineering-why-monorepo
-  - uber-airbnb-eng-blogs-repo-layout
 ---
 
 ## Intuition
@@ -100,22 +99,34 @@ a shared component, a polyrepo requires `k` separate release cycles —
 change is live everywhere. A monorepo requires 1 commit and 1 CI run
 regardless of `k`, but that CI run's cost scales with however much of the
 tree it has to rebuild and retest, which without change-aware tooling is
-close to the whole tree, every time. The crossover point — where the
-monorepo's per-commit CI cost exceeds the polyrepo's coordination cost for
-a typical cross-cutting change — depends entirely on `k` (how many
-consumers a shared change typically touches) and how good the change
-detection is; an org with a handful of tightly related services and
-frequent cross-cutting changes has a low `k` and a high coordination cost
-per polyrepo change, which is exactly the profile that favors a monorepo.
+close to the whole tree, every time. These are two different quantities:
+the polyrepo's *per-change* coordination cost is roughly proportional to
+`k` — a change touching two consumers costs less to coordinate than one
+touching twenty — while the *cumulative* cost over time is `k` times how
+often such changes happen. An org with a small, tightly related set of
+services (low `k` per change) but a high rate of cross-cutting changes
+still accumulates a large total coordination cost in a polyrepo, even
+though any single change is cheap to coordinate — and that accumulated
+cost, not the per-change figure, is what favors a monorepo for that
+org's profile.
 
 **Coupling cost, derived.** A monorepo where every service builds against
-the same commit of shared code has, by construction, zero version skew —
-there is no "which version of the auth library is service X on," there is
-only the current commit. That's a correctness win (no split-brain between
-two services running two versions of the same validation logic) purchased
-at the cost of a single bad commit to shared code being able to break
-every consumer simultaneously, and of every team's CI depending on the
-health of code outside their control. A polyrepo bounds that blast radius
+the same commit of shared code has, by construction, zero *source-level*
+version skew — there is no "which version of the auth library is service
+X on," there is only the current commit. That guarantee is about what
+each service is built from, not what's currently running: services that
+deploy independently can still run different commits, image digests, or
+resolved dependency sets at any given moment simply because their deploy
+pipelines finish at different times, so *runtime* version skew during a
+rollout is a separate operational risk the monorepo doesn't eliminate on
+its own — closing that gap needs deployment discipline (a shared release
+train, or checks that reject a deploy running against an incompatible
+sibling version), not just a shared source tree. Source-level consistency
+is still a correctness win (no split-brain between two services built
+from two versions of the same validation logic) purchased at the cost of
+a single bad commit to shared code being able to break every consumer
+simultaneously, and of every team's CI depending on the health of code
+outside their control. A polyrepo bounds that blast radius
 to one repo per bad commit, at the cost of version skew being the default
 state — most polyrepo fleets run several versions of any given shared
 library at any time, and "audit which services are still on the
@@ -159,9 +170,9 @@ independent repos would be its own full-time discipline. Most companies
 land on a middle ground: a monorepo per closely related product area
 (a backend platform's services in one tree, a separate mobile monorepo)
 with polyrepo boundaries between areas that genuinely deploy and evolve
-independently — Uber and Airbnb have both published engineering blog
-posts describing this exact per-domain split after outgrowing an
-all-or-nothing choice in either direction.
+independently — several large engineering orgs have described moving to
+some version of this per-domain split, after outgrowing an all-or-nothing
+choice in either direction, in their public engineering writing.
 
 ## Failure modes
 

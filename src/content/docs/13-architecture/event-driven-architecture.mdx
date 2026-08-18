@@ -77,8 +77,10 @@ and change.
 
 **What the producer used to get for free, and no longer does.** A
 synchronous call chain gives you, without any extra work: a return value,
-a stack trace across service boundaries if you had distributed tracing
-wired up on the call path, and a request ID that ties every downstream
+a set of correlated spans across process boundaries if you had
+distributed tracing wired up on the call path — trace context propagated
+on the call, so every hop's span nests under the same trace and reads as
+one continuous timeline — and a request ID that ties every downstream
 effect back to the request that caused it, visible in one trace. Switch
 `Order Service → Billing Service` from an HTTP call to
 `Order Service` publishing `OrderPlaced` and `Billing Service` consuming
@@ -175,11 +177,13 @@ shows "pending."
 Order-fulfillment pipelines at e-commerce scale are the textbook case:
 `OrderPlaced` fans out to inventory, billing, shipping, and notification
 services that each react independently, and the platform invests in a
-central event log (often the broker's own retained topic) specifically so
-"what happened to this order" is answerable without reconstructing state
-from five databases. Financial ledgers and audit-heavy domains lean on
-event sourcing — the event stream *is* the record of truth, and current
-state is a projection of it — precisely because the traceability that a
+central event log — typically a dedicated store with its own retention
+and durability guarantees, not just whatever window the broker happens
+to retain — specifically so "what happened to this order" is answerable
+without reconstructing state from five databases. Financial ledgers and
+audit-heavy domains lean on event sourcing — the event stream *is* the
+record of truth, held in a purpose-built event store, and current state
+is a projection of it — precisely because the traceability that a
 mutable database's current row doesn't give you (what sequence of changes
 produced this balance) is the entire point of the audit requirement.
 
@@ -232,8 +236,9 @@ readable in one place.
 
 **Two-minute version:** "Switching a call to an event decouples the
 producer from the consumer, but the thing you're actually giving up is
-traceability — a synchronous call's return value and stack trace told you
-what happened for free, and an event fired into a broker doesn't. You get
+traceability — a synchronous call's return value and a correlated trace
+across the call chain told you what happened for free, and an event
+fired into a broker doesn't. You get
 that back deliberately: correlation and causation IDs on every event,
 tracing extended across the broker, an event log as the source of truth,
 and consumers reporting their own outcomes somewhere queryable. None of

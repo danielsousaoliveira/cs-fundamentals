@@ -69,9 +69,14 @@ Two subsets of size > N/2 out of N nodes MUST share at least one node.
 That's the quorum rule — a majority — and it isn't a convention or a
 round-number default, it's the smallest subset size for which two decisions
 can never be made independently without overlapping in a node that would
-have seen both. The overlap node is what prevents the split: it can't
-honestly agree to two different values, so at most one of the two subsets'
-decisions is actually valid.
+have seen both. The overlap alone doesn't produce safety — a protocol still
+has to make the overlapping node *refuse* to endorse a second, conflicting
+value once it has already committed to the first. Raft does this with
+explicit rules: one vote per term, and a log entry only becomes committed
+once it's replicated to a majority *and* matches the leader's log up to that
+point — so the overlap node's own persisted state is what blocks it from
+agreeing to both. Majority overlap is what makes that refusal possible;
+it's the protocol's state and voting rules that make it happen.
 
 The direct consequence: **a cluster of `N` nodes tolerates `⌊(N-1)/2⌋`
 failures** and stays available, because it can still assemble a majority from
@@ -176,7 +181,7 @@ the *protected resource itself* checks and rejects if it's stale.
 
 ```ts
 // The database enforces exclusivity — the lock service only advises it.
-async function writeWithFencingToken(token: number, data: unknown) {
+async function writeWithFencingToken(resourceId: string, token: number, data: unknown) {
   const result = await db.query(
     `UPDATE resource SET data = $1, fence_token = $2
      WHERE id = $3 AND fence_token < $2`,
@@ -242,12 +247,13 @@ etcd (Raft) backs Kubernetes' entire cluster state — every pod, service, and
 config object is a value etcd's consensus layer agrees on, which is why a
 Kubernetes control plane needs an odd-numbered etcd cluster and degrades
 predictably as members are lost. ZooKeeper (using Zab, its own
-atomic-broadcast protocol, not Paxos or Raft) and Consul provide the same
-leader-election and coordination primitives for
-Kafka, HBase, and countless service-discovery setups. These are named here as
-what to reach for, not compared feature-by-feature — the point is knowing
-what a consensus-backed coordination service guarantees that a plain cache
-cannot.
+atomic-broadcast protocol, not Paxos or Raft) still coordinates HBase and
+legacy Kafka deployments; modern Kafka runs its own Raft-based KRaft
+controllers instead and no longer needs ZooKeeper at all. Consul (Raft)
+provides the same leader-election and coordination primitives for
+service-discovery setups. These are named here as what to reach for, not
+compared feature-by-feature — the point is knowing what a consensus-backed
+coordination service guarantees that a plain cache cannot.
 
 ## Failure modes
 
@@ -265,13 +271,16 @@ process did anything wrong from its own point of view — that's what makes it
 dangerous. The fix is a fencing token checked by the protected resource, not
 a longer TTL, which only shrinks the window rather than closing it.
 
-**Symptom: a consensus cluster stopped accepting writes after losing two
+**Symptom: a consensus cluster stopped accepting writes after losing three
 nodes out of five.** This is the majority rule working as designed, not a
-bug — two failures out of five leaves three survivors, and if a third is
-partitioned away rather than crashed, the survivors correctly refuse to
-proceed without a majority they can actually reach. The failure mode is
-mistaking this for an outage to page on immediately, rather than recognizing
-it as the fault-tolerance boundary the cluster size was chosen for.
+bug — three failures out of five leaves only two survivors, short of the
+three needed for a majority, so the survivors correctly refuse to proceed
+rather than risk a split decision. (Losing two out of five, by contrast,
+still leaves three survivors — a majority — and the cluster keeps accepting
+writes; it's only a *third* member going down, or being partitioned away on
+top of the first two, that crosses the line.) The failure mode is mistaking
+this for an outage to page on immediately, rather than recognizing it as the
+fault-tolerance boundary the cluster size was chosen for.
 
 **Symptom: leader elections happen constantly, and throughput craters even
 though no node has actually crashed.** Network flakiness or an

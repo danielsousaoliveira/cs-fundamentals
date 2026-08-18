@@ -89,8 +89,9 @@ flowchart LR
   Client --> LB[Load balancer]
   LB --> App[App servers]
   App --> Cache[(Cache — hot links)]
-  App --> DB[(Primary DB — writes + cold reads)]
-  DB --> Replica[(Read replica)]
+  App -->|writes + primary fallback| DB[(Primary DB)]
+  App -->|cache-miss reads| Replica[(Read replica)]
+  DB --> Replica
 ```
 
 The cache exists because 3,900 reads/sec against a normal access pattern is
@@ -119,6 +120,16 @@ is a common tell of an unfinished design.
 This is [Databases](/cs-fundamentals/5-systems/databases/)'s CAP discussion
 applied rather than re-derived — the redirect path chooses availability, the
 write path chooses consistency, and both are true of the same system at once.
+
+Choosing "cache-first" for the redirect still leaves one question
+unanswered: what does a brand-new link do on its very first read, before
+replication has caught up? Two honest answers — write-through the cache (and
+the replica) synchronously on create so the first read never misses, or fall
+back to the primary on a cache miss for a short window after creation and
+accept the extra primary load that implies. Leaving this unstated is how "the
+redirect is eventually consistent" quietly becomes "new links 404 for a few
+seconds," which is a bug, not a design choice, unless someone explicitly
+signed off on it.
 
 ### Step 4 — say what breaks
 
@@ -198,14 +209,24 @@ limiting each API key to 100 requests/minute.**
 <summary>Solution sketch</summary>
 
 Estimate first: 50,000 req/sec across an unknown number of keys — ask, or
-assume ~10,000 active keys, so ~5 req/sec/key on average, well under the
-100/minute cap for most, meaning the limiter must handle bursts, not steady
-state.
+assume ~10,000 active keys. That's ~5 req/sec/key on average, which is
+~300 requests/minute — already *above* the 100/minute cap on average, not
+comfortably under it. Either the traffic is far less evenly spread than a
+flat average suggests (a smaller set of heavy keys, most others near-idle),
+or the assumed key count is too low — worth stating explicitly rather than
+letting the arithmetic quietly not add up. Either way the limiter has to
+correctly reject sustained over-limit traffic, not just smooth out bursts.
 
-Shape: a sliding-window counter per key in Redis (`INCR` + `EXPIRE`,
-[Caching](/cs-fundamentals/5-systems/caching/)'s pattern), checked before the
-request reaches the backend. At 50,000 req/sec, Redis's single-threaded
-command execution handles this comfortably — each `INCR` is O(1) and
+Shape: a fixed-window counter per key in Redis, incremented and given a TTL
+atomically in one round trip (`redis.eval` running `INCR` then `EXPIRE` only
+on the first increment, or Redis's own `SET ... EX ... NX` combined with
+`INCR`) so a crash between two separate commands can never leave a counter
+with no expiry. A true sliding window (timestamped entries in a sorted set,
+trimmed on each check) removes the fixed-window's edge-of-window burst
+allowance at the cost of more memory per key — worth it if the 100/minute
+cap has to be exact, not just approximately enforced. At 50,000 req/sec,
+Redis's single-threaded command execution handles either comfortably — each
+check is O(1) (fixed window) or O(log n) (sorted-set window) and
 sub-millisecond.
 
 Consistency trade: the counter can be slightly wrong under a network blip

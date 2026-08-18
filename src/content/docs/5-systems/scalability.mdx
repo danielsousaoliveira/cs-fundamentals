@@ -191,7 +191,7 @@ splitting that one hot key across multiple logical shards.
 
 **Symptom: a report that used to take 200ms now takes 8 seconds after
 sharding shipped.** A query that used to be a single-table scan is now a
-scatter-gather across every shard, with the applicaton doing the merge. This
+scatter-gather across every shard, with the application doing the merge. This
 is the direct cost named in Complexity above — it should have been priced in
 before sharding, not discovered after.
 

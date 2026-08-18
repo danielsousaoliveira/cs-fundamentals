@@ -113,23 +113,30 @@ async function bookAndPay(orderId: string) {
 
     await payment.charge(orderId);
     steps.push(() => payment.refund(orderId));
-
-    await notification.sendConfirmation(orderId);
-    // no compensating action registered — see below
   } catch (err) {
     for (const compensate of steps.reverse()) {
       await compensate(); // must be idempotent — see Failure modes
     }
     throw err;
   }
+
+  // Booking and payment are durable at this point, so nothing past
+  // this line is allowed to trigger their compensation. The one
+  // irreversible step goes through a separate, idempotent, retried
+  // path instead of the saga's own try/catch — see below.
+  await outbox.enqueue('sendConfirmation', { orderId });
 }
 ```
 
 ### The action you cannot compensate
 
-`inventory.release` and `payment.refund` are honest compensations — they
-return the system to a state indistinguishable from the step never having
-happened. `notification.sendConfirmation` is not, and this is the case the
+`inventory.release` undoes a reservation cleanly. `payment.refund` is weaker
+than that — it's a *business* compensation, not a true inverse: it restores
+the required invariant (the customer isn't out the money) but it doesn't
+erase the fact that a charge and a refund both happened, it's itself an
+external effect that can complete asynchronously or fail, and it leaves a
+visible financial trail the original charge never had. `notification.sendConfirmation`
+is weaker still — it has no compensation at all, and that's the case the
 saga pattern's popular explanations tend to skip.
 
 **An email that has been sent cannot be unsent.** There is no compensating
@@ -143,10 +150,12 @@ you control and can still mutate.
 
 What to do instead, in order of preference:
 
-1. **Order the saga so irreversible steps happen last**, after every step
-   that *can* fail has already succeeded. `bookAndPay` above does this
-   correctly — the email goes out only once the booking and charge are both
-   durable, so there's nothing left to fail that would require unsending it.
+1. **Order the saga so irreversible steps happen last, and take them out of
+   the saga's own compensation path.** `bookAndPay` above does this — the
+   confirmation is enqueued only once the booking and charge are durable, and
+   it's delivered by a separate idempotent worker, not the saga's try/catch,
+   so a delivery failure or an ambiguous timeout on the send retries the send
+   instead of compensating a booking and payment that already succeeded.
 2. **If an irreversible step must happen before something that can still
    fail, accept the inconsistency explicitly and handle it operationally** —
    a follow-up "sorry, that didn't work" message is a real, shippable answer
@@ -172,10 +181,13 @@ failure**, since both "work" under the happy path:
   a single, tightly-controlled cluster (some databases use it internally
   for distributed writes across their own nodes, where they control
   coordinator recovery tightly).
-- **A saga's cost is an inconsistency window, bounded by how long the saga
-  takes to either complete or fully compensate** — typically milliseconds to
-  seconds, not indefinite. That's the trade: bounded, visible inconsistency
-  instead of unbounded, invisible blocking.
+- **A saga's cost is an inconsistency window with no inherent upper bound** —
+  only an operational target you set and enforce (a completion SLO of, say,
+  a few seconds), not a guarantee the pattern gives you for free. Meeting
+  that target requires durable saga state, retries with backoff, and a
+  reconciliation path for a saga that's still incomplete once the target is
+  blown. That's the trade against 2PC: visible, recoverable inconsistency
+  you have to engineer for, instead of invisible, unbounded blocking.
 - **Saga steps must be idempotent, and that's not free** — each step needs
   either a natural idempotency check (an id-based upsert) or an explicit
   idempotency key (see [Distributed

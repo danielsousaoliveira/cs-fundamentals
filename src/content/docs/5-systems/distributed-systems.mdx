@@ -82,8 +82,9 @@ makes this a per-operation decision, not a system-wide label.
 Given that a response can be lost, every remote call has to pick a delivery
 guarantee, and the honest options are two, not three:
 
-- **At-most-once** — send once, don't retry. Simple, but a lost response
-  means the effect never happens and nobody knows.
+- **At-most-once** — send once, don't retry. Simple, but a lost *request*
+  means the effect never happens; a lost *response* means the effect
+  happened but the caller has no way to know it did.
 - **At-least-once** — retry until acknowledged. Simple, but a lost
   *response* (not the request) causes the same effect to run twice.
 - **"Exactly-once"** — marketed by some messaging systems, achieved in
@@ -120,7 +121,11 @@ Two things make this safe where the naive read-then-write version isn't.
 First, the row is reserved with a database-enforced unique constraint before
 any external call happens, so two concurrent retries can't both pass a
 check and both charge the card — one wins the insert, the other reads its
-result. Second, the gateway call itself carries the idempotency key, so if
+result, which is only complete once the winner finishes; a caller that reads
+back a `pending` row needs to poll or wait rather than treat it as done, and
+a winner that crashes before finishing leaves a `pending` row that needs its
+own timeout-and-recovery sweep, not an indefinite wait. Second, the gateway
+call itself carries the idempotency key, so if
 the process crashes *after* the gateway charges the card but *before* the
 local row is marked done, a subsequent retry still hits the gateway's own
 idempotency guarantee instead of creating a second charge — the local record
@@ -150,9 +155,15 @@ need to know "did A happen before B," you can't trust timestamps across
 machines — you need a **logical clock**. A Lamport clock is the minimal
 version: each node keeps a counter, increments it on every event, and
 attaches it to every message; the receiver sets its own counter to
-`max(local, received) + 1`. It gives a total order that respects causality
-(if A caused B, A's clock value is smaller) without needing synchronized
-wall-clock time anywhere.
+`max(local, received) + 1`. It gives a **partial order that respects
+causality** — if A caused B, A's clock value is smaller than B's — without
+needing synchronized wall-clock time anywhere. It does not, on its own, give
+a total order: two genuinely concurrent events (neither caused the other)
+can end up with the same or an arbitrarily-ordered clock value. Getting a
+total order out of it requires an explicit, deterministic tie-breaker on top
+— commonly the node ID appended to the counter — which is what turns "smaller
+clock value" into a total order without claiming a causal relationship that
+isn't actually there.
 
 ## Complexity
 
@@ -170,9 +181,12 @@ and can't guarantee, not a Big-O bound:
   one.
 - A system with M services, each with 99.9% availability, calling each other
   serially has combined availability of `0.999^M` — five sequential calls at
-  99.9% each is 99.5% overall, an order of magnitude worse than any single
-  hop. This is the arithmetic that justifies caching and async processing
-  over long synchronous call chains, and it only gets worse as M grows.
+  99.9% each is 99.5% overall. The unavailability, which is what an SLA
+  actually budgets, goes from 0.1% for one hop to about 0.5% for five — roughly
+  5x worse, not 10x, but still enough to blow a tight availability target
+  with a chain most people wouldn't think twice about. This is the
+  arithmetic that justifies caching and async processing over long
+  synchronous call chains, and it only gets worse as M grows.
 
 ## When NOT to use it
 

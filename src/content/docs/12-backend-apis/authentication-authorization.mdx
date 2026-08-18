@@ -1,0 +1,254 @@
+---
+title: Authentication & Authorization
+description: >-
+  Two different questions bolted together in most codebases — who you are and
+  what you can do — and what revoking access actually costs under a session,
+  a JWT, and OAuth.
+sidebar:
+  order: 8
+difficulty: core
+status: complete
+prereqs: ['12-backend-apis/rest-apis']
+tags: [auth, jwt, oauth, sessions, rbac, abac]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+Two questions get asked in one breath — "is this request from who it claims
+to be, and is that person allowed to do this" — but they are answered by
+different systems, fail differently, and get confused constantly because the
+same HTTP header carries the evidence for both.
+
+**Authentication** proves identity: this request came from user `4821`.
+**Authorization** decides what user `4821` is allowed to do once identity is
+established: can they delete this invoice. A system can have airtight
+authentication and still leak data, if every authenticated user can read
+every other user's records — that is an authorization bug, and no amount of
+stronger login flow fixes it.
+
+The idea that survives contact with a real system: **a credential is a claim
+about identity, made once, at login. A session is that claim, cached
+somewhere, checked on every request after.** Where it's cached — a database
+row, a signed cookie, a bearer token — decides how fast you can take it back.
+That is the entire authentication design space: not "which technology," but
+"where does the claim live, and what does un-caching it cost."
+
+## Mechanics
+
+**Session-based auth.** Login creates a row in a `sessions` table keyed by a
+random opaque ID; that ID goes to the browser as an `HttpOnly`, `Secure`,
+`SameSite=Lax` cookie. Every request, the server looks the ID up.
+
+```typescript
+// login
+const sessionId = crypto.randomBytes(32).toString('hex');
+await db.sessions.insert({ id: sessionId, userId: user.id, expiresAt: addDays(now, 30) });
+res.cookie('sid', sessionId, { httpOnly: true, secure: true, sameSite: 'lax' });
+
+// every subsequent request
+const session = await db.sessions.findOne({ id: req.cookies.sid });
+if (!session || session.expiresAt < now) return res.sendStatus(401);
+req.user = await db.users.findOne({ id: session.userId });
+```
+
+The cookie carries no claims itself — it's a lookup key. The server is the
+source of truth, on every request.
+
+**Token-based auth (JWT).** Login issues a signed, self-describing token
+instead of a lookup key: `header.payload.signature`, base64url-encoded, the
+payload holding claims (`sub`, `exp`, `roles`) the server can trust *because
+of the signature*, not because it looked anything up.
+
+```typescript
+const token = jwt.sign(
+  { sub: user.id, roles: user.roles },
+  process.env.JWT_SECRET,
+  { expiresIn: '15m' },
+);
+// every subsequent request: verify signature + exp, no database round trip
+const claims = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET);
+```
+
+**Access token + refresh token.** The access token above is short-lived (15
+minutes) precisely because it can't be revoked mid-life. A separate,
+long-lived refresh token — opaque, stored server-side like a session — is
+exchanged for a new access token periodically. Revoking the refresh token
+stops new access tokens from being minted; it does not touch access tokens
+already issued.
+
+**OAuth 2.0 / OIDC** is the same access-token idea generalized to a third
+party: the app never sees the user's password, only a token an identity
+provider issued after the user authenticated with *it*. Authorization Code
+with PKCE is the flow to reach for in a browser or mobile app — PKCE
+(a per-attempt secret verified at token exchange) closes the hole where an
+intercepted redirect could be replayed by an attacker who never had the
+client secret. OIDC layers a signed `id_token` (JWT) on top of OAuth's
+access token to answer "who is this," which OAuth alone was never designed
+to answer — OAuth is a delegation protocol, not an identity protocol, and
+treating an OAuth access token as proof of identity is a recurring mistake.
+
+**Authorization, once identity is settled.** Two shapes cover most systems:
+
+- **RBAC** — a user has roles, a role has permissions, checked as
+  `hasPermission(user.roles, 'invoice:delete')`. Cheap to reason about,
+  cheap to audit, coarse: it can't express "your own invoices only."
+- **ABAC** — the check is a function of attributes: `user.department ===
+  resource.department && user.role === 'manager'`. Expresses row-level and
+  relationship-based rules RBAC can't, at the cost of a policy that's harder
+  to audit by reading a table.
+
+```typescript
+function canDeleteInvoice(user: User, invoice: Invoice): boolean {
+  return user.roles.includes('admin') || invoice.ownerId === user.id;
+}
+```
+
+The check belongs at the point of the mutation, not the route. A route-level
+`requireRole('admin')` catches "wrong role"; it does not catch "right role,
+wrong tenant" — the multi-tenant data leak where an admin of tenant A reads
+tenant B's row because the query never filtered on tenant ID at all.
+
+## Cost & limits
+
+**What revocation costs, per strategy — this is the number that decides
+which one you pick.**
+
+- **Session (DB-backed):** revocation is `DELETE FROM sessions WHERE id =
+  ?`. Cost: one write, effective on the *next* request. Immediate, exact,
+  cheap. The tradeoff was paid earlier — every request costs a database
+  round trip (or a cache lookup, typically ~1ms against Redis) that a
+  stateless token doesn't.
+- **Stateless JWT, no revocation list:** revocation is impossible before
+  `exp`. A stolen token with a 15-minute expiry is live for up to 15
+  minutes no matter what the server does after discovering the theft. This
+  is the central tradeoff of the design: the server pays nothing to verify
+  a token (no round trip, just a signature check, sub-millisecond) and pays
+  for that by losing the ability to say "no" to a specific token once
+  issued.
+- **JWT + deny-list:** revocation means writing the token's `jti` to a
+  fast-lookup store (Redis) with a TTL equal to the token's remaining
+  lifetime, and checking that store on every verify. This reintroduces the
+  round trip the stateless design was chosen to avoid — at that point the
+  honest comparison is against a session store directly, not against a
+  worse version of one.
+- **Refresh-token revocation:** deleting the refresh token row stops new
+  access tokens immediately, but every access token already handed out
+  keeps working until it expires on its own. A leaked access token with 15
+  minutes left is live for up to 15 minutes regardless of what happens to
+  the refresh token — this is the number to shrink (5–15 min is the common
+  range) if "how long can a stolen token be used" is a question your threat
+  model has to answer precisely.
+
+**Verification cost at scale.** A DB-backed session check at 5,000 req/s
+against a well-indexed `sessions` table on primary-key lookup is
+sub-millisecond and bounded by connection pool size, not row count — the
+limit shows up as connection exhaustion under load, not query latency. A
+JWT signature check (HMAC-SHA256) is roughly 5–20μs of CPU per request with
+no I/O; at the same 5,000 req/s that's under 100ms of aggregate CPU a
+second, which is why stateless auth is the default choice for services that
+fan a request out to many downstream calls, each needing its own identity
+check.
+
+## When NOT to use it
+
+- **Don't reach for JWTs to avoid running a session store you'll need
+  anyway.** If refresh-token revocation, a deny-list, or per-user "log out
+  everywhere" are requirements, you're building a session store with extra
+  steps — a JWT plus a deny-list has all of a session's operational cost
+  and none of a session's precision, since the deny-list only prevents
+  reuse of the specific token that was flagged, not every credential the
+  user holds.
+- **Don't build ABAC as the default.** A five-role internal admin tool gets
+  nothing from attribute policies it can't get from `if (user.role ===
+  'admin')`, and pays for it in a policy layer nobody can read without
+  running it. Reach for ABAC when the actual rule is relational — "editors
+  can edit posts in their own workspace" — not before.
+- **Don't hand-roll OAuth as an identity provider.** Storing passwords,
+  hashing them correctly, handling account recovery, and staying current on
+  credential-stuffing defenses is a full-time job that an established IdP
+  (Auth0, Okta, Cognito, or a self-hosted Keycloak) already does; this page
+  covers the protocol shape you're integrating against, not a
+  recommendation between vendors.
+- **Don't skip authentication to ship faster on an internal tool.** "It's
+  behind the VPN" is a network-perimeter argument, and it fails the moment
+  someone's laptop is compromised or the VPN scope is wider than the tool's
+  intended audience — which it usually is by the time anyone checks.
+
+## Real-world usage
+
+GitHub's OAuth apps use the Authorization Code flow with a short-lived
+access token exchanged via a server-side client secret; GitHub's own web
+sessions are cookie-based, not token-based, because a first-party session
+that must survive a password change and support "sign out everywhere" needs
+the exact revocation precision a database row provides. Google's OIDC
+`id_token` is the reference implementation of "OAuth for delegation, OIDC
+for identity" — Sign in with Google issues an `id_token` your backend
+verifies against Google's public keys, separate from any access token used
+to call a Google API on the user's behalf.
+
+## Failure modes
+
+**Symptom: a user reports they're still logged in on a device 20 minutes
+after clicking "log out everywhere."** Cause: the system revoked the
+refresh token but the access token issued 10 minutes before logout still has
+5 minutes left on its own clock, and nothing checks a deny-list for access
+tokens. Fix: this is expected behavior for stateless access tokens and the
+right response is to shrink the access-token lifetime, not to add
+deny-list infrastructure for a rare case — unless the threat model (a
+lost corporate device, say) makes that window unacceptable, in which case
+the deny-list is the correct tradeoff to make explicitly.
+
+**Symptom: a support ticket shows user A editing user B's data through a
+route that clearly checked `requireAuth`.** Cause: the route checked that
+*someone* was logged in, and stopped — the query underneath had no `WHERE
+owner_id = ?` clause, so authentication was mistaken for authorization.
+Fix: audit every mutation for an explicit ownership or tenant check at the
+data-access layer, not just the route layer; add a test per mutation that
+asserts user A cannot touch user B's row. Detect it earlier with a
+lint rule or code-review checklist item requiring an authorization check
+adjacent to every `UPDATE`/`DELETE`.
+
+**Symptom: a JWT signed with `alg: none` or `HS256` gets accepted when the
+service expects `RS256`.** Cause: the verify call trusted the `alg` field
+inside the untrusted token instead of pinning the expected algorithm
+server-side — the classic JWT library footgun. Fix: pass the expected
+algorithm explicitly to `jwt.verify(token, key, { algorithms: ['RS256'] })`
+and reject anything else; never derive the verification algorithm from the
+token itself. Detect it earlier with a test that constructs a forged
+`alg: none` token and asserts it's rejected.
+
+## Practice problems
+
+**1. A product wants "log out everywhere" to take effect within one
+second, but is currently on stateless JWTs with a 24-hour expiry.** What's
+the minimal change? — Add a `tokenVersion` column on the user row,
+included as a claim in every issued JWT; verification checks the claim
+against the current DB value (one indexed lookup, not a deny-list scan).
+"Log out everywhere" increments `tokenVersion`, invalidating every
+previously issued token in one write. This is a session check wearing a
+JWT's clothes — worth naming honestly rather than pretending it's still
+purely stateless.
+
+**2. An endpoint returns `200` for `GET /invoices/482` regardless of which
+authenticated user requests it.** Diagnose and fix. — The handler checks
+`req.user` exists (authentication) but never compares `invoice.ownerId` to
+`req.user.id` (authorization) before returning the row. Fix: add the
+ownership check before the response is built, and add a test asserting a
+403 or 404 for a mismatched owner — 404 if you don't want to reveal the
+resource exists at all to someone who can't see it.
+
+## Interview answers
+
+**"Sessions or JWTs?"** The question that actually decides it is "what does
+revocation need to cost." If instant, precise revocation is a requirement —
+most consumer apps with a "log out everywhere" button, most systems that
+need to kill a compromised account fast — a server-side session (or a
+JWT with a version claim, which is a session in disguise) is the honest
+answer. If verification needs to happen without a round trip, across many
+services, and a several-minute revocation delay is acceptable, a
+short-lived stateless JWT is the right tradeoff. The caveat that signals
+real production use: knowing that "JWT vs. session" is really "how much is
+precise revocation worth to you," not a technology preference.

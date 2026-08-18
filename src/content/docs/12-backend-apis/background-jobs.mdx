@@ -1,0 +1,242 @@
+---
+title: Background Jobs
+description: >-
+  What moves work out of the request path — scheduling, idempotent execution,
+  and catching the job that fails silently instead of loudly.
+sidebar:
+  order: 10
+difficulty: core
+status: complete
+prereqs: ['5-systems/message-brokers']
+tags: [background-jobs, cron, idempotency, scheduling, observability]
+languages: [typescript]
+roles: [backend, fullstack]
+sources: []
+---
+
+## Intuition
+
+A request handler has a budget — a few hundred milliseconds before a client
+gives up, a few seconds before a load balancer's timeout fires. Sending a
+password-reset email, resizing an uploaded image, or reconciling a day's
+transactions against a payment processor doesn't fit that budget and
+shouldn't try to: the client doesn't need to wait for the email to actually
+send, only for the request that *triggers* sending it to succeed.
+
+[Message brokers](/cs-fundamentals/5-systems/message-brokers/) already cover
+the plumbing this depends on — queues, at-least-once delivery, retries,
+dead-letter handling, poison messages. This page assumes that machinery
+exists and is about the layer on top of it: **what does a background job
+system need beyond "a queue with workers," and how do you find out a job is
+broken when nothing about it looks broken from the outside** — no error, no
+alert, just work quietly not happening.
+
+The idea that survives contact with production: **a job that runs twice
+because of a retry is not a bug, it's the default behavior of every queue
+you'll use — so a job that isn't idempotent is a bug waiting for its first
+retry, not an edge case.**
+
+## Mechanics
+
+**Scheduling.** Two shapes cover almost everything: cron-style — "run this
+at 2am daily" — and delayed/scheduled jobs — "run this specific job 24
+hours from now," enqueued dynamically at runtime rather than declared
+ahead of time.
+
+```typescript
+// cron-style: declared once, fires on a schedule
+cron.schedule('0 2 * * *', () => enqueue('reconcile-daily-transactions'));
+
+// delayed job: enqueued dynamically, fires once
+await queue.add('send-trial-ending-email', { userId }, { delay: ms('24h') });
+```
+
+Cron jobs need a **leader-election or lock** in any multi-instance
+deployment — without one, every instance's cron fires at 2am and the job
+runs N times, once per instance. A distributed lock (`SELECT ... FOR UPDATE
+SKIP LOCKED` on a `cron_locks` row, or a Redis `SET key value NX EX 60`)
+held for the job's duration is the standard fix; a job that starts without
+acquiring the lock exits immediately instead of running.
+
+**Idempotent execution.** The retry guarantee a queue gives you is
+at-least-once, not exactly-once — a worker can crash after doing the work
+but before acknowledging the message, and the message gets redelivered.
+The job has to tolerate running twice with the same input and producing the
+same end state, not double the effect.
+
+```typescript
+// not idempotent — a retry double-charges
+async function chargeCard(orderId: string) {
+  await stripe.charges.create({ amount: order.total, customer: order.customerId });
+}
+
+// idempotent — a retry is a no-op against the already-applied charge
+async function chargeCard(orderId: string) {
+  await stripe.charges.create(
+    { amount: order.total, customer: order.customerId },
+    { idempotencyKey: `charge-${orderId}` }, // Stripe dedupes on this key
+  );
+}
+```
+
+Where the provider doesn't offer a built-in idempotency key, the same
+pattern is rolled by hand: a `processed_jobs` table keyed on a
+deterministic job ID, checked before the side effect and written inside the
+same transaction as the effect (or right after, with the effect itself
+designed to be safely re-appliable — an `UPSERT` instead of an `INSERT`,
+a `SET status = 'sent'` instead of `INSERT INTO sent_emails`).
+
+**Observing silent failure.** A job that throws is easy — the queue's
+retry and dead-letter path (covered on the message-brokers page) catches
+it. The harder failure is a job that *succeeds* by every metric the queue
+tracks — it ran, it didn't throw, it acknowledged — while doing the wrong
+thing, or a job that stops being scheduled at all with nothing to notice.
+
+```typescript
+// a heartbeat: absence of this signal is the alert, not presence of an error
+async function runDailyReconciliation() {
+  const result = await reconcile();
+  await metrics.gauge('reconciliation.last_success_ts', Date.now());
+  await metrics.gauge('reconciliation.rows_processed', result.count);
+}
+```
+
+`last_success_ts` not advancing for 25 hours is the alert — "the job that
+should run daily hasn't reported success in over a day" — and it catches
+failures a try/catch never sees: a cron entry silently removed in a
+deploy, a lock never released so the job perpetually loses the race, a
+job that runs and returns 0 rows processed because an upstream query
+regressed. `rows_processed` dropping to zero without an exception is the
+signature of a job that's technically fine and functionally dead.
+
+## Cost & limits
+
+**Scheduling granularity and drift.** Cron's finest practical grain is a
+minute; sub-minute scheduling needs a different mechanism (a delayed queue
+with second-level delay, or a long-running scheduler loop) because cron
+itself was never built for it. Clock drift between instances matters for
+lock-based leader election specifically at the boundary — two instances a
+few hundred milliseconds apart in clock time can both believe they've
+acquired a lock that expires in that window; a lock TTL needs enough
+margin over the job's expected runtime (2–3x, as a starting point) that
+drift and a slow run don't both land inside it.
+
+**Idempotency-key storage.** A `processed_jobs` table or Redis key-set
+keyed on job ID needs a retention window matched to how long redelivery can
+plausibly happen after — for most queues, minutes to low hours, not
+indefinitely; a key that never expires is an unbounded table, one row per
+job ever processed. At 100,000 jobs/day with a 7-day retention window,
+that's roughly 700,000 rows — trivial for a database, but "never expire
+the key" turns it into tens of millions of rows within a year, imposing a
+real index-maintenance cost for a guarantee that stopped being needed
+after the redelivery window closed.
+
+**Worker throughput vs. job cost.** A worker pool's real capacity is jobs
+processed per second, which is worker count divided by average job
+duration — 10 workers averaging 2 seconds per job is 5 jobs/sec, not 10.
+A queue backing up isn't a signal to add retries or shrink timeouts, it's
+arithmetic: either the enqueue rate exceeds `workers / avg_duration`, in
+which case add workers or speed up the job, or a subset of jobs are
+pathologically slow and dragging the average, in which case find and fix
+those specifically rather than scaling blindly.
+
+## When NOT to use it
+
+- **Don't move work to the background because the request handler feels
+  slow.** A slow database query inside a request should get an index or a
+  cache, not get wrapped in a job — a job trades synchronous latency for
+  asynchronous complexity (idempotency, observability, eventual
+  consistency the client has to be told about), and that trade is only
+  worth making when the work genuinely doesn't need to complete before the
+  response does.
+- **Don't background work the caller needs the result of immediately.** A
+  payment authorization the checkout page needs to show success or failure
+  for isn't a background job candidate — the client can't proceed without
+  the answer, so making it async just adds a poll loop that re-implements
+  synchronous waiting badly.
+- **Don't build a custom scheduler when cron plus a lock covers the case.**
+  A dedicated workflow-orchestration system (Temporal, Airflow) earns its
+  operational cost when jobs have multi-step dependencies, need
+  human-in-the-loop steps, or require replay/versioning of long-running
+  business processes — a nightly report or a reminder email doesn't need
+  that machinery and pays its complexity for nothing.
+
+## Real-world usage
+
+Stripe's idempotency-key API is the reference implementation of the pattern
+above — every mutating endpoint accepts an `Idempotency-Key` header, and a
+retried request with the same key returns the original response rather
+than re-executing the side effect, specifically because Stripe's clients
+are calling it from environments (a checkout flow on flaky mobile networks)
+where retries are a certainty, not an edge case. GitHub Actions' scheduled
+workflows document explicitly that cron schedules run "on a best-effort
+basis" and can be delayed or skipped during periods of high load on
+GitHub's infrastructure — a public acknowledgment that "the job runs on
+schedule" is a probabilistic guarantee, not a hard one, which is exactly
+why the heartbeat pattern above checks for absence of success rather than
+trusting the scheduler's promise.
+
+## Failure modes
+
+**Symptom: a customer is charged twice for the same order.** Cause: a
+worker processed the charge, crashed before acknowledging the queue
+message, and the redelivered message ran `chargeCard` again with no
+idempotency key to dedupe against. Fix: add an idempotency key to the
+payment-provider call, or a `processed_jobs` check inside the same
+transaction as the charge if the provider doesn't support one natively.
+Detect it earlier with a test that runs the job handler twice with the
+same input and asserts the side effect (a charge, a row) happened once.
+
+**Symptom: a daily reconciliation job hasn't actually run correctly in
+three weeks, discovered only when finance flags a mismatch.** Cause: the
+job's cron entry was silently dropped in a deployment config change, or a
+distributed lock was left held by a crashed instance and every subsequent
+run lost the race and exited immediately — either way, no exception was
+ever thrown, so nothing alerted. Fix: restore the schedule or clear the
+stuck lock (with a TTL on the lock going forward so this can't recur), and
+backfill the missed reconciliations. Detect it earlier with the
+`last_success_ts` heartbeat pattern above, alerting when it hasn't
+advanced within the job's expected interval plus margin.
+
+**Symptom: the job queue's depth climbs steadily through the day and
+never drains.** Cause: enqueue rate exceeds `workers / avg_job_duration` —
+either traffic grew past the worker pool's provisioned capacity, or a
+recent change made the average job slower (an N+1 query added to the job
+body, a downstream API that started rate-limiting). Fix: scale worker
+count if the enqueue rate is the real driver, or profile and fix the job
+itself if duration regressed. Detect it earlier by alerting on queue depth
+trend, not just absolute depth — a queue that's always around 500 is fine;
+one climbing 500 an hour with no plateau is heading somewhere bad.
+
+## Practice problems
+
+**1. A job sends a welcome email and is retried after a timeout, even
+though the first attempt actually succeeded and the email went out.** Design
+the fix. — Generate a deterministic job ID (e.g. `welcome-email-${userId}`)
+and check a `sent_emails` table for that ID before sending; write the row
+inside the same operation as the send, or immediately after with the send
+itself as the only side effect that matters. A retry then finds the row
+already present and exits without resending.
+
+**2. A nightly job that should process ~50,000 rows silently processes 0
+rows for two nights before anyone notices, with no error logged either
+night.** What monitoring would have caught this on night one, and why
+didn't a try/catch? — A try/catch only catches thrown errors; a query that
+runs successfully but matches zero rows (because an upstream schema or
+timezone change shifted which rows fall in "yesterday's window") throws
+nothing. A `rows_processed` gauge, alerted on when it drops near zero
+against a normal baseline of ~50,000, catches exactly this — the job
+"succeeding" at doing nothing.
+
+## Interview answers
+
+**"How would you make sure a background job that charges a credit card
+never double-charges?"** Attach an idempotency key derived deterministically
+from the business operation — the order ID, not a random UUID generated
+per attempt — and either rely on the payment provider's native
+idempotency-key support or check a `processed_jobs` table before the
+charge, inside the same transaction. The caveat that signals production
+use: idempotency has to be designed around the specific operation, not
+bolted on generically — an idempotency key on a job that sends an email
+and also updates a counter needs both effects to be safe under a repeat,
+not just the one you were thinking about when you added the key.

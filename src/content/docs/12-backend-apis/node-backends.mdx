@@ -139,10 +139,11 @@ the same shape as an unoptimized regex, a synchronous `crypto` call, or
 `JSON.parse` on a large body.
 
 **Captured on this machine, Node v24.12.0, Express 5.1.0, 2026-08-18.** Load
-generator: a small Node script firing `concurrency` workers that each loop
-`fetch` → `await res.json()`, timing wall-clock per request (source in the
-PR — not part of the published page, but reproducible with any HTTP load
-tool). Concurrency 50 throughout.
+generator: `scripts/bench/load.mjs` in this repository, which fires
+`concurrency` workers that each loop `fetch` → `await res.json()`, timing
+wall-clock per request against the server fixtures in
+`scripts/bench/node-backends/` — see `scripts/bench/README.md` for the exact
+commands. Concurrency 50 throughout.
 
 ```text
 GET /fast   (no blocking work), 500 requests, concurrency 50

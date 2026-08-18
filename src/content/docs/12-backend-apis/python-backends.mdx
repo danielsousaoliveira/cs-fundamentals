@@ -143,9 +143,11 @@ nothing else on that worker makes progress meanwhile.
 
 **Captured on this machine, Python 3.9.6, Flask 3 + gunicorn 23 (4 sync
 workers) vs. FastAPI + uvicorn 0.39 (1 worker), 2026-08-18.** Load generator:
-the same Node-based concurrent-fetch client used on the [node-backends
-page](/cs-fundamentals/12-backend-apis/node-backends/), concurrency 50
-throughout, hitting `127.0.0.1`.
+`scripts/bench/load.mjs` in this repository — the same client used on the
+[node-backends page](/cs-fundamentals/12-backend-apis/node-backends/) —
+against the server fixtures in `scripts/bench/python-backends/`; see
+`scripts/bench/README.md` for the exact commands. Concurrency 50 throughout,
+hitting `127.0.0.1`.
 
 ```text
 Flask + gunicorn, 4 sync workers

@@ -1,0 +1,50 @@
+---
+title: Styling
+description: Build predictable, responsive interfaces by treating CSS as a constraint system rather than a pile of overrides.
+sidebar:
+  order: 10
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/astro]
+tags: [css, responsive-design, frontend]
+languages: [typescript]
+roles: [frontend]
+sources: []
+---
+
+## Intuition
+
+CSS resolves competing constraints: cascade, inheritance, specificity, layout, and viewport conditions. A style that “wins” is not necessarily the right style; it may only be the last override. Good styling makes the constraints explicit through semantic structure, tokens, and layouts that can shrink.
+
+## Mechanics
+
+Give elements meaningful roles and classes, define a small set of custom properties, and let layout primitives do the work. Prefer grid or flex constraints over coordinates. Use `clamp()` for type that scales within bounds, logical properties for writing direction, and media queries for changes in capability rather than a list of device widths.
+
+## Cost & limits
+
+The browser must parse CSS, build the style tree, calculate layout, and paint. A stylesheet’s transfer cost is its compressed bytes; layout cost grows with the affected subtree and the number of invalidations. A useful local budget is derived from the page’s measured critical CSS: if the measured compressed stylesheet is 18 KB and the target is 50 KB, the remaining allowance is 32 KB, not an invented universal “small CSS” rule.
+
+## When NOT to use it
+
+Do not add a design-system abstraction for a one-off page, absolute positioning for normal document flow, or a breakpoint for every popular phone width. Do not hide content differences in CSS when the content must be accessible or indexed; change the markup or state instead.
+
+## Real-world usage
+
+Tokens keep colors and spacing consistent across a documentation site. Grid handles a card collection whose columns collapse as available width changes. Container queries let a reusable component respond to its parent, which is more accurate than assuming the viewport is its context.
+
+## Failure modes
+
+**A modal is behind the page.** An ancestor created a stacking context with `transform` or `isolation`, so a large `z-index` was trapped inside it. Inspect stacking contexts and place overlays at a deliberate root.
+
+**The layout works only at one width.** Fixed widths or long unbroken content overflow. Test narrow, wide, zoomed, and translated content; use flexible tracks and overflow rules that preserve meaning.
+
+**A theme change leaves unreadable text.** A component hard-coded a color instead of consuming the token. Centralize semantic colors and test each theme in contrast tooling.
+
+## Practice problems
+
+1. A three-column grid overflows at 320 px. Replace fixed columns with `repeat(auto-fit, minmax(min(100%, 16rem), 1fr))` so the track count reduces at narrow widths, and verify the content remains reachable without horizontal scrolling.
+2. A button’s label is clipped at 200% zoom. Remove fixed height, preserve padding, and let text wrap or the control grow.
+
+## Interview answers
+
+Styling is constraint management: semantic markup provides meaning, layout primitives express relationships, and tokens prevent drift. The caveat is that CSS bugs often come from an invisible context—cascade, containing block, or stacking context—so the fix is to inspect the constraint, not increase specificity blindly.

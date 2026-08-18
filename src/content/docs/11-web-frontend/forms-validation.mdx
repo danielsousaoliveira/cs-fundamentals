@@ -1,0 +1,52 @@
+---
+title: Forms and validation
+description: Make forms helpful in the browser while keeping the server as the authority over accepted data.
+sidebar:
+  order: 11
+difficulty: core
+status: complete
+prereqs: []
+tags: [forms, validation, security]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: []
+---
+
+## Intuition
+
+A form has two jobs: help a person produce a valid request, and let the system decide whether that request is allowed. Browser validation serves the first job. It is a convenience and can be bypassed; the server owns the trust boundary.
+
+## Mechanics
+
+Use the right native controls and labels, validate on the client for immediate feedback, preserve entered values, and associate errors with their fields. Submit the same structured data to the server even when the browser accepted it. The server must parse, authorize, validate against current rules, and return field-level errors without trusting hidden inputs or client-calculated totals.
+
+The server-side authority continues in [backend APIs](../../12-backend-apis/), where request validation and authorization are part of the API contract.
+
+## Cost & limits
+
+Client validation costs one local parse and render per interaction; server validation costs a request round trip and server work. If a form has `m` fields and each local rule is O(1), checking all fields is O(m), but that says nothing about trust: only the server can check current inventory, permissions, uniqueness, or a price. A 300 ms round trip is a reason to give fast local feedback, not a reason to accept local results.
+
+## When NOT to use it
+
+Do not make a user wait for the server to discover a missing required field, but do not duplicate complex business rules in the client merely to avoid a request. Do not disable server validation because the form is behind authentication, and do not use client-only validation for destructive, financial, or permission-sensitive actions.
+
+## Real-world usage
+
+Signup can check email shape locally while the server checks uniqueness and rate limits. Checkout can format and validate required fields in the browser while the server recomputes totals, shipping, tax, and authorization. A profile editor can show server conflicts beside the field that caused them.
+
+## Failure modes
+
+**The UI says “success” but no record exists.** The client treated a resolved fetch or optimistic update as acceptance. Commit UI state only after the server’s authoritative response.
+
+**A stale rule rejects a valid request.** Client and server copies of a rule diverged. Keep client rules ergonomic and let server errors be the canonical correction.
+
+**Keyboard users cannot find the error.** An error was rendered visually but not associated with the input or announced. Link it with `aria-describedby`, set an invalid state, and move focus deliberately after submit.
+
+## Practice problems
+
+1. A hidden `price` input is changed in DevTools. The server must ignore it and derive the price from trusted product identity and current catalog data.
+2. A username is available during typing but taken on submit. Keep the draft, show the server error, and let the user correct only that field.
+
+## Interview answers
+
+Client validation improves feedback; server validation decides whether a request is valid and authorized. The caveat is that duplicated rules are synchronization risk, so the client should be a helpful projection of the contract, never its enforcement mechanism.

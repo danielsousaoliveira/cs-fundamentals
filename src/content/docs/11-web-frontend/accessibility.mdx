@@ -1,0 +1,50 @@
+---
+title: Accessibility
+description: Make interface meaning, focus, input, and feedback available across keyboards, assistive technology, and varied presentation.
+sidebar:
+  order: 13
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/styling]
+tags: [accessibility, wcag, html]
+languages: [typescript]
+roles: [frontend]
+sources: []
+---
+
+## Intuition
+
+Accessibility is whether a person can perceive, operate, understand, and recover from the interface. Native HTML supplies a large part of that contract: a button is focusable and operable, a label names a control, and a heading contributes structure. ARIA should repair a real semantic gap, not decorate a `div` into an imitation widget.
+
+## Mechanics
+
+Use semantic elements, visible focus, logical heading order, labels, sufficient contrast, text alternatives, and keyboard-complete interaction. For custom widgets, define focus movement, names, states, and announcements. Test the rendered page with keyboard navigation and the project’s automated accessibility suite; a recommendation is not complete if the site’s own checks reject its implementation.
+
+## Cost & limits
+
+An automated suite can evaluate a finite set of rules in a rendered state; if it runs `r` rules over `n` relevant nodes, its scan is roughly O(rn). That is a test cost, not an accessibility percentage. Automated checks catch missing names, invalid relationships, and some contrast errors, but cannot establish that a workflow is understandable. The ceiling is therefore coverage: pair automation with keyboard and assistive-technology checks.
+
+## When NOT to use it
+
+Do not use ARIA when native HTML expresses the control, do not remove focus outlines without a stronger visible replacement, and do not rely on color alone to convey state. Do not treat a green automated report as proof that a complex workflow is usable.
+
+## Real-world usage
+
+A documentation page uses headings and landmarks so a screen-reader user can navigate sections. A dialog traps focus only while open and returns it to the trigger. A validation summary announces the problem and links to each invalid field.
+
+## Failure modes
+
+**The control works with a mouse but not a keyboard.** A clickable `div` has no focus or key handling. Use a button or implement the complete interaction contract.
+
+**A dialog opens but focus stays behind it.** Screen-reader users continue interacting with the page underneath. Move focus into the dialog, constrain navigation, and restore focus on close.
+
+**An icon button is announced as “button”.** It has no accessible name. Add a visible label or an appropriate accessible name and test the rendered tree.
+
+## Practice problems
+
+1. Replace a clickable `span` that submits a form with a native button; confirm Tab reaches it, Enter activates it, and the accessible name is meaningful.
+2. A toast contains the only success message. Give it an appropriate live-region treatment, ensure it is not the only persistent record of the result, and test timing with a keyboard workflow.
+
+## Interview answers
+
+Accessibility is an interface contract, best established with semantic HTML and verified through keyboard, rendered-tree, automated, and human checks. The caveat is that automation finds violations in tested states; it cannot judge whether a real task is comprehensible.

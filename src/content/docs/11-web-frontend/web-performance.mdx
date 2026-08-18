@@ -1,0 +1,52 @@
+---
+title: Web performance
+description: Trace loading and interaction costs to measured budgets under stated network, device, and cache conditions.
+sidebar:
+  order: 12
+difficulty: core
+status: complete
+prereqs: [11-web-frontend/rendering-strategies]
+tags: [performance, core-web-vitals, measurement]
+languages: [typescript]
+roles: [frontend, fullstack]
+sources: []
+---
+
+## Intuition
+
+Performance is the time a particular user waits for a particular experience, not a framework adjective. A page can have a fast TTFB and still show its main content late, or a small transfer and still block input while JavaScript executes. Measure the journey and connect each delay to a decision.
+
+## Mechanics
+
+Record a repeatable trace: URL, browser version, device or CPU throttle, network profile, cache state, viewport, build commit, and whether the run is cold or warm. Inspect the waterfall and main-thread trace, then compare field data with lab data. Optimize the largest measured contributor—often the LCP resource, render-blocking CSS, a long task, or a client data waterfall—and rerun the same conditions.
+
+## Cost & limits
+
+Illustrative budget assumptions under a cold cache, 4G profile, 4× CPU slowdown, 1365×768 viewport: if an example trace records 1.8 s LCP and the product budget is 2.5 s, the remaining margin is `2.5 - 1.8 = 0.7 s`. If illustrative JavaScript transfer is 92 KB compressed and the budget is 120 KB, 28 KB remains. These figures are a measurement plan and arithmetic model, not measurements from this page’s production build; capture a trace under the stated conditions before treating them as repository results.
+
+The ceiling is the slowest sequential dependency: if HTML waits 400 ms for data, then CSS waits 300 ms, and the LCP image waits 600 ms, the critical path already contains 1.3 s before device paint work. Parallelizing independent work removes a sum; shrinking a non-critical asset does not.
+
+## When NOT to use it
+
+Do not delete accessible content, defer necessary interaction, or add caching solely to improve a lab score. Do not optimize a metric without a trace showing it matters, and do not call a page fast from a developer laptop when the audience includes low-end devices and cold caches.
+
+## Real-world usage
+
+Product pages prioritize the hero image and product data path. Documentation sites keep HTML readable before islands load. Applications watch long tasks during route changes and use field data to find regressions that synthetic tests miss.
+
+## Failure modes
+
+**The score improves but users do not.** The test used a warm cache or desktop CPU while field users were cold and mobile. Publish conditions beside the number and compare like with like.
+
+**LCP regresses after an “unrelated” component change.** A shared bundle crossed a parse or preload threshold. Use a build diff and trace to identify the new critical dependency.
+
+**Interaction freezes after content appears.** A long hydration task monopolizes the main thread. Split or defer non-critical JavaScript, then verify INP and long-task duration.
+
+## Practice problems
+
+1. A trace has 250 ms TTFB, 700 ms image download, and 500 ms JavaScript execution before LCP. Test image priority and responsive sizing first, then reduce the blocking script; do not infer that TTFB is the main issue.
+2. A 200 KB bundle saves 100 ms transfer but adds 400 ms parse time on the target phone. Prefer the change with the measured critical-path reduction, not the smaller byte count alone.
+
+## Interview answers
+
+Performance work starts with a reproducible trace and ends with a rerun under the same conditions. The caveat is that budgets are product decisions derived from observed critical paths, and lab improvements must be checked against field behavior.

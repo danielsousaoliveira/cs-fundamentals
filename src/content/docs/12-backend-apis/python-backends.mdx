@@ -1,0 +1,381 @@
+---
+title: Python Backend Runtimes — WSGI and ASGI
+description: >-
+  WSGI gets its concurrency from OS processes; ASGI gets it from an event
+  loop borrowed straight from the same model Node uses. They fail in
+  opposite ways, and a synchronous call in the wrong one collapses
+  throughput exactly like a blocking Express handler does.
+sidebar:
+  order: 3
+difficulty: core
+status: complete
+prereqs: ['5-systems/concurrency']
+tags: [python, wsgi, asgi, flask, fastapi, gunicorn, uvicorn, gil, backend]
+languages: [python]
+roles: [backend]
+sources:
+  - captured-benchmark-2026-08-18
+---
+
+## Intuition
+
+The [concurrency page](/cs-fundamentals/5-systems/concurrency/) already
+establishes the Python half of its own model: the GIL means one thread
+executes Python bytecode at a time, threads help with waiting, processes help
+with computing. This page is about what a web server built on top of that
+constraint actually looks like, because the GIL alone does not explain why a
+Flask app and a FastAPI app under load fail in genuinely different ways.
+
+**WSGI** (Flask, Django's default, `gunicorn` sync workers) gets its
+concurrency from **the operating system, not the interpreter.** Each worker
+is a separate OS process (or thread) with its own GIL to contend for. One
+worker handling one request at a time, blocking freely, is not a bug — it is
+the entire model. Concurrency comes from having several workers, the same way
+thread-per-request Java gets concurrency from several threads.
+
+**ASGI** (FastAPI, Django's async views, `uvicorn`) gets its concurrency from
+**`asyncio`'s single-threaded event loop** — structurally the same
+run-to-completion model the [event loop
+page](/cs-fundamentals/5-systems/event-loop/) derives for Node, transplanted
+into Python. One event loop per worker process, and the same rule applies:
+waiting is free, working is not, and a synchronous call inside an `async def`
+route blocks every other request the worker is holding — not just the one
+that made the call.
+
+That difference is the whole page. WSGI's model tolerates a blocking call by
+design; ASGI's model treats one as an incident, for exactly the reason Node
+does.
+
+## Mechanics
+
+### WSGI: concurrency is worker count, full stop
+
+```python
+# app.py — Flask, WSGI
+from flask import Flask, jsonify
+app = Flask(__name__)
+
+@app.get("/report")
+def report():
+    data = db.query(...)   # blocks this worker. Fine — that's the model.
+    return jsonify(data)
+```
+
+```bash
+gunicorn -w 4 --bind 0.0.0.0:8000 app:app
+```
+
+Four worker processes, four requests genuinely in flight at once — real OS
+parallelism, not the cooperative kind, because each worker has its own
+process and its own GIL. A fifth concurrent request simply waits for a
+worker to free up. **No individual request handler needs to be careful about
+blocking**, because blocking one worker never touches the other three.
+
+### ASGI: concurrency is the event loop, and blocking is a shared failure
+
+```python
+# app.py — FastAPI, ASGI
+from fastapi import FastAPI
+import asyncio
+
+app = FastAPI()
+
+@app.get("/report")
+async def report():
+    data = await db.query(...)   # yields to the loop — other requests proceed
+    return data
+
+@app.get("/report-blocking")
+async def report_blocking():
+    data = sync_db.query(...)    # does NOT yield — stalls every request
+    return data                  # this worker is holding, for its duration
+```
+
+```bash
+uvicorn app:app --workers 4
+```
+
+Four worker processes again, but now each one is a single-threaded event
+loop — so within one worker, "four requests in flight" means four requests
+*interleaved*, not four requests running truly simultaneously. The `await
+db.query(...)` version yields control back to the loop while waiting, so
+other requests on that worker proceed. The synchronous version does not yield
+at all — Python has no way to preempt a running synchronous call — so it
+occupies the loop for its entire duration, and everything else that worker is
+holding queues behind it, identically to a synchronous handler blocking
+Node's event loop.
+
+### The fix for a genuinely blocking call inside ASGI
+
+```python
+from starlette.concurrency import run_in_threadpool
+
+@app.get("/report")
+async def report():
+    # Moves the blocking call to a worker thread, freeing this worker's loop
+    # to keep serving other requests while it runs.
+    data = await run_in_threadpool(sync_db.query, ...)
+    return data
+```
+
+This is the ASGI-world version of the [event loop page](/cs-fundamentals/5-systems/event-loop/)'s
+worker-thread offload, and it exists for the same reason: the fix for
+"blocking call inside an event loop" is never "wait harder," it is "move the
+call off the loop."
+
+## Cost & limits
+
+**WSGI throughput is Little's Law, directly.** With $w$ workers and mean
+request duration $d$, sustained throughput tops out at $w / d$ requests per
+second; anything beyond that queues at the OS or the WSGI server's accept
+queue, not inside your code. This is the same shape as the connection-pool
+math the [concurrency page](/cs-fundamentals/5-systems/concurrency/) derives
+for database pools — a hard-bounded resource, and the fix is either more
+workers (bounded by CPU cores and memory, since each worker is a full
+process) or a shorter $d$.
+
+**ASGI throughput under I/O-bound load is not worker-bounded the same way** —
+one worker can hold hundreds of concurrent `await`ing requests cheaply,
+exactly as Node holds thousands of idle sockets. But **the moment a request
+does not yield, ASGI's ceiling collapses to WSGI's shape with one worker**,
+because a non-yielding call occupies the entire loop for its duration and
+nothing else on that worker makes progress meanwhile.
+
+**Captured on this machine, Python 3.9.6, Flask 3 + gunicorn 23 (4 sync
+workers) vs. FastAPI + uvicorn 0.39 (1 worker), 2026-08-18.** Load generator:
+the same Node-based concurrent-fetch client used on the [node-backends
+page](/cs-fundamentals/12-backend-apis/node-backends/), concurrency 50
+throughout, hitting `127.0.0.1`.
+
+```text
+Flask + gunicorn, 4 sync workers
+  GET /fast   (no work), 500 requests
+    wallMs: 114   throughput: 4370 req/s   p50: 9ms    p99: 18ms
+  GET /block  (time.sleep(0.02) per request), 200 requests
+    wallMs: 1133  throughput: 176 req/s    p50: 271ms  p99: 293ms
+
+FastAPI + uvicorn, 1 worker
+  GET /fast          (no work), 500 requests
+    wallMs: 67    throughput: 7516 req/s   p50: 4ms    p99: 17ms
+  GET /block         (time.sleep(0.02) — SYNC call inside async def), 200 requests
+    wallMs: 4897  throughput: 41 req/s     p50: 511ms  p99: 3638ms  max: 3663ms
+  GET /block-async    (await asyncio.sleep(0.02) — cooperative), 200 requests
+    wallMs: 127   throughput: 1580 req/s   p50: 25ms   p99: 37ms
+```
+
+Three things the numbers show directly. First, Flask's blocking case
+(1,133 ms for 200 × 20 ms requests across 4 workers) matches Little's
+Law almost exactly: 200 requests × 20 ms ÷ 4 workers ≈ 1,000 ms of serial
+work per worker, plus overhead. Second, FastAPI's `time.sleep` case
+(4,897 ms) is *worse* than Flask's, on one worker instead of four, because
+a synchronous call inside `async def` does not yield — it reproduces the
+exact single-thread queueing collapse the [node-backends
+page](/cs-fundamentals/12-backend-apis/node-backends/) measured for Node
+(4,016 ms for a comparable workload), for the identical structural reason.
+Third, replacing that one call with `asyncio.sleep` — nothing else
+changed — drops wall time from 4,897 ms to 127 ms, a ~38× difference, because
+a cooperative wait yields the loop instead of occupying it. **The
+synchronous-vs-asynchronous distinction inside an ASGI route is not a style
+preference; it is the entire difference between the two numbers above.**
+
+## When NOT to use it
+
+**Do not choose ASGI because "async is faster."** The `/fast` numbers above
+show a real gap (7,516 vs. 4,370 req/s) on a trivial route, but that gap is
+about not spawning OS processes for idle waiting, not about async code
+executing faster than sync code — a single Python statement runs at the same
+speed either way. For CPU-bound work, ASGI buys nothing: a synchronous
+computation blocks the loop exactly as it blocks a WSGI worker, and neither
+model gives you more than one core's worth of Python execution without
+`ProcessPoolExecutor` or a separate worker fleet, per the [concurrency
+page](/cs-fundamentals/5-systems/concurrency/).
+
+**Do not put a synchronous ORM or driver call inside an `async def` route
+without `run_in_threadpool` or an async driver.** This is the single most
+common ASGI production incident, and the benchmark above quantifies it
+precisely: one un-yielding call turned a 127 ms workload into a 4,897 ms one
+on identical hardware.
+
+**Do not add WSGI worker processes past what memory allows.** Each worker is
+a full Python process with its own copy of loaded modules and, for a
+framework like Django, a meaningful base memory footprint. Little's Law says
+more workers raise the throughput ceiling, but the actual ceiling is
+`min(CPU cores, memory / per-worker footprint)`, not an arbitrary number
+picked from a tutorial.
+
+**Do not migrate an existing synchronous codebase to ASGI wholesale just for
+the connection-count ceiling.** If the actual bottleneck is a handful of slow
+synchronous handlers, `run_in_threadpool` inside an otherwise-WSGI-shaped app,
+or simply more gunicorn workers, is cheaper and lower-risk than an async
+rewrite — and per the point above, an async rewrite that still calls
+synchronous drivers is not actually async, it just looks like it until the
+first load test.
+
+## Real-world usage
+
+**gunicorn with sync workers behind Flask or Django is still the default for
+CRUD-shaped, mostly-database-bound services** — it tolerates blocking calls
+by design, which is a real advantage when the codebase (and its
+dependencies — many ORMs and drivers are synchronous) was not written with
+`async`/`await` discipline throughout.
+
+**uvicorn + FastAPI or Django's ASGI mode is chosen for high-connection-count,
+I/O-heavy workloads** — services proxying many concurrent slow upstreams,
+WebSocket-heavy backends, or anything where the WSGI ceiling of "one worker
+per in-flight request" becomes the actual bottleneck before CPU does.
+
+**gunicorn can run uvicorn's worker class** (`gunicorn -k
+uvicorn.workers.UvicornWorker`), combining gunicorn's process management —
+restarts, worker recycling, signal handling — with an asyncio event loop per
+worker. This is the common production shape for FastAPI: several worker
+*processes*, each running its own event loop, giving both OS-level
+parallelism across workers and cooperative concurrency within each one.
+
+**The production symptom is identical to Node's**, and [reading the
+symptoms](/cs-fundamentals/14-production/reading-the-symptoms/) applies
+without modification: high latency with flat, low CPU is waiting on I/O
+somewhere (a slow query, a full worker pool); high latency with CPU pegged
+on one core is a blocking call occupying the loop or the worker, which for
+ASGI is diagnosable with the same event-loop-lag instinct as Node, just
+measured with `asyncio`'s own instrumentation instead of `perf_hooks`.
+
+## Failure modes
+
+**Symptom: p99 latency is dramatically worse than p50, and the process is
+FastAPI/uvicorn, not Flask/gunicorn.** A synchronous call — a blocking driver,
+a synchronous library, `time.sleep` — sitting inside an `async def` route.
+The benchmark above is this exact symptom in isolation: 511 ms p50 against
+3,638 ms p99 from one un-yielding 20 ms call at concurrency 50. Fix: wrap the
+call in `run_in_threadpool`, or move to an async-native driver.
+
+**Symptom: WSGI throughput has a hard ceiling that scaling code changes
+doesn't move.** Worker count is the binding constraint per Little's Law — the
+fix is more workers (if CPU/memory allow) or the ASGI model, not further
+optimizing a handler that is already fast relative to its I/O wait.
+
+**Symptom: adding more gunicorn sync workers stopped helping past a point.**
+Each worker is a full process; past the point where worker count exceeds
+available CPU cores, additional workers mostly context-switch rather than add
+throughput, and each one still costs memory. Check CPU utilization against
+worker count before adding more.
+
+**Symptom: an async route "hangs" under load but works fine with one
+request.** Almost always the un-yielding-call pattern above, invisible at
+concurrency 1 because there is nothing else on the loop to starve. It only
+appears once a second request is waiting behind the first — which is exactly
+why a single-request manual test does not catch it, and a load test does.
+
+**Symptom: switching Flask to FastAPI "for performance" made a CPU-bound
+endpoint slower, not faster.** Expected — the GIL still allows only one
+thread's worth of Python bytecode execution regardless of framework, and
+async gives no benefit to work that never awaits anything. A CPU-bound
+endpoint needs `ProcessPoolExecutor` or a separate worker fleet either way,
+per the [concurrency page](/cs-fundamentals/5-systems/concurrency/).
+
+## Practice problems
+
+**1. Predict the numbers.** A FastAPI route currently does `time.sleep(0.05)`
+synchronously. You change it to `await asyncio.sleep(0.05)` with no other
+changes, and re-run the same 200-request, concurrency-50 load test used
+above. Roughly what happens to wall time, and why?
+
+<details>
+<summary>Solution</summary>
+
+A large drop, following the same shape measured above: `time.sleep` occupies
+the loop for its full duration and every other queued request waits behind
+it, producing near-serial execution (close to 200 × 0.05s = 10s at worst).
+`asyncio.sleep` yields immediately, so up to 50 requests progress
+concurrently, and wall time approaches roughly `(200/50) × 0.05s ≈ 0.2s` —
+the number of *batches* of concurrent requests times the wait, not the total
+requests times the wait. The measured page example showed a ~38× improvement
+from exactly this change at 20 ms; a longer blocking duration would show an
+even larger ratio, since the serial-queueing case scales with total requests
+while the cooperative case scales with the number of concurrency-sized
+batches.
+
+</details>
+
+**2. Diagnose the deployment.** A team runs FastAPI with `uvicorn app:app`
+(no `--workers` flag, so it defaults to one worker) and observes that CPU
+usage never exceeds 25% on a 4-core machine even under heavy sustained load,
+while p99 latency is high. What's the likely fix, independent of anything in
+the application code?
+
+<details>
+<summary>Solution</summary>
+
+One worker means one event loop means one core's worth of Python execution,
+regardless of how many cores the machine has — the other three sit idle no
+matter how well-written the async code is. This is the ASGI-world version of
+running a single Node process on a multi-core box. The fix is `gunicorn -k
+uvicorn.workers.UvicornWorker -w 4 app:app` (or `uvicorn --workers 4`), giving
+four independent event loops across four processes — genuine OS-level
+parallelism on top of the per-worker cooperative concurrency, which is the
+combination described in Real-world usage above.
+
+</details>
+
+**3. Classify each of these for a FastAPI service and state the fix, if any.**
+
+1. `await httpx.AsyncClient().get(url)`
+2. `requests.get(url)` inside an `async def` route
+3. `hashlib.sha256(huge_bytes).hexdigest()` inside an `async def` route
+4. `await asyncio.gather(*[fetch(u) for u in urls])`
+
+<details>
+<summary>Solution</summary>
+
+1. **Fine.** An async-native HTTP client yields to the loop while waiting;
+   this is the model working as intended.
+2. **Broken under load.** `requests` is synchronous — it blocks the loop for
+   the full round trip. Fix: switch to an async client, or wrap in
+   `run_in_threadpool`.
+3. **CPU-bound, and async doesn't help or hurt specially** — it blocks the
+   loop for the hash computation's duration either way, same as it would
+   block a WSGI worker. If it's large/frequent enough to matter, the fix is
+   `ProcessPoolExecutor`, not `run_in_threadpool` — threads don't help
+   CPU-bound work past the GIL, per the [concurrency
+   page](/cs-fundamentals/5-systems/concurrency/).
+4. **Fine, and the point of the model** — genuine concurrent waiting, same
+   shape as `Promise.all` on the event loop page, bounded the same way: an
+   unbounded `urls` list is an unmetered fan-out, so bound it if the list
+   size isn't already controlled.
+
+</details>
+
+## Interview answers
+
+**"WSGI or ASGI?"**
+
+> They get concurrency from different places, and that's the whole decision.
+> WSGI — gunicorn with sync workers — gets concurrency from OS processes:
+> each worker blocks freely, and you scale by adding workers, bounded by
+> Little's Law, worker count over mean request duration. ASGI gets
+> concurrency from an event loop, the same run-to-completion model Node
+> uses, so it holds many more concurrent I/O-bound requests per worker
+> cheaply — but a synchronous call inside an async route blocks the entire
+> loop, not just that request.
+>
+> I measured this directly: the same 20 ms blocking operation cost Flask
+> with 4 sync workers about 1.1 seconds for 200 requests, which matches
+> Little's Law almost exactly. The same operation as a genuinely synchronous
+> call inside a FastAPI async route cost 4.9 seconds on one worker — worse,
+> because there's no second worker to absorb it. Making that one call
+> cooperative — `asyncio.sleep` instead of `time.sleep` — dropped it to
+> 127 ms. WSGI tolerates a blocking call by design; ASGI treats one as an
+> incident.
+
+**The caveats worth voicing:**
+
+- Neither model gets you past the GIL for CPU-bound work — that needs
+  `ProcessPoolExecutor` or separate worker processes regardless of WSGI vs.
+  ASGI, which is the same conclusion the concurrency page reaches for Node's
+  worker threads.
+- In production I'd run `gunicorn -k uvicorn.workers.UvicornWorker`, not bare
+  `uvicorn`, specifically so worker count scales with CPU cores instead of
+  being stuck at whatever `uvicorn`'s own default happens to be.
+- I check for synchronous calls inside async routes the same way I'd check
+  Node for a synchronous `fs` call in a request handler — it's the single
+  highest-leverage thing to search for when ASGI p99 looks wrong, because the
+  fix is usually one function call away, not an architecture change.

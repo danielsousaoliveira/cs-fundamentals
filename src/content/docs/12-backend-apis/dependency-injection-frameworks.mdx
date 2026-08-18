@@ -1,0 +1,375 @@
+---
+title: Dependency-Injected Backend Frameworks
+description: >-
+  NestJS and its relatives add a request lifecycle and a provider scope model
+  on top of the same event loop — which means the same blocking-handler
+  failure now hides behind a decorator, and a new failure (shared
+  request-scoped state) becomes possible that plain Express never had.
+sidebar:
+  order: 2
+difficulty: core
+status: complete
+prereqs:
+  - 5-systems/event-loop
+  - 12-backend-apis/node-backends
+tags: [nestjs, dependency-injection, di, decorators, backend, node]
+languages: [typescript]
+roles: [backend]
+sources:
+  - captured-benchmark-2026-08-18
+---
+
+## Intuition
+
+[Node backend frameworks](/cs-fundamentals/12-backend-apis/node-backends/)
+establishes that Express and Fastify add a constant factor on top of the
+event loop, not a new concurrency model. NestJS — the framework this page
+uses as the concrete example, though the same reasoning applies to any
+Angular-style DI framework built on Node — sits one layer further up, and it
+is worth being precise about what that layer actually adds: **a container
+that decides which object instance a given request sees, and a lifecycle of
+guards, interceptors, and pipes that wrap the handler.**
+
+Underneath all of it is the identical single thread from the event loop page.
+NestJS does not add parallelism, does not add a new blocking mechanism, and a
+synchronous 20 ms loop inside a Nest controller stalls the process exactly as
+it did in a bare Express handler — this page will not re-derive that
+queueing result, [node-backends](/cs-fundamentals/12-backend-apis/node-backends/)
+already measured it.
+
+What the DI layer changes is **what state is shared across requests, and who
+decides that.** Express has no opinion on it — a module-level variable is
+shared, a variable declared inside a request handler is not, and that is the
+whole rule. Nest inserts a decision in between: a provider's `scope` decides
+whether every request gets a fresh instance, shares one singleton, or gets a
+new instance per injection. Getting that scope wrong produces a bug that looks
+identical to the in-memory-state class of Node bugs, but arrives through a
+decorator instead of an obviously shared variable — which is exactly why it
+is worth its own page rather than a subsection.
+
+## Mechanics
+
+### Provider scope is the whole model
+
+```ts
+@Injectable({ scope: Scope.DEFAULT }) // singleton — one instance, shared, for the app's life
+export class ConfigService {}
+
+@Injectable({ scope: Scope.REQUEST }) // fresh instance per incoming request
+export class RequestContextService {
+  userId?: string;
+}
+
+@Injectable({ scope: Scope.TRANSIENT }) // fresh instance per *injection point*
+export class Logger {}
+```
+
+`DEFAULT` (Nest's name for singleton) is the scope every provider gets unless
+told otherwise, and it is the right default for the same reason a module-level
+`const` is usually fine in plain Node: most services — a config reader, a
+database client wrapper, a cache client — hold no per-request state and
+should be constructed once.
+
+**`REQUEST` scope exists for exactly one legitimate reason: request-scoped
+data that needs to be injected several layers deep** without threading it
+through every constructor by hand — the authenticated user, a request id, a
+tenant id. It is Nest's answer to the same problem `AsyncLocalStorage` solves
+on the [Node runtime page](/cs-fundamentals/6-languages/node-runtime/), built
+as a first-class DI concept instead of ambient context.
+
+### What request scope actually costs
+
+A `REQUEST`-scoped provider is not injected once at startup — the container
+constructs a fresh instance, and reconstructs its entire injection subtree,
+**on every single request that touches it.**
+
+```ts
+@Injectable({ scope: Scope.REQUEST })
+class TenantContext {
+  constructor(@Inject(REQUEST) private req: Request) {}
+}
+
+@Injectable() // DEFAULT by default — but Nest promotes it to REQUEST anyway
+class ReportService {
+  constructor(private tenant: TenantContext) {} // because it depends on a REQUEST provider
+}
+
+@Injectable()
+class BillingService {
+  constructor(private report: ReportService) {} // and this becomes REQUEST too
+}
+```
+
+Scope is contagious upward through the dependency graph: anything that
+depends, even indirectly, on a `REQUEST`-scoped provider is itself
+constructed per request, whether or not it was declared with a scope at all.
+One `@Inject(REQUEST)` at the bottom of a deep dependency tree can silently
+turn a dozen otherwise-stateless services into per-request allocations,
+without a single explicit `scope: Scope.REQUEST` anywhere else in the chain.
+
+### The request lifecycle wraps the handler, not replaces it
+
+```text
+incoming request
+  → Middleware        (same shape as Express middleware)
+  → Guards             (can() → true/false — authn/authz, short-circuits early)
+  → Interceptors (before)   (can transform the request, start timing)
+  → Pipes               (validate/transform arguments, e.g. class-validator DTOs)
+  → Route handler
+  → Interceptors (after)    (can transform the response, e.g. wrap in an envelope)
+  → Exception filters   (catches thrown errors, maps to an HTTP response)
+```
+
+Every stage is still a function running on the same thread, in the same
+run-to-completion model. An interceptor that does synchronous work before
+calling `next.handle()` costs exactly as much event-loop time as an Express
+middleware doing the same work — it is just spelled as a class with a
+decorator instead of a function in an array.
+
+## Cost & limits
+
+**Per-request construction cost is the number to derive, and it depends on
+how much of the graph scope contagion pulled in — not a fixed percentage
+worth quoting without measuring your own provider tree.** Every
+`REQUEST`-scoped provider in the resolved dependency path means one more
+constructor call, one more allocation, and one more pass through Nest's
+reflection-based dependency resolution, per request. On the numbers measured
+on the [node-backends page](/cs-fundamentals/12-backend-apis/node-backends/),
+a genuinely non-blocking handler ran in single-digit milliseconds end to end;
+DI construction for a shallow provider tree is a small fraction of that, but
+it is **paid on every request, unconditionally**, unlike network I/O, which
+only costs what it costs when it happens. A tree with 20
+transitively-request-scoped providers reconstructs 20 objects per request
+whether or not that request needed all of them — measure with `console.time`
+around the container resolution, or compare p50 on identical routes with
+providers pinned to `DEFAULT` versus `REQUEST`, rather than trusting a number
+from a blog post about a different provider graph.
+
+**The event-loop cost model from [node-backends](/cs-fundamentals/12-backend-apis/node-backends/)
+is unchanged and additive on top:**
+
+$$
+b_{\text{total}} = b_{\text{middleware}} + b_{\text{DI construction}} + b_{\text{guards+interceptors+pipes}} + b_{\text{handler}}
+$$
+
+DI construction is new relative to plain Express, and it is the term easiest
+to lose track of, because it does not appear in the handler's own code at
+all — it happens in generated container wiring, invisible to a profiler that
+only samples your controller method body.
+
+**GC pressure, not raw CPU, is usually the observable cost.** A fresh
+`REQUEST`-scoped object per request, at high RPS, is a steady stream of
+short-lived allocations — cheap individually under V8's generational
+collector (as the [Node runtime page](/cs-fundamentals/6-languages/node-runtime/)
+derives: allocation of short-lived objects is nearly free), but it adds up to
+measurably higher minor-GC frequency at sustained load compared to an
+all-singleton provider graph. This is a real cost, but it is the *right* kind
+of cost — a leak from getting scope wrong the other way (below) is worse.
+
+## When NOT to use it
+
+**Do not reach for `REQUEST` scope to hold data that is not actually
+per-request.** The most common misuse is caching something expensive — a
+computed permission set, a parsed config — inside a `REQUEST`-scoped provider
+"because it's already there." That throws away a singleton's caching benefit
+and pays construction cost every request for data that did not need to be
+per-request at all.
+
+**Do not use `TRANSIENT` scope by default "for safety."** It constructs a new
+instance per *injection point*, which is a stronger and more expensive
+guarantee than most code needs, and it is easy to reach for because it sounds
+safest. `DEFAULT` is safe as long as the provider genuinely holds no mutable
+per-request state — which is the common case.
+
+**Do not add a DI framework to get "better performance."** It adds
+abstraction and per-request construction overhead on top of the same event
+loop, not a faster one. The reason to choose it is structure — testability
+via constructor injection, a consistent module boundary, guards/interceptors
+as a shared cross-cutting mechanism — not throughput. [Plain Node
+backends](/cs-fundamentals/12-backend-apis/node-backends/) will always have a
+lower per-request floor, because they have less machinery between the socket
+and your code.
+
+**Do not treat a guard or interceptor as free because it "just checks a
+condition."** It is still synchronous code on the one thread unless it
+explicitly awaits I/O; a guard that does a synchronous JWT verification with
+an expensive algorithm on every request is exactly as capable of producing
+the queueing collapse measured on the node-backends page as a route handler
+is.
+
+## Real-world usage
+
+**NestJS is the standard choice for teams porting a Java Spring or Angular
+mental model onto Node** — decorators, modules, constructor injection, and a
+CLI that scaffolds a consistent project shape are the actual draw, not
+throughput. It shows up heavily in enterprise Node shops and API-heavy
+backends where many teams share one codebase and consistency has more value
+than shaving milliseconds off routing.
+
+**`REQUEST` scope earns its place specifically for multi-tenant systems**,
+where every downstream service genuinely needs to know which tenant it is
+serving, and threading a tenant id through every function signature by hand
+would be worse than the construction cost of scoping it.
+
+**The failures this page describes surface identically to the ones covered on
+[reading the symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)** —
+a blocked guard or interceptor produces the same high-latency,
+high-single-core-CPU signature as any other blocking Node code, because it is
+the same event loop underneath.
+
+## Failure modes
+
+**Symptom: p99 latency degrades gradually as you add more providers to a
+request-scoped dependency tree, with no single slow call.** Scope contagion —
+check how many providers transitively depend on a `REQUEST`-scoped one; each
+is reconstructed per request, and the cost is additive across the whole
+chain, not visible at any single injection site.
+
+**Symptom: a "singleton" service appears to leak state between unrelated
+users.** The opposite scoping bug — a provider was left `DEFAULT` (singleton)
+but holds mutable state that should have been per-request, usually a field
+set during request handling and never reset. This is the DI-framework version
+of the [Node runtime page](/cs-fundamentals/6-languages/node-runtime/)'s "do
+not keep shared state in process memory" rule, except the shared state is
+sitting inside a class marked `@Injectable()`, which reads as safe.
+
+**Symptom: throughput is measurably lower after adopting Nest, on
+functionally identical routes.** Expected, and the right diagnostic is
+comparing DI construction cost against network I/O cost for the actual
+handlers — if handlers are dominated by a database round trip, the DI
+overhead is noise; if handlers are close to no-ops, the relative overhead is
+real and worth checking against the Cost & limits derivation above.
+
+**Symptom: an interceptor or guard silently never runs for some routes.**
+Guards/interceptors/pipes registered at the wrong scope — controller-level
+versus method-level versus global — is a routing-configuration bug, not a
+concurrency one, but it produces the same "requests behave inconsistently"
+symptom that makes people suspect a race condition where there is none; Nest
+executes each request's pipeline deterministically and serially, same as any
+other Node code path.
+
+**Symptom: the exact queueing collapse from
+[node-backends](/cs-fundamentals/12-backend-apis/node-backends/), but the
+blocking call is nowhere in the controller.** Look in guards, interceptors,
+and pipes — a synchronous validation library call, a synchronous crypto
+operation in an auth guard, or a large DTO transformation in a pipe all
+occupy the same thread as a controller method would, and the decorator syntax
+makes them easy to overlook when searching for "the slow handler."
+
+## Practice problems
+
+**1. Find the scope bug.** This provider is meant to cache an expensive
+per-request permission calculation for reuse within the same request:
+
+```ts
+@Injectable()
+export class PermissionCache {
+  private permissions?: string[];
+
+  set(perms: string[]) {
+    this.permissions = perms;
+  }
+
+  get() {
+    return this.permissions;
+  }
+}
+```
+
+<details>
+<summary>Solution</summary>
+
+`@Injectable()` with no `scope` is `Scope.DEFAULT` — a singleton, constructed
+once for the whole application, not once per request. `this.permissions` is
+process-wide mutable state: the first request to call `.set()` writes it, and
+every concurrent request sees whichever value was written most recently,
+because they all share the same instance. This is the DI-framework version of
+a module-level `let` in plain Node — same bug, reached through a class marked
+`@Injectable()` instead of an obviously shared variable.
+
+```ts
+@Injectable({ scope: Scope.REQUEST })
+export class PermissionCache {
+  private permissions?: string[];
+  set(perms: string[]) { this.permissions = perms; }
+  get() { return this.permissions; }
+}
+```
+
+Now every request gets its own instance, at the cost of reconstructing it —
+and anything that depends on `PermissionCache` — per request. Worth checking
+whether that cost is warranted for something this cheap to recompute, or
+whether the fix is deriving permissions directly each time instead of
+caching them at all.
+
+</details>
+
+**2. Predict the cost.** A `UserService` (singleton) is injected into a
+`ReportService` that is `REQUEST`-scoped because it also depends on
+`TenantContext`. At 1,000 requests/second, how many `UserService` instances
+exist, and how many `ReportService` instances?
+
+<details>
+<summary>Solution</summary>
+
+One `UserService` instance, for the process's lifetime — its own scope is
+`DEFAULT`, and depending on a request-scoped provider does not change *its*
+scope, only the scope of things that depend *on it through the request-scoped
+path*. But 1,000 `ReportService` instances per second, one per request,
+because it is directly `REQUEST`-scoped. This is the asymmetry worth
+internalizing: scope contagion flows from a request-scoped provider up to its
+*dependents*, not down to its *dependencies*. `UserService` stays cheap
+regardless of who injects it.
+
+</details>
+
+**3. Diagnose the regression.** After migrating an Express service to Nest
+with functionally identical routes, p50 latency is unchanged but p99 rose
+noticeably under load. The team suspects the DI container. What would you
+check before concluding that?
+
+<details>
+<summary>Solution</summary>
+
+Check event loop lag under the same load first — a p99-only regression with
+flat p50 is more consistent with occasional queueing (something intermittently
+blocking the thread) than with a fixed per-request construction cost, which
+would show up as a shift in p50 too, since it is paid on every request
+equally. If lag is flat, the DI container is not the story; look for a guard
+or pipe that does synchronous work on some code path but not others — the
+same class of bug that produces this signature in plain Express, just
+relocated into the request lifecycle this page describes.
+
+</details>
+
+## Interview answers
+
+**"What does a DI framework change about Node's concurrency model?"**
+
+> Nothing about the model — it is the same single-threaded event loop
+> underneath, and a blocking handler stalls the process identically whether
+> it's a bare Express route or a Nest controller. What it adds is a request
+> lifecycle — guards, interceptors, pipes — and a provider scope system that
+> decides whether an object is shared across requests or constructed fresh
+> per request.
+>
+> The failure mode that's actually new is scope-related: a provider left at
+> the default singleton scope but holding request-specific mutable state
+> leaks data between users, and it's a DI framework's most literal equivalent
+> of the "don't keep state in process memory" rule that applies to plain Node
+> too — it's just spelled `@Injectable()` instead of a shared variable, which
+> makes it easier to miss in review.
+
+**The caveats worth voicing:**
+
+- Scope is contagious upward through the dependency graph — one
+  request-scoped provider deep in a tree turns everything that depends on it
+  into a per-request construction, even without an explicit scope
+  declaration on each one.
+- I'd choose a DI framework for structure, not speed — it adds a real,
+  measurable per-request construction cost on top of the same event loop, and
+  the honest sell is testability and consistent module boundaries.
+- When a Nest service regresses on p99 specifically, I check event loop lag
+  before I suspect the container, because a fixed per-request cost shows up
+  in p50 too; a p99-only regression points at intermittent blocking somewhere
+  in the lifecycle, not at DI construction overhead.

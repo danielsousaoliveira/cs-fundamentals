@@ -1,0 +1,49 @@
+---
+/**
+ * Index of the reading paths, one per role. Derived from ROLES + each page's
+ * `roles` frontmatter — no hand-maintained list of pages to keep in sync.
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { ROLES, pagesForRole } from '../../lib/roles.ts';
+
+const base = import.meta.env.BASE_URL;
+
+const counts = new Map(
+  await Promise.all(
+    ROLES.map(
+      async (role) => [role.slug, (await pagesForRole(role.slug)).length] as const,
+    ),
+  ),
+);
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Reading Paths',
+    description:
+      'A role-specific path through the site: every page tagged for that role, in order.',
+    tableOfContents: false,
+  }}
+>
+  <p>
+    Pick the path that matches the role you're preparing for. Each one lists every page
+    tagged for it, in the same order the sidebar already uses.
+  </p>
+  <ul class="card-grid">
+    {
+      ROLES.map((role) => (
+        <li>
+          <a class="topic-card" href={`${base}paths/${role.slug}/`}>
+            <span class="topic-card__title">{role.label}</span>
+            <span class="topic-card__desc">{role.description}</span>
+            <span class="topic-card__meta">
+              {counts.get(role.slug) === 0
+                ? 'coming soon'
+                : `${counts.get(role.slug)} page${counts.get(role.slug) === 1 ? '' : 's'}`}
+            </span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</StarlightPage>

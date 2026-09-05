@@ -330,6 +330,12 @@ dependency order, are both topological sorts.
 **Garbage collection.** Mark-and-sweep is a graph traversal from the roots; anything
 unreached is garbage.
 
+**Knowledge graphs.** Entities as nodes, relationships as typed edges — the same
+traversal and reachability questions above, now answered by a query language
+(Cypher, SPARQL) instead of hand-written BFS/DFS. See [Knowledge
+Graphs](/cs-fundamentals/10-ai-engineering/knowledge-graphs/) for how retrieval
+over one differs from a vector search.
+
 ## Failure modes
 
 **No visited set on a cyclic graph.** An infinite loop, not an exception. The

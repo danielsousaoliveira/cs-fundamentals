@@ -267,6 +267,12 @@ service can have 1,000 concurrent requests and a pool of 20 connections; request
 the pool just moves the queue. This is the most common place where "more
 concurrency" makes latency worse rather than better.
 
+**The model above is what a backend framework is built on top of.** [Node
+backend frameworks](/cs-fundamentals/12-backend-apis/node-backends/) covers the
+single-thread-plus-worker-pool version; [Python backend
+frameworks](/cs-fundamentals/12-backend-apis/python-backends/) covers what
+changes once the GIL and multiple worker processes enter the picture.
+
 ## Failure modes
 
 **Symptom: added workers, and throughput went down.** Either the payload copy

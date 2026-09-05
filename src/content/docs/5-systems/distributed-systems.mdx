@@ -212,7 +212,9 @@ endpoint, the circuit breaker around a flaky downstream call. Message brokers
 (see [Message Brokers](/cs-fundamentals/5-systems/message-brokers/)) exist
 specifically to convert synchronous distributed calls, with their
 availability multiplication problem, into asynchronous ones that degrade more
-gracefully.
+gracefully. [Resilience patterns](/cs-fundamentals/13-architecture/resilience-patterns/)
+covers the other half: what to put around the calls that have to stay
+synchronous — retries, circuit breakers, timeouts, bulkheads.
 
 ## Failure modes
 

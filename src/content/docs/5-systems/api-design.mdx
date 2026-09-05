@@ -357,7 +357,9 @@ form that two people have open.
 
 Get `Cache-Control` wrong and the consequence is severe: `public, max-age=60` on
 anything user-specific means a CDN caches one user's data and serves it to another.
-Anything personalised is `private, no-store`.
+Anything personalised is `private, no-store`. [REST
+APIs](/cs-fundamentals/12-backend-apis/rest-apis/) works through caching,
+versioning, and pagination at this level of detail.
 
 **Security, in layers rather than as a list:**
 
@@ -386,7 +388,8 @@ instances, deploy without draining sessions, and a crash loses nobody's context.
 State goes in the database or Redis, never in process memory — the same lesson as
 the in-process lock that stops working when you run two replicas.
 
-**GraphQL error semantics surprise people.** It returns `200 OK` with an `errors`
+**[GraphQL](/cs-fundamentals/12-backend-apis/graphql-apis/) error semantics
+surprise people.** It returns `200 OK` with an `errors`
 array, because HTTP status describes the transport and a GraphQL response can be
 *partially* successful — one field failed, the rest resolved.
 

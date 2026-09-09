@@ -22,11 +22,10 @@ SOFTWARE.
 
 ---
 
-Scope: the MIT terms above cover the software in this repository — the widget
-and component library, the build scripts, the Astro/Starlight configuration,
-and the test suites (broadly, everything under `src/components/`,
-`src/scripts/`, `scripts/`, `e2e/`, and the config files at the repository
-root).
+Scope: the MIT terms above cover all software in this repository outside
+`src/content/` — everything under `src/components/`, `src/lib/`, `src/pages/`,
+`scripts/`, `e2e/`, and `notebooks/`, together with the configuration files at
+the repository root.
 
 The written material — the topic pages and their prose, the diagrams, and the
 figures under `src/content/` — is NOT covered by the MIT terms. It is licensed

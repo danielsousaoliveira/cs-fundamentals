@@ -15,7 +15,7 @@ license, and indicate whether changes were made.
 
 ## How to attribute
 
-> "CS Fundamentals" by Daniel Oliveira, licensed under CC BY 4.0.
+> "CS Fundamentals" by Daniel Oliveira, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 > Source: https://github.com/danielsousaoliveira/cs-fundamentals
 
 If you adapted the material, say so in your credit line.

@@ -145,8 +145,10 @@ a vulnerability. Participation is under `CODE_OF_CONDUCT.md`.
 
 Two licenses, on purpose — prose and code have different reuse expectations:
 
-- **Code** — the widget library, build scripts, config, and tests — is under the
-  **MIT License** (`LICENSE`).
+- **Code** — all software outside `src/content/`: everything under
+  `src/components/`, `src/lib/`, `src/pages/`, `scripts/`, `e2e/`, and
+  `notebooks/`, plus the root configuration files — is under the **MIT License**
+  (`LICENSE`).
 - **Written material** — the topic pages and their prose, diagrams, and figures
   under `src/content/` — is under **CC BY 4.0** (`LICENSE-CONTENT.md`).
 

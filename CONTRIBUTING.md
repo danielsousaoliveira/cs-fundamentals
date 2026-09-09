@@ -15,13 +15,14 @@ do not discover it in review:
   to, not from memory. "It's O(log n)" without the argument will be sent back.
 - **Every complete page carries the full spine**, in order:
 
-  ```
+  ```text
   intuition → visual → mechanics → complexity (derived, never asserted)
   → when NOT to use it → real-world usage → failure modes
   → practice problems → interview answers
   ```
 
-  "When NOT to use it" and "Failure modes" are the two most treatments skip.
+  "When NOT to use it" and "Failure modes" are the two sections most often
+  skipped.
   They are non-negotiable here — `pnpm lint:spine` fails CI without them.
 
 - **Prose is written for a stranger reading cold**: a claim, the smallest code

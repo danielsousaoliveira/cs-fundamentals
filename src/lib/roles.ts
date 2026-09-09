@@ -64,6 +64,9 @@ export async function pagesForRole(role: RoleSlug): Promise<CollectionEntry<'doc
       const orderA = sectionOrder.get(sectionA) ?? 999;
       const orderB = sectionOrder.get(sectionB) ?? 999;
       if (orderA !== orderB) return orderA - orderB;
-      return (a.data.sidebar.order ?? 999) - (b.data.sidebar.order ?? 999);
+      const pageOrderA = a.data.sidebar.order ?? 999;
+      const pageOrderB = b.data.sidebar.order ?? 999;
+      if (pageOrderA !== pageOrderB) return pageOrderA - pageOrderB;
+      return a.id.localeCompare(b.id);
     });
 }

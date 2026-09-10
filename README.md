@@ -1,13 +1,65 @@
 # CS Fundamentals
 
-An in-depth, visual introduction to computer science, published at
-**https://danielsousaoliveira.github.io/cs-fundamentals/**.
+**A visual introduction to computer science where every bound is derived, every
+structure is shown working, and every failure mode is named.**
+
+[![CI](https://github.com/danielsousaoliveira/cs-fundamentals/actions/workflows/ci.yml/badge.svg)](https://github.com/danielsousaoliveira/cs-fundamentals/actions/workflows/ci.yml)
+[![Code: MIT](https://img.shields.io/badge/code-MIT-blue.svg)](LICENSE)
+[![Content: CC BY 4.0](https://img.shields.io/badge/content-CC%20BY%204.0-lightgrey.svg)](LICENSE-CONTENT.md)
+
+**[Read it live → danielsousaoliveira.github.io/cs-fundamentals](https://danielsousaoliveira.github.io/cs-fundamentals/)**
+
+[![The Binary Trees page: derived complexity chips in the header, the full page spine in the contents rail](docs/media/site.webp)](https://danielsousaoliveira.github.io/cs-fundamentals/2-data-structures/binary-trees/)
 
 Most explanations of a data structure give you a definition, a library demo, three
 practice problems, and the sentence "insertion is O(log n)". You finish knowing
 what the thing is called and nothing about when it will hurt you. This site is an
-attempt at the opposite: every bound derived, every structure shown working, and
-every failure mode named.
+attempt at the opposite: every bound derived on the page, every structure shown
+running, and — the two parts usually skipped — an explicit *when NOT to use it*
+and a list of *failure modes* on every page. A lint rule fails CI if a finished
+page is missing either.
+
+## Every visualisation is checked against the algorithm it draws
+
+![Two sort algorithms racing on the same array on the Sorting page, comparison and swap counters advancing step by step](docs/media/widget.webp)
+
+A widget is a pure trace generator plus a renderer: the algorithm runs once,
+ahead of time, producing immutable snapshots a test can assert on. So the
+comparison counter you watch on screen is the same number the test checks
+against an independently derived bound — a visualisation that disagreed with its
+algorithm would fail the build. There are more than 20 of these, from hash
+probing to query plans to the agent loop.
+
+## What's inside
+
+14 sections, 130+ finished pages, one `.mdx` file each. The whole set:
+
+| Section | What it covers |
+|---|---|
+| [1 · Complexity](https://danielsousaoliveira.github.io/cs-fundamentals/1-complexity/) | Reasoning about cost — deriving bounds rather than memorising them, and when the constant factor beats the exponent. |
+| [2 · Data Structures](https://danielsousaoliveira.github.io/cs-fundamentals/2-data-structures/) | The shapes data takes in memory, what each one buys you, and what each one costs you. |
+| [3 · Algorithms](https://danielsousaoliveira.github.io/cs-fundamentals/3-algorithms/) | Sorting, searching, and traversal — with the comparison counter running. |
+| [4 · Paradigms](https://danielsousaoliveira.github.io/cs-fundamentals/4-paradigms/) | Divide and conquer, greedy, dynamic programming, backtracking — and telling which one a problem is asking for. |
+| [5 · Systems](https://danielsousaoliveira.github.io/cs-fundamentals/5-systems/) | What happens once the code leaves your laptop — event loops, brokers, databases, caching, APIs, testing. |
+| [6 · Languages & Design](https://danielsousaoliveira.github.io/cs-fundamentals/6-languages/) | TypeScript's type system, the Node runtime, and the design vocabulary — SOLID, patterns, and their caveats. |
+| [7 · Data Engineering](https://danielsousaoliveira.github.io/cs-fundamentals/7-data-engineering/) | Getting data from where it is to where it is useful — SQL, modelling, pipelines, quality checks. |
+| [8 · Databases & Storage](https://danielsousaoliveira.github.io/cs-fundamentals/8-databases-storage/) | Relational, document, and vector stores — what each indexes, what it charges for, and the query plan that proves which you got. |
+| [9 · Cloud & Infrastructure](https://danielsousaoliveira.github.io/cs-fundamentals/9-cloud-infra/) | The three clouds, Terraform, containers, CI/CD, and knowing the cost before the invoice. |
+| [10 · AI Engineering](https://danielsousaoliveira.github.io/cs-fundamentals/10-ai-engineering/) | Building on probabilistic models — embeddings, retrieval, agents, and the evaluation discipline behind a real system. |
+| [11 · Web & Frontend](https://danielsousaoliveira.github.io/cs-fundamentals/11-web-frontend/) | What the browser does with your code — rendering strategies across React, Vue, Svelte, Astro, Next, and their budgets. |
+| [12 · Backend & APIs](https://danielsousaoliveira.github.io/cs-fundamentals/12-backend-apis/) | The server side — Node, Nest, Python, REST and GraphQL, auth, background work, and concurrency failure modes. |
+| [13 · Architecture](https://danielsousaoliveira.github.io/cs-fundamentals/13-architecture/) | Decisions expensive to reverse — distributed systems, event-driven design, resilience. |
+| [14 · Production Engineering](https://danielsousaoliveira.github.io/cs-fundamentals/14-production/) | Operating a system — reading a symptom, running an investigation with evidence, matching failure mode to signature. |
+
+## Contributing
+
+`CONTRIBUTING.md` covers how to propose a page, the bar every claim is held to,
+and the checks that run before merge. `SECURITY.md` has the route for reporting
+a vulnerability. Participation is under `CODE_OF_CONDUCT.md`.
+
+---
+
+The rest of this file is reference for anyone working on the site.
 
 ## The page spine
 
@@ -104,6 +156,7 @@ pnpm lint:spine       # every `complete` page carries the full spine
 pnpm test:e2e         # Playwright: hydration, base paths, a11y (needs a build)
 pnpm nb2mdx --all     # mechanical notebook → MDX conversion (emits stubs)
 pnpm og:image         # regenerate public/og.png after changing its design
+pnpm readme:media     # regenerate the screenshot and widget capture above
 ```
 
 ### One dev-server caveat
@@ -134,12 +187,6 @@ Pushing to `main` builds and deploys to GitHub Pages via
 `.github/workflows/deploy.yml`. The site is served from `/cs-fundamentals`, so
 internal links must go through Astro's `base` — a hand-written `/foo` href works
 in dev and 404s in production.
-
-## Contributing
-
-`CONTRIBUTING.md` covers how to propose a page, the bar every claim is held to,
-and the checks that run before merge. `SECURITY.md` has the route for reporting
-a vulnerability. Participation is under `CODE_OF_CONDUCT.md`.
 
 ## License
 

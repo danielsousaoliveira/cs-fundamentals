@@ -17,7 +17,8 @@
     "nb2mdx": "node --experimental-strip-types scripts/nb2mdx.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "og:image": "node --experimental-strip-types scripts/make-og-image.ts"
+    "og:image": "node --experimental-strip-types scripts/make-og-image.ts",
+    "readme:media": "pnpm build && node --experimental-strip-types scripts/capture-readme-media.ts"
   },
   "dependencies": {
     "@astrojs/markdown-remark": "^7.2.2",

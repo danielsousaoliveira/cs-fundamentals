@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/danielsousaoliveira/cs-fundamentals/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue — see SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/danielsousaoliveira/cs-fundamentals/discussions
+    about: For open-ended discussion that is not a correction or a bug.

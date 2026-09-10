@@ -134,3 +134,23 @@ Pushing to `main` builds and deploys to GitHub Pages via
 `.github/workflows/deploy.yml`. The site is served from `/cs-fundamentals`, so
 internal links must go through Astro's `base` — a hand-written `/foo` href works
 in dev and 404s in production.
+
+## Contributing
+
+`CONTRIBUTING.md` covers how to propose a page, the bar every claim is held to,
+and the checks that run before merge. `SECURITY.md` has the route for reporting
+a vulnerability. Participation is under `CODE_OF_CONDUCT.md`.
+
+## License
+
+Two licenses, on purpose — prose and code have different reuse expectations:
+
+- **Code** — all software outside `src/content/`: everything under
+  `src/components/`, `src/lib/`, `src/pages/`, `scripts/`, `e2e/`, and
+  `notebooks/`, plus the root configuration files — is under the **MIT License**
+  (`LICENSE`).
+- **Written material** — the topic pages and their prose, diagrams, and figures
+  under `src/content/` — is under **CC BY 4.0** (`LICENSE-CONTENT.md`).
+
+In an `.mdx` page that embeds a code sample, the prose is CC BY 4.0 and the
+sample is MIT.

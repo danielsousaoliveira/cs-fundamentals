@@ -21,7 +21,8 @@ page is missing either.
 
 ## Every visualisation is checked against the algorithm it draws
 
-![Stepping through an in-order traversal on the Binary Trees page: the current node highlights, and the output strip fills with the tree's keys in sorted order](docs/media/widget.webp)
+<img src="docs/media/widget.gif" width="460" alt="Stepping through an in-order traversal on the Binary Trees page: the current node highlights, and the output strip fills with the tree's keys in sorted order">
+
 
 A widget is a pure trace generator plus a renderer: the algorithm runs once,
 ahead of time, producing immutable snapshots you step through. So the output you

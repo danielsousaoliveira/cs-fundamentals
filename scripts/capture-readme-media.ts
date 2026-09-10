@@ -59,7 +59,7 @@ async function main() {
     });
     await sharp(shot).resize(1200).webp({ quality: 72 }).toFile(`${OUT}/site.webp`);
 
-    console.log('capturing widget animation');
+    console.log('capturing widget steps');
     await page.goto(`${BASE}/2-data-structures/binary-trees/`, {
       waitUntil: 'domcontentloaded',
     });
@@ -84,9 +84,12 @@ async function main() {
     }
     console.log(`got ${frames.length} frames`);
 
-    const width = 820;
-    const prepared = await Promise.all(
-      frames.map((f) =>
+    await browser.close();
+
+    const held = [frames[0]!, ...frames, frames.at(-1)!, frames.at(-1)!];
+    const width = 460;
+    const pages = await Promise.all(
+      held.map((f) =>
         sharp(f)
           .resize(width)
           .ensureAlpha()
@@ -94,15 +97,13 @@ async function main() {
           .toBuffer({ resolveWithObject: true }),
       ),
     );
-    const frameHeight = prepared[0].info.height;
-    await sharp(Buffer.concat(prepared.map((p) => p.data)), {
-      raw: { width, height: frameHeight * frames.length, channels: 4 },
+    const pageHeight = pages[0]!.info.height;
+    await sharp(Buffer.concat(pages.map((p) => p.data)), {
+      raw: { width, height: pageHeight * held.length, channels: 4 },
       animated: true,
     })
-      .webp({ quality: 50, effort: 6, loop: 0, delay: 650 })
-      .toFile(`${OUT}/widget.webp`);
-
-    await browser.close();
+      .gif({ loop: 0, delay: 600, colours: 128, dither: 0.6 })
+      .toFile(`${OUT}/widget.gif`);
   } finally {
     stop();
   }

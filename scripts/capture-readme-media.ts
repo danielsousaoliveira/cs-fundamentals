@@ -60,36 +60,31 @@ async function main() {
     await sharp(shot).resize(1200).webp({ quality: 72 }).toFile(`${OUT}/site.webp`);
 
     console.log('capturing widget animation');
-    await page.goto(`${BASE}/3-algorithms/sorting/`, {
+    await page.goto(`${BASE}/2-data-structures/binary-trees/`, {
       waitUntil: 'domcontentloaded',
     });
-    const controls = page.locator('.viz-controls').first();
-    await controls.waitFor({ state: 'visible', timeout: 15_000 });
-    const figure = page
-      .locator('figure')
-      .filter({ has: page.locator('.viz-controls') })
-      .first();
+    await page.addStyleTag({
+      content:
+        '*{transition:none!important;animation:none!important}header.header{display:none!important}',
+    });
+
+    const figure = page.locator('figure.viz-frame').first();
     await figure.scrollIntoViewIfNeeded();
+    const nextStep = figure.getByRole('button', { name: 'Next step' });
+    await nextStep.waitFor({ state: 'visible', timeout: 15_000 });
     await page.waitForTimeout(600);
-    const box = await figure.boundingBox();
-    if (!box) throw new Error('widget figure has no box');
-    const clip = {
-      x: Math.max(0, Math.floor(box.x)),
-      y: Math.max(0, Math.floor(box.y)),
-      width: Math.min(1280, Math.ceil(box.width)),
-      height: Math.min(800, Math.ceil(box.height)),
-    };
 
-    await page.getByRole('button', { name: 'Play' }).first().click();
+    const stepThroughVisual = figure.locator('.viz-stack').first();
 
-    const frames: Buffer[] = [];
-    for (let i = 0; i < 14; i++) {
-      frames.push(await page.screenshot({ clip }));
-      await page.waitForTimeout(240);
+    const frames: Buffer[] = [await stepThroughVisual.screenshot()];
+    for (let i = 0; i < 11; i++) {
+      await nextStep.click();
+      await page.waitForTimeout(350);
+      frames.push(await stepThroughVisual.screenshot());
     }
     console.log(`got ${frames.length} frames`);
 
-    const width = 560;
+    const width = 820;
     const prepared = await Promise.all(
       frames.map((f) =>
         sharp(f)
@@ -104,7 +99,7 @@ async function main() {
       raw: { width, height: frameHeight * frames.length, channels: 4 },
       animated: true,
     })
-      .webp({ quality: 44, effort: 6, loop: 0, delay: 240 })
+      .webp({ quality: 50, effort: 6, loop: 0, delay: 650 })
       .toFile(`${OUT}/widget.webp`);
 
     await browser.close();

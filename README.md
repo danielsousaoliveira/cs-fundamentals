@@ -21,14 +21,14 @@ page is missing either.
 
 ## Every visualisation is checked against the algorithm it draws
 
-![Two sort algorithms racing on the same array on the Sorting page, comparison and swap counters advancing step by step](docs/media/widget.webp)
+![Stepping through an in-order traversal on the Binary Trees page: the current node highlights, and the output strip fills with the tree's keys in sorted order](docs/media/widget.webp)
 
 A widget is a pure trace generator plus a renderer: the algorithm runs once,
-ahead of time, producing immutable snapshots a test can assert on. So the
-comparison counter you watch on screen is the same number the test checks
-against an independently derived bound — a visualisation that disagreed with its
-algorithm would fail the build. There are more than 20 of these, from hash
-probing to query plans to the agent loop.
+ahead of time, producing immutable snapshots you step through. So the output you
+watch build up on screen is the same array a test asserts on, and the counters
+are checked against an independently derived bound — a visualisation that
+disagreed with its algorithm would fail the build. There are more than 20 of
+these, from hash probing to query plans to the agent loop.
 
 ## What's inside
 

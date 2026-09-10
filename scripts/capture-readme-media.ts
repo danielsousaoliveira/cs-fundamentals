@@ -87,22 +87,25 @@ async function main() {
     await browser.close();
 
     const held = [frames[0]!, ...frames, frames.at(-1)!, frames.at(-1)!];
-    const width = 460;
-    const pages = await Promise.all(
-      held.map((f) =>
-        sharp(f)
-          .resize(width)
-          .ensureAlpha()
-          .raw()
-          .toBuffer({ resolveWithObject: true }),
+    const W = 460;
+    const sized = await Promise.all(
+      held.map((f) => sharp(f).resize({ width: W }).png().toBuffer()),
+    );
+    const heights = await Promise.all(
+      sized.map(async (b) => (await sharp(b).metadata()).height ?? 0),
+    );
+    const H = Math.max(...heights);
+    const pngFrames = await Promise.all(
+      sized.map((b) =>
+        sharp(b)
+          .resize({ width: W, height: H, fit: 'contain', background: '#0e0e12' })
+          .png()
+          .toBuffer(),
       ),
     );
-    const pageHeight = pages[0]!.info.height;
-    await sharp(Buffer.concat(pages.map((p) => p.data)), {
-      raw: { width, height: pageHeight * held.length, channels: 4 },
-      animated: true,
-    })
-      .gif({ loop: 0, delay: 600, colours: 128, dither: 0.6 })
+    const delays = held.map((_, i) => (i === 0 || i >= held.length - 2 ? 1400 : 600));
+    await sharp(pngFrames, { join: { animated: true } })
+      .gif({ loop: 0, delay: delays, colours: 128 })
       .toFile(`${OUT}/widget.gif`);
   } finally {
     stop();

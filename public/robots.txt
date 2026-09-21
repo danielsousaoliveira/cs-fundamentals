@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://danielsousaoliveira.github.io/cs-fundamentals/sitemap-index.xml

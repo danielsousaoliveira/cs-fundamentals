@@ -1,0 +1,29 @@
+# CS Fundamentals
+
+> An in-depth, visual introduction to computer science. Every topic derives
+> its complexity bounds rather than asserting them, and covers when NOT to
+> use a structure or technique and how it fails.
+
+Site: https://danielsousaoliveira.github.io/cs-fundamentals/
+Source: https://github.com/danielsousaoliveira/cs-fundamentals
+
+## Sections
+
+- Complexity
+- Data Structures
+- Algorithms
+- Paradigms
+- Systems
+- Languages
+- Data Engineering
+- Databases & Storage
+- Cloud & Infra
+- AI Engineering
+- Web & Frontend
+- Backend & APIs
+- Architecture
+- Production
+
+Every complete page follows the same spine: intuition, a visual, the
+mechanics, complexity or cost derived from the mechanics, when not to use it,
+real-world usage, failure modes, practice problems, and interview answers.

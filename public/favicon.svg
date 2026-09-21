@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .bg { fill: #17181c; }
+    .cell { fill: none; stroke: #526fff; stroke-width: 5; }
+    .cell.on { fill: #526fff; }
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #ffffff; }
+      .cell { stroke: #3450e0; }
+      .cell.on { fill: #3450e0; }
+    }
+  </style>
+  <rect class="bg" width="64" height="64" rx="14" />
+  <rect class="cell" x="4" y="24" width="16" height="16" rx="3" />
+  <rect class="cell on" x="24" y="24" width="16" height="16" rx="3" />
+  <rect class="cell" x="44" y="24" width="16" height="16" rx="3" />
+</svg>

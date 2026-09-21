@@ -61,3 +61,16 @@ const structuredData = {
   is:inline
   set:html={JSON.stringify(structuredData)}
 />
+
+{
+  /* Cloudflare Web Analytics: aggregated page views, referrers, country,
+    device/browser/OS and page-load performance — no cookies, no
+    cross-site identifiers. Loaded async off a third-party CDN, so a reader
+    blocking it (or the CDN being unreachable) leaves every page and
+    visualisation unaffected — see /privacy/. */
+}
+<script
+  type="module"
+  is:inline
+  src="https://static.cloudflareinsights.com/beacon.min.js"
+  data-cf-beacon='{"token": "7433beb290034ac8a9880dc3c8323e78"}'></script>

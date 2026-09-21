@@ -108,6 +108,8 @@ export default defineConfig({
         // Adds og:image and the Twitter card type on top of Starlight's own
         // per-page OG tags.
         Head: './src/components/overrides/Head.astro',
+        // Links the privacy page from every page's footer.
+        Footer: './src/components/overrides/Footer.astro',
       },
       lastUpdated: true,
       editLink: {

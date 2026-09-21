@@ -1,7 +1,7 @@
 ---
 title: Node Backend Frameworks
 description: >-
-  Express and Fastify don't change the concurrency model underneath them —
+  Express and Fastify don't change the concurrency model underneath them -
   they change what runs on top of it. What saturates first is still the
   event loop, and the framework just decides how easy that is to hit by
   accident.
@@ -24,14 +24,14 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 The [event loop](/cs-fundamentals/5-systems/event-loop/) page establishes the
 model: one thread runs your JavaScript, run-to-completion, and I/O is handed
 off rather than waited on. That model does not change when you add Express or
-Fastify. A framework is not a new concurrency primitive — it is a router, a
+Fastify. A framework is not a new concurrency primitive - it is a router, a
 middleware pipeline, and a serialization layer, all still running on the one
 thread the event loop gives you.
 
 Which means the question a framework's documentation never quite answers is
 the one that matters in production: **what does adding this framework cost on
 top of the model you already have?** The answer is a constant factor per
-request — routing lookup, middleware dispatch, JSON serialization — not a
+request - routing lookup, middleware dispatch, JSON serialization - not a
 different saturation point. The thread still saturates the same way it did on
 a bare `http.createServer`: one handler that doesn't yield blocks everyone
 behind it, framework or no framework.
@@ -39,7 +39,7 @@ behind it, framework or no framework.
 The one thing frameworks change for real is how *easy* that is to trigger by
 accident. A middleware chain hides where synchronous work lives. Error
 handling that swallows a rejected promise turns a crash into a hang. Neither
-of these is a new failure mode — both are the event loop's existing rule,
+of these is a new failure mode - both are the event loop's existing rule,
 reached through one extra layer of indirection.
 
 ## Mechanics
@@ -49,13 +49,13 @@ reached through one extra layer of indirection.
 Express middleware is `(req, res, next) => void`. Each middleware must do one
 of two things: send a response (`res.send`, `res.json`, `res.end`) to end the
 request-response cycle, or call `next()` to pass control to the next handler.
-Doing neither — a code path that returns without either — stalls the request
+Doing neither - a code path that returns without either - stalls the request
 forever, because nothing else will resume it.
 
 ```ts
 app.use((req, res, next) => {
   req.startedAt = Date.now();
-  next(); // required — the request simply hangs without it
+  next(); // required - the request simply hangs without it
 });
 
 app.use(async (req, res, next) => {
@@ -72,21 +72,21 @@ Two consequences fall out of "just nested function calls":
 
 **Express 4 does not catch a rejected promise for you.** An `async` middleware
 that throws produces an unhandled rejection unless you call `next(err)`
-yourself, or wrap it. Express 5 (2024) fixed this — a rejected handler is
-routed to error middleware automatically — but a lot of production code still
+yourself, or wrap it. Express 5 (2024) fixed this - a rejected handler is
+routed to error middleware automatically - but a lot of production code still
 runs on Express 4's semantics, so the manual `try/catch` above is not
 defensive boilerplate, it is load-bearing.
 
 **Middleware order is request-scoped serial execution, not parallelism.**
 Twelve middleware functions run one after another, each blocking the next
 until it calls `next()` or awaits something. Twelve middleware doing 1 ms of
-synchronous work each is 12 ms added to every request, always — the same
+synchronous work each is 12 ms added to every request, always - the same
 event-loop-occupancy accounting the event loop page derives, just spread
 across more functions instead of one handler.
 
 ### Fastify: the same model, a different tradeoff
 
-Fastify's pitch is not a different concurrency model — it is faster
+Fastify's pitch is not a different concurrency model - it is faster
 serialization (a JSON schema compiled to a specialized stringifier) and a
 plugin/hook system in place of Express's middleware chain. The
 request-per-tick, one-handler-per-turn reality underneath is identical.
@@ -100,7 +100,7 @@ const app = express();
 
 app.get('/users/:id', async (req, res) => {
   const user = await db.findUser(req.params.id);
-  res.json(user); // JSON.stringify — untyped, walks the object
+  res.json(user); // JSON.stringify - untyped, walks the object
 });
 
 app.listen(3000);
@@ -128,7 +128,7 @@ app.listen({ port: 3000 });
 </Tabs>
 
 The schema buys a genuinely faster serialize path, but it is still synchronous
-work on the same thread — a large response with a compiled serializer is
+work on the same thread - a large response with a compiled serializer is
 cheaper per byte than `JSON.stringify`, not free. It moves the constant, it
 does not remove the mechanism.
 
@@ -136,7 +136,7 @@ does not remove the mechanism.
 
 Run the numbers rather than assert them. Two routes on a bare Express app:
 `/fast`, which does nothing but `await` a microtask before responding, and
-`/block`, which spends **20 ms in a synchronous loop** before responding —
+`/block`, which spends **20 ms in a synchronous loop** before responding -
 the same shape as an unoptimized regex, a synchronous `crypto` call, or
 `JSON.parse` on a large body.
 
@@ -144,7 +144,7 @@ the same shape as an unoptimized regex, a synchronous `crypto` call, or
 generator: `scripts/bench/load.mjs` in this repository, which fires
 `concurrency` workers that each loop `fetch` → `await res.json()`, timing
 wall-clock per request against the server fixtures in
-`scripts/bench/node-backends/` — see `scripts/bench/README.md` for the exact
+`scripts/bench/node-backends/` - see `scripts/bench/README.md` for the exact
 commands. Concurrency 50 throughout.
 
 ```text
@@ -156,26 +156,26 @@ GET /block  (20ms synchronous loop), 200 requests, concurrency 50
 ```
 
 200 requests × 20 ms of *pure serial work* is exactly 4,000 ms if every
-request queues behind the last — and the measured wall time is 4,017 ms.
+request queues behind the last - and the measured wall time is 4,017 ms.
 That is not a coincidence: with one thread, 50 concurrent connections to a
 handler that blocks for 20 ms do not run in parallel. They **all queue behind
 whichever one currently holds the thread**, and the queue is exactly the
 $M/D/1$ model the [event loop page](/cs-fundamentals/5-systems/event-loop/)
 derives. p99 latency (1,940 ms) is roughly a hundred times the handler's own
-20 ms — that gap *is* the queueing delay, and it is not framework-specific;
+20 ms - that gap *is* the queueing delay, and it is not framework-specific;
 Fastify measured the same throughput on the same non-blocking route (see
 below) because the route did no synchronous work, and would show the identical
 collapse if it did.
 
 **Framework overhead, isolated.** The same non-blocking `/fast` route on
 Fastify 5, same machine, same load generator: 500 requests, concurrency 50 →
-wall 66 ms, 7,576 req/s, p50 4 ms, p99 17 ms — statistically indistinguishable
+wall 66 ms, 7,576 req/s, p50 4 ms, p99 17 ms - statistically indistinguishable
 from Express's 6,757 req/s at this request size and rate. At the scale where
-routing and serialization become measurable — thousands of routes, large
-response payloads, high sustained RPS — Fastify's compiled serializer and
+routing and serialization become measurable - thousands of routes, large
+response payloads, high sustained RPS - Fastify's compiled serializer and
 lower-overhead router show a real gap; on a single trivial JSON route neither
 framework's constant factor dominates. **The resource that saturates first is
-the thread, and no framework choice changes that** — it only changes how much
+the thread, and no framework choice changes that** - it only changes how much
 of the thread routing and serialization consume before your handler even
 runs.
 
@@ -190,8 +190,8 @@ $$
 b_{\text{total}} = b_{\text{middleware}} + b_{\text{routing}} + b_{\text{handler}} + b_{\text{serialization}}
 $$
 
-Each term is small in isolation — a few hundred microseconds for routing, low
-milliseconds for serializing a modest JSON body — but they are additive and
+Each term is small in isolation - a few hundred microseconds for routing, low
+milliseconds for serializing a modest JSON body - but they are additive and
 they all occupy the same thread. Twelve middleware functions and a large
 response body can add up to a meaningful fraction of your latency budget
 before your handler's own logic runs at all, and none of it shows up as "my
@@ -200,7 +200,7 @@ code is slow" in a profiler that only samples your route handler.
 **Connection count and CPU work are two different ceilings, and CPU work is
 the one that binds first in practice.** libuv and the kernel's readiness
 mechanism handle tens of thousands of idle sockets cheaply, as established on
-the event loop page — that ceiling exists (open file descriptors, `ulimit -n`,
+the event loop page - that ceiling exists (open file descriptors, `ulimit -n`,
 `server.maxConnections` if you set it), but it is rarely what a Node backend
 hits. `server.maxConnections`, when set, closes new sockets once the count is
 reached in a single-process server; in a `cluster` deployment each worker
@@ -214,15 +214,15 @@ does.
 ## When NOT to use it
 
 **When the workload is CPU-bound in aggregate**, not just per-request. A
-service that does meaningful computation on every request — image resizing,
-PDF generation, non-trivial data transformation — will saturate the single
+service that does meaningful computation on every request - image resizing,
+PDF generation, non-trivial data transformation - will saturate the single
 thread regardless of which framework routes the request there. Route that
 work to [worker threads](/cs-fundamentals/5-systems/concurrency/) or a
 separate service; no framework choice fixes a CPU-bound handler.
 
 **When you need compile-time route/schema safety and are choosing purely on
 that.** Fastify's schema validation happens at request time, not compile
-time — it catches malformed input, not a TypeScript type error. If the goal is
+time - it catches malformed input, not a TypeScript type error. If the goal is
 static guarantees, that comes from TypeScript and a validation library
 (`zod`, `typebox`), not from the framework's request pipeline.
 
@@ -230,7 +230,7 @@ static guarantees, that comes from TypeScript and a validation library
 request-scoped providers, decorators, guards, and interceptors as a first-class
 concept rather than something bolted onto middleware, that is the layer
 covered on the [dependency-injection frameworks
-page](/cs-fundamentals/12-backend-apis/dependency-injection-frameworks/) — built
+page](/cs-fundamentals/12-backend-apis/dependency-injection-frameworks/) - built
 on top of exactly this model, with an added request lifecycle worth
 understanding on its own.
 
@@ -241,20 +241,20 @@ shapes, and middleware stack before treating either number as representative.
 
 ## Real-world usage
 
-**Express is still the default in most existing Node services** — its
+**Express is still the default in most existing Node services** - its
 middleware ecosystem (`helmet`, `cors`, `express-rate-limit`,
 `express-session`) is the largest, and Express 5's automatic async-error
 handling (2024) closed the gap that used to be the strongest argument for
 switching.
 
 **Fastify shows up where serialization and routing overhead is measurable at
-the team's actual scale** — high-RPS internal APIs, gateway services handling
+the team's actual scale** - high-RPS internal APIs, gateway services handling
 thousands of distinct routes, or services where response payload size is
 large enough that a compiled serializer's savings compound.
 
 **Both sit in front of the same production symptom.** A blocked event loop
 looks identical from the outside whether the blocking call is in raw
-`http.createServer`, an Express middleware, or a Fastify hook — see [reading
+`http.createServer`, an Express middleware, or a Fastify hook - see [reading
 the symptoms](/cs-fundamentals/14-production/reading-the-symptoms/) for how
 that shows up on a dashboard. High latency with high CPU pegged on one core is
 this. High, flat CPU is not required to confirm it, though: a synchronous
@@ -267,8 +267,8 @@ Event loop lag, not CPU, is the metric that catches both cases.
 
 **Symptom: p99 latency is a hundred times the slowest individual operation,
 and CPU on one core is pegged.** The queueing effect measured above. Nothing
-is individually broken — every request is legitimately doing its 20 ms of
-work — but they cannot run in parallel, so the queue behind a burst of
+is individually broken - every request is legitimately doing its 20 ms of
+work - but they cannot run in parallel, so the queue behind a burst of
 concurrent requests grows exactly as $M/D/1$ predicts. Fix: find and move the
 synchronous work, not the framework.
 
@@ -277,18 +277,18 @@ Usually an early `return` in middleware that forgot to call `next()`. An
 Express 4 unhandled rejection inside `async` middleware is the other common
 cause, but its outcome depends on what else is installed: with no
 `process.on('unhandledRejection', ...)` handler, modern Node's default is to
-throw and terminate the whole process — which ends every in-flight request
+throw and terminate the whole process - which ends every in-flight request
 abruptly rather than leaving this one hanging. The silent-hang version happens
 specifically when the app *does* have an `unhandledRejection` handler that
-logs and continues instead of exiting — then the process survives, but this
+logs and continues instead of exiting - then the process survives, but this
 one request never got a response and never will. Confirm with [event loop lag
-monitoring](/cs-fundamentals/5-systems/event-loop/) — if lag is flat while the
+monitoring](/cs-fundamentals/5-systems/event-loop/) - if lag is flat while the
 one request is stuck, it is not blocking, it is an abandoned chain.
 
 **Symptom: adding a schema/serializer sped up small responses but slowed down
 large ones, or vice versa.** Compiling a schema into a serializer has a
 one-time setup cost that amortizes across the requests that route serves, not
-across the size of any single payload — `JSON.stringify` has no such
+across the size of any single payload - `JSON.stringify` has no such
 compilation step, so the two approaches trade differently depending on
 response shape and request volume. Measure at your actual payload shapes and
 sizes rather than assuming a compiled serializer is a strict win.
@@ -307,13 +307,13 @@ framework problem?
 <details>
 <summary>Solution</summary>
 
-No — the CPU signature says something on the thread is doing real work for a
+No - the CPU signature says something on the thread is doing real work for a
 meaningful fraction of requests, and the gap between p50 and p99 is the
 queueing tax from that work blocking everyone behind it, exactly like the
 `/block` measurement above. Swapping frameworks changes the constant factor
 on routing and serialization, not the presence of a blocking handler. The fix
-is finding the synchronous operation — a large `JSON.parse`, an unoptimized
-regex, synchronous crypto — not the router.
+is finding the synchronous operation - a large `JSON.parse`, an unoptimized
+regex, synchronous crypto - not the router.
 
 </details>
 
@@ -325,7 +325,7 @@ why would it barely change?
 <details>
 <summary>Solution</summary>
 
-Roughly the same — about 4,000 ms — because the queue is bounded by total
+Roughly the same - about 4,000 ms - because the queue is bounded by total
 serial work (200 × 20 ms), not by how many requests are waiting
 simultaneously. Raising concurrency from 50 to 200 means more requests arrive
 *already queued* rather than trickling in, but the single thread still
@@ -353,11 +353,11 @@ app.use(async (req, res, next) => {
 <summary>Solution</summary>
 
 Two independent bugs. First, `next()` runs unconditionally, including after
-the 401 response has already been sent — the request continues into
+the 401 response has already been sent - the request continues into
 downstream handlers that assume `req.user` exists, and calling `res.json`
 again later throws `ERR_HTTP_HEADERS_SENT`. Second, if `verifyToken` rejects,
 Express 4 does not catch it, and neither `next()` nor a response ever
-fires — the request hangs until the client's own timeout.
+fires - the request hangs until the client's own timeout.
 
 ```ts
 app.use(async (req, res, next) => {
@@ -378,7 +378,7 @@ app.use(async (req, res, next) => {
 
 **"Does the framework you use change Node's concurrency model?"**
 
-> No — Express and Fastify both run on the same single-threaded event loop.
+> No - Express and Fastify both run on the same single-threaded event loop.
 > What changes is the constant factor per request: routing lookup, middleware
 > dispatch order, and serialization cost. I measured this directly: a
 > non-blocking route on Express and Fastify performed within noise of each
@@ -386,18 +386,18 @@ app.use(async (req, res, next) => {
 > collapsed both frameworks' throughput identically, because the bottleneck
 > was the single thread, not the router.
 >
-> Where the frameworks genuinely differ is ergonomics around that model —
+> Where the frameworks genuinely differ is ergonomics around that model -
 > Fastify's schema-compiled serializer is measurably faster at scale, and
 > Express 5 finally routes rejected async middleware to error handling
 > automatically instead of hanging silently.
 
 **The caveats that signal you have run this in production:**
 
-- A middleware chain hides synchronous work behind a layer of indirection —
+- A middleware chain hides synchronous work behind a layer of indirection -
   the profiler still finds it, but "which of my twelve middleware functions"
   is a slower first question than "is my handler slow."
 - Express 4's lack of automatic async-error handling is not a historical
-  footnote if the service predates Express 5 — it is a live hang risk in any
+  footnote if the service predates Express 5 - it is a live hang risk in any
   `async` middleware without an explicit `try/catch`.
 - I would not choose a framework based on a synthetic single-route benchmark;
   I would check event loop lag under my actual traffic shape, because that is

@@ -1,7 +1,7 @@
 ---
 title: Evaluation
 description: >-
-  How to know whether a change made things better — building a golden set,
+  How to know whether a change made things better - building a golden set,
   choosing metrics that survive contact with production, and using an LLM judge
   without fooling yourself.
 sidebar:
@@ -24,7 +24,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 Every other page in this section describes a change you might make: retrieve
 differently, chunk differently, rerank, change the prompt, change the model.
 **Evaluation is what tells you whether the change helped**, and without it none
-of the others are engineering — they are guessing with extra steps.
+of the others are engineering - they are guessing with extra steps.
 
 This is unusually true for LLM systems, for a specific reason. Traditional
 software is mostly deterministic: a change either breaks the test or it does
@@ -33,7 +33,7 @@ failure modes are subtle enough that a change can improve the three examples you
 looked at while degrading the distribution.
 
 The trap has a recognisable shape. You look at a handful of outputs, tweak
-something, look again, and it seems better. That is not measurement — it is
+something, look again, and it seems better. That is not measurement - it is
 sampling bias with a feedback loop. **Human spot-checking systematically
 overestimates improvement**, because you are checking the cases you just thought
 about.
@@ -44,7 +44,7 @@ Most confusion in this area comes from mixing these up:
 
 1. **Is retrieval finding the right material?** Measurable objectively, cheaply,
    with no model involved.
-2. **Is the generation faithful to what it was given?** Partly automatable —
+2. **Is the generation faithful to what it was given?** Partly automatable -
    citations, spans, schema.
 3. **Is the answer good?** Genuinely a judgement, and the expensive one.
 
@@ -93,7 +93,7 @@ interface Case {
   expectedChunks: string[];
   mustContain?: string[];
   mustNotContain?: string[];
-  /** Why this case exists — a ticket id, an incident, a reported failure. */
+  /** Why this case exists - a ticket id, an incident, a reported failure. */
   origin: string;
 }
 ```
@@ -103,12 +103,12 @@ interface Case {
 
 The `origin` field looks like bookkeeping and is not. A test that fails a year
 later, with no record of why it exists, gets deleted by someone who assumes it
-was arbitrary — and that is how a regression set decays into nothing.
+was arbitrary - and that is how a regression set decays into nothing.
 
 **Where cases come from, in order of value:** production failures, user reports,
 edge cases found during development, and only then invented ones.
 
-### Score retrieval first — no model required
+### Score retrieval first - no model required
 
 This is the cheapest, most objective, and most-skipped measurement.
 
@@ -126,7 +126,7 @@ def recall_at_k(cases, retrieve, k=5) -> float:
     return hits / len(cases)
 
 def mrr(cases, retrieve, k=10) -> float:
-    """Mean reciprocal rank — rewards putting the right chunk FIRST.
+    """Mean reciprocal rank - rewards putting the right chunk FIRST.
 
     recall@k treats rank 1 and rank 5 identically, but the generator does not:
     material at the top of the context is used more reliably than material
@@ -159,7 +159,7 @@ function recallAtK(cases: Case[], retrieve: Retrieve, k = 5): number {
 </Tabs>
 
 Two metrics, two different questions. **Recall@k** asks whether the material is
-present at all — if this is low, nothing downstream can help. **MRR** asks
+present at all - if this is low, nothing downstream can help. **MRR** asks
 whether it is near the top, which is what reranking exists to improve and what
 lost-in-the-middle makes matter.
 
@@ -191,7 +191,7 @@ well-documented biases you must design against:
   *Fix: control for length, or compare answers of similar length.*
 - **Self-preference.** A model rates its own family's output higher.
   *Fix: use a different model as judge than as generator.*
-- **Fluency bias.** Confident prose scores well — which is exactly the failure
+- **Fluency bias.** Confident prose scores well - which is exactly the failure
   mode you are trying to catch. *Fix: require the judge to cite the specific
   criterion violated, not a global impression.*
 
@@ -202,18 +202,18 @@ well-documented biases you must design against:
 RUBRIC = """
 Score the answer 1-5 against the source documents ONLY.
 
-5 — every claim supported by a cited document
-4 — supported, minor unsupported detail
-3 — mostly supported, one unsupported claim
-2 — several unsupported claims
-1 — contradicts the documents, or invents a source
+5 - every claim supported by a cited document
+4 - supported, minor unsupported detail
+3 - mostly supported, one unsupported claim
+2 - several unsupported claims
+1 - contradicts the documents, or invents a source
 
 Output JSON: {"score": int, "unsupported_claims": [str]}
 Do not reward fluency or length. Judge support, nothing else.
 """
 
 def judge(answer, documents, ask) -> dict:
-    # Pairwise? Run both orders and discard inconsistent verdicts — that is the
+    # Pairwise? Run both orders and discard inconsistent verdicts - that is the
     # only cheap defence against position bias, and it also gives you a free
     # reliability signal: a high inconsistency rate means the rubric is vague.
     return ask(RUBRIC, answer=answer, documents=documents, temperature=0)
@@ -252,7 +252,7 @@ flowchart LR
   R -->|regression| X
 ```
 
-Cheap and deterministic first, expensive and probabilistic last — the same
+Cheap and deterministic first, expensive and probabilistic last - the same
 principle as any other test pyramid. See
 [testing](/cs-fundamentals/5-systems/testing/) for the general version.
 
@@ -293,15 +293,15 @@ the noise.
 | 1,000 | 1.1% | ~2 points |
 
 **Practical consequence:** with a small set, only believe large moves. And use
-**paired** comparison — run both variants on the same cases and count how many
-individually changed — which is far more sensitive than comparing two aggregate
+**paired** comparison - run both variants on the same cases and count how many
+individually changed - which is far more sensitive than comparing two aggregate
 percentages.
 
 ### Set size in practice
 
-- **20-50 cases** — enough to catch outright breakage. Start here today.
-- **100-200** — enough to compare prompts and models with some confidence.
-- **500+** — enough to detect small regressions; usually needs synthetic
+- **20-50 cases** - enough to catch outright breakage. Start here today.
+- **100-200** - enough to compare prompts and models with some confidence.
+- **500+** - enough to detect small regressions; usually needs synthetic
   augmentation or real traffic sampling to reach.
 
 <aside class="dated-figure">
@@ -321,7 +321,7 @@ examples in it. Fifty real cases in a CSV and a twenty-line script beats it
 comprehensively.
 
 **Do not use an LLM judge for what code can decide.** Schema validity, citation
-presence, exact-match fields, forbidden strings — all deterministic. Paying a
+presence, exact-match fields, forbidden strings - all deterministic. Paying a
 model to check them adds cost and noise.
 
 **Do not trust public benchmarks for your decision.** They measure a different
@@ -331,7 +331,7 @@ to choose.
 
 **Do not evaluate end-to-end when a component regressed.** An aggregate score
 that dropped tells you something is wrong; it does not tell you what. Component
-metrics — retrieval separately from generation — are what make a regression
+metrics - retrieval separately from generation - are what make a regression
 actionable.
 
 **Do not gate on a metric you have not validated.** A judge that has never been
@@ -345,7 +345,7 @@ generator with a rubric.
   downward one well-intentioned fix at a time.
 - **Model migration.** Same set, both models, paired comparison. The only honest
   way to answer "is the new model better *for us*".
-- **Retrieval tuning.** Chunk size, `k`, hybrid weighting, reranker on or off —
+- **Retrieval tuning.** Chunk size, `k`, hybrid weighting, reranker on or off -
   all scored on recall@k and MRR with no generation involved, which makes the
   loop fast and cheap.
 - **Production sampling.** Score a small random sample of live traffic
@@ -364,7 +364,7 @@ generator with a rubric.
 successes. It has no power to detect anything new.
 
 **Fix:** add cases from production continuously, especially unresolved ones. A
-healthy set has failing cases in it — those are the backlog. A set at 100% is
+healthy set has failing cases in it - those are the backlog. A set at 100% is
 measuring nothing.
 
 ### Overfitting to the evaluation set
@@ -396,7 +396,7 @@ consistently.
 frequent cases and 20% on a category that matters.
 
 **Fix:** slice by category, source, question type and length. Report the worst
-slice alongside the mean — that is the number that predicts complaints.
+slice alongside the mean - that is the number that predicts complaints.
 
 ### Measuring the wrong half
 
@@ -420,7 +420,7 @@ A prompt change moves a 50-case evaluation from 82% to 88%. Ship it?
 Not on this evidence.
 
 $\text{SE} = \sqrt{0.85 \times 0.15 / 50} \approx 5\%$. A 6-point move is
-roughly one standard error — comfortably inside the noise. Three cases changed.
+roughly one standard error - comfortably inside the noise. Three cases changed.
 
 **What to do instead:**
 
@@ -452,7 +452,7 @@ when unsupported; correct terse answers score 3. Fix it.
 Length bias and fluency bias, and the rubric is inviting both by asking for a
 global impression.
 
-**Fix the rubric first — most of the problem is there.**
+**Fix the rubric first - most of the problem is there.**
 
 1. **Score one specific thing.** Not "how good is this answer" but "is every
    claim supported by a cited document". Global quality invites the model to use
@@ -466,12 +466,12 @@ global impression.
    The aggregate was hiding that they disagree.
 
 **Then validate.** Hand-grade 50 cases and measure agreement with the judge. If
-agreement is poor, the rubric is still wrong — iterate on the rubric against the
+agreement is poor, the rubric is still wrong - iterate on the rubric against the
 human grades, which is the actual work here.
 
 **Structural fixes on top:** use a different model family as judge than as
 generator, to remove self-preference. For pairwise comparisons, run both orders
-and discard inconsistent verdicts — the inconsistency rate is itself a free
+and discard inconsistent verdicts - the inconsistency rate is itself a free
 reliability metric.
 
 </details>
@@ -485,7 +485,7 @@ evaluation.
 <details>
 <summary>Solution</summary>
 
-Two complaints, two different failure modes, and they need different metrics —
+Two complaints, two different failure modes, and they need different metrics -
 noticing that is most of the answer.
 
 **Build the set from the complaints, not from imagination.** 100 real questions,
@@ -495,21 +495,21 @@ refuse those).
 
 **Then measure three layers:**
 
-*Retrieval* — recall@5 and MRR. **This is where "says I do not know" almost
+*Retrieval* - recall@5 and MRR. **This is where "says I do not know" almost
 certainly lives**: the chunk was never retrieved, so refusing was correct
 behaviour on the information available.
 
-*Grounding* (deterministic, free) — cited ids were in the context; quoted spans
+*Grounding* (deterministic, free) - cited ids were in the context; quoted spans
 appear verbatim; the refusal string is exact.
 
-*Answer quality* (judged, sampled) — faithfulness against the retrieved
+*Answer quality* (judged, sampled) - faithfulness against the retrieved
 documents, on a subset.
 
 **And two rates that map directly to the two complaints:**
 
-- **False refusal rate** — refused when `should_answer` was true. Driven by
+- **False refusal rate** - refused when `should_answer` was true. Driven by
   retrieval recall.
-- **False answer rate** — answered when `should_answer` was false. Driven by
+- **False answer rate** - answered when `should_answer` was false. Driven by
   grounding discipline.
 
 These two trade off against each other, and making the trade explicit is the
@@ -519,7 +519,7 @@ table.
 
 **Slice everything by document age and category.** "Wrong sometimes" is very
 often "wrong about the newest documents", which is an indexing problem, not a
-model problem — and the mean will never show you that.
+model problem - and the mean will never show you that.
 
 </details>
 
@@ -529,8 +529,8 @@ model problem — and the mean will never show you that.
   kind="concept"
   question="A 50-case evaluation moves from 82% to 88% after a prompt change. What is the right conclusion?"
   options={[
-    { label: 'Inconclusive — that is about one standard error; use paired comparison and look at which cases changed', correct: true },
-    { label: 'A clear 6-point improvement — ship it' },
+    { label: 'Inconclusive - that is about one standard error; use paired comparison and look at which cases changed', correct: true },
+    { label: 'A clear 6-point improvement - ship it' },
     { label: 'A regression, since small evaluation sets systematically overestimate gains' },
     { label: 'Invalid, because prompt changes cannot be measured with fixed test sets' },
   ]}
@@ -539,13 +539,13 @@ model problem — and the mean will never show you that.
     <p>
       The standard error of a proportion is{' '}
       <code>√(p(1−p)/n)</code>, which at p≈0.85 and n=50 is about 5 points. A
-      6-point move is roughly one standard error — three cases changed — and is
+      6-point move is roughly one standard error - three cases changed - and is
       well inside what you would see from noise alone.
     </p>
     <p>
       The useful response is not "get more data" but "use the data better". A{' '}
-      <strong>paired</strong> comparison — same cases, both variants, counting
-      individual flips — removes case-to-case variance and is far more sensitive
+      <strong>paired</strong> comparison - same cases, both variants, counting
+      individual flips - removes case-to-case variance and is far more sensitive
       than comparing two aggregates. +6/−0 is meaningful evidence where +9/−6 is
       not, and both look like "+6%".
     </p>
@@ -562,7 +562,7 @@ model problem — and the mean will never show you that.
   kind="concept"
   question="You have limited time to build evaluation for a RAG system. What do you measure first?"
   options={[
-    { label: 'Retrieval, with recall@k against known-correct chunks — it is objective, needs no model, and rules out the most expensive misdiagnosis', correct: true },
+    { label: 'Retrieval, with recall@k against known-correct chunks - it is objective, needs no model, and rules out the most expensive misdiagnosis', correct: true },
     { label: 'End-to-end answer quality with an LLM judge, since that is what users experience' },
     { label: 'Public benchmark scores for the model you chose' },
     { label: 'Latency and cost per request, since those are the easiest to measure reliably' },
@@ -571,14 +571,14 @@ model problem — and the mean will never show you that.
   <Fragment slot="explanation">
     <p>
       Retrieval is measurable objectively, cheaply, and without invoking a model
-      at all — you need only a set of questions with known source chunks. And it
+      at all - you need only a set of questions with known source chunks. And it
       is the first thing to rule out, because if the right chunk never arrives,
       no amount of prompt work can recover it.
     </p>
     <p>
       End-to-end judging is what users experience, but it conflates two failure
       modes with completely different fixes. A dropped aggregate score tells you
-      something is wrong and not what — which is how teams end up spending weeks
+      something is wrong and not what - which is how teams end up spending weeks
       tuning prompts against a retrieval bug.
     </p>
     <p>
@@ -594,13 +594,13 @@ model problem — and the mean will never show you that.
 
 **"How do you evaluate an LLM feature?"**
 
-> I start with a golden set of real cases — from production failures and user
-> reports, not invented ones — because a set I imagined tests the failures I can
+> I start with a golden set of real cases - from production failures and user
+> reports, not invented ones - because a set I imagined tests the failures I can
 > think of, which are by definition not the ones catching us out. Fifty cases in
 > a CSV beats a framework with twelve made-up examples.
 >
 > Then I measure in layers, cheapest first. Retrieval on its own with recall@k
-> and MRR, which needs no model. Deterministic checks — schema, citations,
+> and MRR, which needs no model. Deterministic checks - schema, citations,
 > quoted spans. And only the genuinely subjective residue goes to a judge model.
 >
 > The most important structural decision is measuring retrieval separately from
@@ -609,7 +609,7 @@ model problem — and the mean will never show you that.
 
 **"How do you use an LLM as a judge without fooling yourself?"**
 
-> Validate it against humans first — hand-grade fifty cases and measure
+> Validate it against humans first - hand-grade fifty cases and measure
 > agreement. A judge nobody has checked is a random number generator with a
 > rubric.
 >
@@ -625,13 +625,13 @@ model problem — and the mean will never show you that.
 **"A prompt change improved your eval from 82% to 88%. Ship it?"**
 
 > Not on that alone. At fifty cases the standard error is about five points, so
-> that is roughly one — three cases moved.
+> that is roughly one - three cases moved.
 >
 > I would run it paired: same cases, both variants, count which individually
 > flipped. That removes case-to-case variance and is much more sensitive, and
 > +6/−0 tells a very different story from +9/−6 even though both show "+6%". At
 > fifty cases I would also just read the three that changed, and check the
-> slices — a gain in one category and a loss in another is a different decision
+> slices - a gain in one category and a loss in another is a different decision
 > from a uniform gain.
 
 **The caveats worth voicing:**

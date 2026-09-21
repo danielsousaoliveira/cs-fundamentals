@@ -1,7 +1,7 @@
 ---
 title: ML data preparation
 description: >-
-  Leakage, splits, encoding and imbalance — the stage where most model quality is
+  Leakage, splits, encoding and imbalance - the stage where most model quality is
   won or lost, and where the bugs are silent by construction.
 sidebar:
   order: 18
@@ -43,8 +43,8 @@ For every feature, ask:
 
 > **Would this value exist, with this value, at the moment of prediction?**
 
-Three parts, all load-bearing. *Exist* — is the column populated yet?
-*With this value* — has it been updated since? *At the moment of prediction* — not
+Three parts, all load-bearing. *Exist* - is the column populated yet?
+*With this value* - has it been updated since? *At the moment of prediction* - not
 at analysis time, when everything looks available.
 
 Applied per feature, this takes minutes and catches most leakage.
@@ -53,7 +53,7 @@ Applied per feature, this takes minutes and catches most leakage.
 
 ### Split before you touch anything
 
-The most common leak is not a feature at all — it is fitting a transformation on
+The most common leak is not a feature at all - it is fitting a transformation on
 data that includes the test set.
 
 <Tabs syncKey="lang">
@@ -71,7 +71,7 @@ X_scaled = StandardScaler().fit_transform(X)
 X_train, X_test = train_test_split(X_scaled)
 
 # RIGHT. Split first, then fit transformations on train only. A Pipeline makes
-# this the default rather than something you must remember — which is the real
+# this the default rather than something you must remember - which is the real
 # reason to use one.
 X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y)
 
@@ -97,20 +97,20 @@ Random splitting is correct only when rows are independent. Often they are not.
 
 ```mermaid
 flowchart TB
-  subgraph W["Random split — WRONG for time series"]
+  subgraph W["Random split - WRONG for time series"]
     direction LR
     W1["Jan"] --> W2["Feb ← test"] --> W3["Mar"] --> W4["Apr ← test"]
   end
-  subgraph R["Temporal split — correct"]
+  subgraph R["Temporal split - correct"]
     direction LR
-    R1["Jan–Mar: train"] --> R2["Apr: validate"] --> R3["May: test"]
+    R1["Jan-Mar: train"] --> R2["Apr: validate"] --> R3["May: test"]
   end
 ```
 
 | Structure | Correct split |
 |---|---|
-| Time series | temporal — train on past, test on future |
-| Multiple rows per user | **group** split — a user is entirely in one side |
+| Time series | temporal - train on past, test on future |
+| Multiple rows per user | **group** split - a user is entirely in one side |
 | Multiple rows per document | group by document |
 | Geographic | group by region, if you must generalise to new regions |
 | Rare classes | stratified, so the class survives the split |
@@ -151,11 +151,11 @@ target for that category means the row's own label contributed to its feature.
 <TabItem label="Python">
 
 ```python
-# WRONG — each row's own label is baked into its feature value. This produces
+# WRONG - each row's own label is baked into its feature value. This produces
 # spectacular validation scores and a model that learns nothing transferable.
 df["city_encoded"] = df.groupby("city")["target"].transform("mean")
 
-# RIGHT — out-of-fold encoding. Each row's encoding is computed from OTHER
+# RIGHT - out-of-fold encoding. Each row's encoding is computed from OTHER
 # folds only, so its own label never contributes to its own feature.
 from sklearn.model_selection import KFold
 
@@ -164,7 +164,7 @@ for train_idx, val_idx in KFold(5, shuffle=True, random_state=42).split(df):
     means = df.iloc[train_idx].groupby("city")["target"].mean()
     df.loc[df.index[val_idx], "city_encoded"] = df.iloc[val_idx]["city"].map(means)
 
-# Unseen categories at inference get the global mean, not NaN — otherwise a new
+# Unseen categories at inference get the global mean, not NaN - otherwise a new
 # city crashes serving or silently imputes to something arbitrary.
 df["city_encoded"] = df["city_encoded"].fillna(df["target"].mean())
 ```
@@ -175,7 +175,7 @@ df["city_encoded"] = df["city_encoded"].fillna(df["target"].mean())
 ### Missing values carry information
 
 `NaN` is rarely random. A missing income field may mean "declined to answer",
-which is itself predictive — and imputing the median destroys that signal.
+which is itself predictive - and imputing the median destroys that signal.
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
@@ -204,7 +204,7 @@ Three approaches, and the first is underrated:
    calibration, which the other two damage.
 2. **Class weights.** `class_weight="balanced"` tells the loss function to care
    more about the rare class. Cheap, and it does not fabricate data.
-3. **Resampling** — SMOTE and friends. Synthesises minority examples by
+3. **Resampling** - SMOTE and friends. Synthesises minority examples by
    interpolation. **Only ever on the training fold**, never before splitting, and
    it distorts the probabilities so calibration is gone.
 
@@ -224,9 +224,9 @@ the problem directly.
 
 Which is why these are worth considering before a labelling project:
 
-- **Weak supervision** — label with rules, accept the noise, and use volume to
+- **Weak supervision** - label with rules, accept the noise, and use volume to
   compensate.
-- **Active learning** — label only what the model is most uncertain about;
+- **Active learning** - label only what the model is most uncertain about;
   frequently reaches the same performance with a fraction of the labels.
 - **LLM pre-labelling** with human review. Reviewing a proposed label is several
   times faster than producing one, and the errors cluster where the model was
@@ -235,7 +235,7 @@ Which is why these are worth considering before a labelling project:
 ### Inter-annotator agreement is your ceiling
 
 If two annotators disagree on 12% of examples, no model can exceed roughly 88%
-on that task — the ground truth is not consistent enough to learn.
+on that task - the ground truth is not consistent enough to learn.
 
 **Measure it before training anything.** A day double-labelling 200 examples
 tells you the maximum achievable score, and it regularly reveals that the task
@@ -283,12 +283,12 @@ monitoring, the outliers *are* the target. Removing them removes the problem.
 
 ## Real-world usage
 
-- **Point-in-time feature stores** — the standard answer to leakage at scale.
+- **Point-in-time feature stores** - the standard answer to leakage at scale.
   Every feature carries a timestamp and is queried "as of" the prediction moment.
 - **Group-aware splitting** in anything with users, sessions or documents.
 - **Out-of-fold target encoding** for high-cardinality categoricals in
   gradient-boosted models, which is where it genuinely helps.
-- **Weak supervision** for large text corpora — rules generate noisy labels at
+- **Weak supervision** for large text corpora - rules generate noisy labels at
   volume.
 - **Active learning** in medical and legal domains, where each label is expensive
   expertise.
@@ -301,7 +301,7 @@ monitoring, the outliers *are* the target. Removing them removes the problem.
 
 **Symptom:** excellent validation, poor production.
 
-**Cause:** a feature reflecting the outcome — `agent_count`, `refund_issued`,
+**Cause:** a feature reflecting the outcome - `agent_count`, `refund_issued`,
 `resolution_time`.
 
 **Fix:** the point-in-time question, per feature. Then rebuild features as
@@ -323,8 +323,8 @@ remembered.
 **Cause:** random splitting when a user has many rows. The model memorised the
 user.
 
-**Fix:** group splitting. Ask what the model must generalise *to* — new users, new
-documents, new regions — and group by that.
+**Fix:** group splitting. Ask what the model must generalise *to* - new users, new
+documents, new regions - and group by that.
 
 ### Target encoding with the row's own label
 
@@ -338,7 +338,7 @@ documents, new regions — and group by that.
 
 **Symptom:** offline metrics never reproduce online.
 
-**Cause:** two implementations of the same feature — different null handling,
+**Cause:** two implementations of the same feature - different null handling,
 different time zone, different rounding.
 
 **Fix:** one implementation, shared. Log served features and compare
@@ -348,8 +348,8 @@ distributions against training.
 
 **Symptom:** suspiciously high scores.
 
-**Cause:** near-duplicate rows — a re-submitted form, a scraped page captured
-twice — landing on both sides.
+**Cause:** near-duplicate rows - a re-submitted form, a scraped page captured
+twice - landing on both sides.
 
 **Fix:** deduplicate before splitting, including near-duplicates. Embedding
 similarity is a reasonable detector for text.
@@ -368,14 +368,14 @@ applicant income, credit score, loan amount, employment length, `n_payments_made
 0.99 on default prediction is not a result, it is a symptom. Real credit models
 land far lower. **Investigate it as a bug.**
 
-**`n_payments_made` is the leak.** At application time — the moment of prediction
-— it is zero for everyone. A non-zero value exists only after the loan is
+**`n_payments_made` is the leak.** At application time - the moment of prediction
+- it is zero for everyone. A non-zero value exists only after the loan is
 running, and defaulters have made few payments. The model has learned "people who
 stopped paying, defaulted", which is the label restated.
 
 **`days_since_last_contact` is suspicious for a subtler reason.** If contact
 means collections calls, it is post-outcome. If it means pre-approval
-correspondence, it is legitimate. This is not answerable from the column name —
+correspondence, it is legitimate. This is not answerable from the column name -
 it needs a conversation with whoever owns the data, and that conversation is the
 work.
 
@@ -399,7 +399,7 @@ worth zero.
 **2. Fix the split.**
 
 An app predicts whether a user's next session will convert. 50,000 users, ~200
-sessions each — 10M rows. Split randomly 80/20. Validation AUC 0.91, production
+sessions each - 10M rows. Split randomly 80/20. Validation AUC 0.91, production
 0.63. Diagnose.
 
 <details>
@@ -413,7 +413,7 @@ behaviour* and was tested on the same users. In production it meets users it has
 never seen.
 
 **2. Temporal leakage.** Sessions are ordered in time. Random splitting lets the
-model train on March and test on February — predicting the past from the future,
+model train on March and test on February - predicting the past from the future,
 which it cannot do in deployment.
 
 **The fix, and both must be applied:**
@@ -428,7 +428,7 @@ train = df[(df.user_id.isin(train_users)) & (df.timestamp <= cutoff)]
 test  = df[(df.user_id.isin(test_users))  & (df.timestamp >  cutoff)]
 ```
 
-**Expect AUC to fall to roughly 0.65** — close to the production number, which is
+**Expect AUC to fall to roughly 0.65** - close to the production number, which is
 the confirmation that the diagnosis is right.
 
 **What to do with that:** it is not a worse model, it is an honest measurement of
@@ -452,7 +452,7 @@ people for three weeks. Manual labelling runs about 20 tickets/hour.
 <summary>Solution</summary>
 
 The budget does not reach the target by a wide margin, so the answer is not a
-better labelling process — it is a different strategy.
+better labelling process - it is a different strategy.
 
 ```
 2 people × 3 weeks × 35 productive hours = 210 hours
@@ -463,28 +463,28 @@ better labelling process — it is a different strategy.
 
 **The strategy:**
 
-**Week 1 — define and measure the ceiling.** Both people label the *same* 200
+**Week 1 - define and measure the ceiling.** Both people label the *same* 200
 tickets independently. Measure agreement. If it is 75%, no model can exceed
-~75%, and the finding is that the categories are ambiguous — fix the taxonomy
+~75%, and the finding is that the categories are ambiguous - fix the taxonomy
 before labelling 200,000 of anything. **This is the highest-value week and the
 one that gets skipped.**
 
-**Week 1 (rest) — LLM pre-labelling.** Prompt a model with the 12 category
+**Week 1 (rest) - LLM pre-labelling.** Prompt a model with the 12 category
 definitions and a few examples per category, and label all 200,000. Cheap and
 fast.
 
-**Weeks 2-3 — humans review, not label.** Reviewing a proposed label runs several
+**Weeks 2-3 - humans review, not label.** Reviewing a proposed label runs several
 times faster than producing one, so 210 hours of review covers far more than
 4,200 tickets. Prioritise:
 
 1. Tickets where the model expressed low confidence.
-2. A stratified random sample, to measure the LLM's accuracy per category —
+2. A stratified random sample, to measure the LLM's accuracy per category -
    without this you do not know what you have.
 3. Categories with the fewest examples, which are where the model is weakest and
    where a trained classifier will need the most help.
 
 **Outcome:** 200,000 labels of known, measured quality, plus a few thousand
-gold-standard human labels for the test set — which must be human-labelled, or
+gold-standard human labels for the test set - which must be human-labelled, or
 you are measuring agreement with the LLM rather than correctness.
 
 **The trap to avoid:** labelling 4,200 tickets by hand and training on those.
@@ -498,7 +498,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
   kind="concept"
   question="Each user contributes ~200 rows. You split randomly and validation is excellent; production is poor. What is the cause?"
   options={[
-    { label: 'Group leakage — the same users are in train and test, so the model memorised individuals rather than generalising', correct: true },
+    { label: 'Group leakage - the same users are in train and test, so the model memorised individuals rather than generalising', correct: true },
     { label: 'The test set is too small relative to the number of features' },
     { label: 'Class imbalance that the random split failed to preserve' },
     { label: 'The model is overfitting and needs stronger regularisation' },
@@ -508,14 +508,14 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
     <p>
       With 200 rows per user randomly distributed, roughly 80% of every user's
       rows land in training. The model learns each individual's idiosyncrasies
-      and is then tested on those same individuals — memorisation scoring as
+      and is then tested on those same individuals - memorisation scoring as
       generalisation. In production it meets users it has never seen, and the
       score collapses.
     </p>
     <p>
       Regularisation is the tempting answer and does not address it: the model is
       not fitting noise, it is fitting real per-user signal that happens to be
-      unavailable for new users. The fix is structural — a group split where every
+      unavailable for new users. The fix is structural - a group split where every
       row for a user lands on one side.
     </p>
     <p>
@@ -532,7 +532,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
   kind="concept"
   question="You replace a high-cardinality category with the mean target for that category, computed across the training set. What is wrong?"
   options={[
-    { label: 'Each row\'s own label contributed to its own feature value — the encoding must be computed out-of-fold', correct: true },
+    { label: 'Each row\'s own label contributed to its own feature value - the encoding must be computed out-of-fold', correct: true },
     { label: 'Nothing, provided the encoding is fitted on training data only' },
     { label: 'Mean target encoding cannot handle categories unseen at inference' },
     { label: 'It creates a feature on a different scale from the others, requiring normalisation' },
@@ -541,7 +541,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
   <Fragment slot="explanation">
     <p>
       Even fitted on training data only, a row's own label is included in the mean
-      for its category — so its feature partly <em>is</em> its label. For a rare
+      for its category - so its feature partly <em>is</em> its label. For a rare
       category with three rows the effect is severe: the encoding is almost
       entirely determined by those three labels, one of which is the row being
       encoded.
@@ -549,7 +549,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
     <p>
       The fix is out-of-fold encoding: compute each row's value from folds that
       exclude it, so no label ever contributes to its own feature. This is why
-      target encoding is listed as the categorical method that bites — it is
+      target encoding is listed as the categorical method that bites - it is
       genuinely useful for high-cardinality features in tree models, and it is
       easy to implement in the leaking way.
     </p>
@@ -571,10 +571,10 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
 > score and you debug it; a leak gives a great score and you ship it.
 >
 > The test I apply per feature is: would this value exist, with this value, at
-> the moment of prediction? All three parts matter — it might exist but have been
+> the moment of prediction? All three parts matter - it might exist but have been
 > updated since. That catches most of it in minutes.
 >
-> The other common form is not a feature at all — fitting a scaler or imputer
+> The other common form is not a feature at all - fitting a scaler or imputer
 > before splitting, so the transformation has seen the test set. I use a Pipeline
 > so that is the default rather than something I have to remember.
 
@@ -583,7 +583,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
 > By asking what the model has to generalise to, which determines the split.
 >
 > If rows are independent, random and stratified. If there is time structure,
-> temporal — train on the past, test on the future — because a random split lets
+> temporal - train on the past, test on the future - because a random split lets
 > the model train on the future. If there are multiple rows per user or document,
 > group split, so every row for an entity lands on one side.
 >
@@ -592,14 +592,14 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
 > and gets tested on them. Validation looks excellent and production is a third
 > worse.
 >
-> And three splits, not two. The test set gets touched once — every look leaks a
+> And three splits, not two. The test set gets touched once - every look leaks a
 > little into your decisions.
 
 **"How do you handle class imbalance?"**
 
 > Usually by not treating it as an imbalance problem. Most models output
 > probabilities, so I train normally and choose the decision threshold from the
-> cost ratio — if a false negative costs fifty times a false positive, the
+> cost ratio - if a false negative costs fifty times a false positive, the
 > threshold should say so. That preserves calibration.
 >
 > If that is not enough, class weights, which are cheap and do not fabricate
@@ -618,7 +618,7 @@ Fewer labels, no coverage of rare categories, and no measurement of the ceiling.
   proven otherwise.
 - Measure inter-annotator agreement first; it is your ceiling, and it often
   reveals the taxonomy is ambiguous.
-- Missingness is signal — add an `is_missing` flag before imputing.
+- Missingness is signal - add an `is_missing` flag before imputing.
 - Deduplicate before splitting, including near-duplicates.
 - One implementation of each feature, shared between training and serving. Two
   will diverge.

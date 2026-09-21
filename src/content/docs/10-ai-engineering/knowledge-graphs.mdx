@@ -1,7 +1,7 @@
 ---
 title: Knowledge graphs
 description: >-
-  When entities and relationships beat embeddings — multi-hop questions,
+  When entities and relationships beat embeddings - multi-hop questions,
   aggregation, and the extraction cost that decides whether a graph is worth
   building.
 sidebar:
@@ -37,8 +37,8 @@ contains the answer, so no retrieval over chunks can find it.
 
 The graph framing:
 
-- **Entities** are nodes — a service, a customer, a person, a policy.
-- **Relationships** are edges — `depends_on`, `owns`, `supersedes`,
+- **Entities** are nodes - a service, a customer, a person, a policy.
+- **Relationships** are edges - `depends_on`, `owns`, `supersedes`,
   `reports_to`.
 - The answer is a **traversal**, and traversal is something a vector index
   cannot do at all.
@@ -56,8 +56,8 @@ nodes and edges come from, and whether extracting them is worth the cost.
 3. **Global questions.** "What are the main themes across 10,000 reviews?" A
    top-k retrieval samples five; the question is about all of them.
 
-If your questions are none of these — and most support and documentation
-questions are not — **you do not need a graph**, and building one is a large
+If your questions are none of these - and most support and documentation
+questions are not - **you do not need a graph**, and building one is a large
 project for no gain.
 
 ## Mechanics
@@ -91,7 +91,7 @@ Rules:
 def extract(chunk: str) -> Graph:
     result = model.complete(EXTRACTION, chunk, schema=GraphSchema)
     # Provenance on every edge. Without it the graph is a set of assertions
-    # nobody can verify, and a wrong edge is undebuggable — you cannot tell
+    # nobody can verify, and a wrong edge is undebuggable - you cannot tell
     # whether the source said it or the model invented it.
     for rel in result.relationships:
         rel.source_chunk = chunk.id
@@ -109,17 +109,17 @@ sometimes and not others, and you will never find out which.
 
 ### Entity resolution is the hard part
 
-`Payments API`, `payments-api`, `payment service`, `PaymentsAPI` — one entity or
+`Payments API`, `payments-api`, `payment service`, `PaymentsAPI` - one entity or
 four? Getting this wrong destroys the graph in one of two ways: over-merging
 creates false edges, under-merging fragments the answer.
 
 ```mermaid
 flowchart LR
-  subgraph U["Under-merged — the traversal breaks"]
+  subgraph U["Under-merged - the traversal breaks"]
     A1[Payments API] --> B1[order-api]
     A2[payment-service] --> C1[billing-api]
   end
-  subgraph M["Resolved — the traversal works"]
+  subgraph M["Resolved - the traversal works"]
     A3[payments-service] --> B2[order-api]
     A3 --> C2[billing-api]
   end
@@ -127,9 +127,9 @@ flowchart LR
 
 The layered approach, cheapest first:
 
-1. **Exact match on a canonical id** where one exists — a service catalogue id, a
+1. **Exact match on a canonical id** where one exists - a service catalogue id, a
    customer id. Free and correct. Use it wherever you can.
-2. **Normalised string match** — lowercase, strip punctuation and common
+2. **Normalised string match** - lowercase, strip punctuation and common
    suffixes.
 3. **Embedding similarity** above a threshold, as a *candidate generator* only.
 4. **Human review** for the ambiguous middle, especially for high-degree nodes
@@ -145,7 +145,7 @@ a graph that is confidently wrong in a way no query will reveal.
 <TabItem label="SQL">
 
 ```sql
--- Recursive CTE — you do not need a graph database for a graph. Postgres does
+-- Recursive CTE - you do not need a graph database for a graph. Postgres does
 -- multi-hop traversal perfectly well at modest scale, with transactions,
 -- backups and joins to your relational data included.
 WITH RECURSIVE affected AS (
@@ -213,7 +213,7 @@ flowchart LR
 ```
 
 The graph finds *which* entities matter; the vector store supplies the *text*
-about them. Passing raw triples to the model reads poorly and loses nuance —
+about them. Passing raw triples to the model reads poorly and loses nuance -
 retrieving the source chunks for the entities the traversal found is the version
 that works.
 
@@ -228,7 +228,7 @@ For 100,000 chunks:
 | Embedding for vector RAG | one cheap call per chunk |
 | **Entity/relationship extraction** | **one full model call per chunk** |
 | Entity resolution | pairwise comparison, plus human review |
-| Graph storage | small — edges are tiny |
+| Graph storage | small - edges are tiny |
 | Re-extraction on document change | the same again |
 
 **Graph construction is roughly two orders of magnitude more expensive than
@@ -253,14 +253,14 @@ you cannot.
 
 | | Postgres recursive CTE | Neo4j / graph DB |
 |---|---|---|
-| Setup | none — you have it | a new datastore |
+| Setup | none - you have it | a new datastore |
 | Joins to relational data | native | export/import |
 | Traversal depth | fine to ~4-6 hops | better beyond |
 | Ops burden | zero extra | real |
 | Very deep or dense traversal | degrades | designed for it |
 
 Start with recursive CTEs. **Adopt a graph database when traversal depth or
-density genuinely demands it**, not at the start — the second datastore is a real
+density genuinely demands it**, not at the start - the second datastore is a real
 operational cost and most graphs are shallow.
 
 <aside class="dated-figure">
@@ -279,7 +279,7 @@ by a document. Most support and documentation questions are like this, and a
 graph adds enormous cost for nothing.
 
 **When the structure already exists in a database.** If services and dependencies
-are already rows with foreign keys, you have a graph — query it. Extracting the
+are already rows with foreign keys, you have a graph - query it. Extracting the
 same facts from prose with an LLM is a way to make correct data noisy.
 
 **When entity resolution is intractable.** If entity names are inconsistent and
@@ -287,7 +287,7 @@ there is no canonical id, the graph will be a mess of near-duplicates. Fix the
 naming first; that is a data-governance project and it is the actual work.
 
 **When the corpus changes constantly.** Re-extraction is expensive, and a stale
-graph produces confidently wrong traversals — the same failure as stale
+graph produces confidently wrong traversals - the same failure as stale
 documents, with more leverage.
 
 **Before vector RAG has been tried.** Graphs are the more complex tool. Establish
@@ -296,17 +296,17 @@ resolution.
 
 ## Real-world usage
 
-- **Dependency and impact analysis** — the strongest case, and usually built from
+- **Dependency and impact analysis** - the strongest case, and usually built from
   a service catalogue rather than extraction. "What breaks if this fails?"
-- **Customer 360** — linking accounts, tickets, orders and interactions that live
+- **Customer 360** - linking accounts, tickets, orders and interactions that live
   in separate systems. Structured sources, minimal extraction.
-- **Compliance and lineage** — which reports depend on which tables, which
+- **Compliance and lineage** - which reports depend on which tables, which
   depend on which sources. Regulators ask multi-hop questions.
-- **Drug discovery and research literature** — the canonical extraction case,
+- **Drug discovery and research literature** - the canonical extraction case,
   where the relationships genuinely live in prose and nowhere else.
-- **Fraud rings** — detecting shared addresses, devices and payment methods
+- **Fraud rings** - detecting shared addresses, devices and payment methods
   across accounts. A pure structure question that no text search answers.
-- **GraphRAG over documentation** — entities from headings and code references,
+- **GraphRAG over documentation** - entities from headings and code references,
   used to expand retrieval to related pages.
 
 ## Failure modes
@@ -324,7 +324,7 @@ health metric.
 
 ### Over-merging
 
-**Symptom:** confidently wrong traversals — results include things that are not
+**Symptom:** confidently wrong traversals - results include things that are not
 actually connected.
 
 **Cause:** embedding-similarity auto-merge joined two distinct entities.
@@ -340,7 +340,7 @@ propagates furthest.
 **Cause:** extraction inferred rather than extracted, especially with a prompt
 that encouraged completeness.
 
-**Fix:** provenance on every edge — source chunk and quoted span — and a
+**Fix:** provenance on every edge - source chunk and quoted span - and a
 verification pass asserting the span exists. Instruct against inference
 explicitly.
 
@@ -357,7 +357,7 @@ explicitly.
 
 **Symptom:** a four-hop query returns most of the estate.
 
-**Cause:** a dense graph with hub nodes — a shared library everything depends on.
+**Cause:** a dense graph with hub nodes - a shared library everything depends on.
 
 **Fix:** bound depth, exclude or specially handle hub nodes above a degree
 threshold, and weight edges so traversal prefers strong relationships.
@@ -368,7 +368,7 @@ threshold, and weight edges so traversal prefers strong relationships.
 
 **Cause:** it was built before establishing that the questions needed traversal.
 
-**Fix:** the question audit first. Collect real questions and classify them —
+**Fix:** the question audit first. Collect real questions and classify them -
 single-hop, multi-hop, aggregate. If under 10% need traversal, the graph is not
 the project.
 
@@ -386,7 +386,7 @@ Classify each and justify.
 <summary>Solution</summary>
 
 **(a) Vectors. Single-hop.** The answer is a sentence in one document. Retrieval
-returns the chunk and the model answers. A graph adds nothing — there is no
+returns the chunk and the model answers. A graph adds nothing - there is no
 traversal, and building one to answer this would be a large project for a
 solved problem.
 
@@ -395,13 +395,13 @@ solved problem.
 retrieval can find it however good the embeddings are.
 
 The important detail: **do not extract this from prose.** The dependency data is
-almost certainly already structured — package manifests, a service catalogue, a
+almost certainly already structured - package manifests, a service catalogue, a
 customer-entitlement table. That is a recursive CTE over tables you have, and it
 is both cheaper and far more reliable than LLM extraction. This is the most
 common missed opportunity in graph projects.
 
 **(c) Neither, as usually built.** This is a *global* question, and top-k
-retrieval samples five tickets out of 4,000 — answering a question about the
+retrieval samples five tickets out of 4,000 - answering a question about the
 whole corpus from a biased sample.
 
 The right shape is map-reduce: classify or summarise every ticket (cheap model,
@@ -428,13 +428,13 @@ Two real entities across six names, and the trap is right there in the list.
 **Layered, cheapest and safest first:**
 
 1. **Canonical id.** If a service catalogue exists, match against it. Free,
-   correct, and it is the answer whenever available — which is more often than
+   correct, and it is the answer whenever available - which is more often than
    teams assume.
 2. **Normalisation.** Lowercase, strip punctuation, strip suffixes
    (`api`, `service`, `svc`). That collapses `Payments API` / `payments-api` /
    `Payment Service` / `PaymentsAPI` → `payment`, and `Payouts API` /
    `payouts-service` → `payout`.
-3. **Embedding similarity** to *propose* remaining merges — never to apply them.
+3. **Embedding similarity** to *propose* remaining merges - never to apply them.
 4. **Human review** of proposals, prioritised by node degree, since a wrong merge
    on a high-degree node corrupts the most paths.
 
@@ -445,13 +445,13 @@ distinct.** An embedding-similarity threshold loose enough to catch
 `Payment Service` ↔ `payments-api` is very likely loose enough to merge payments
 with payouts. That produces a graph that is confidently wrong: traversals return
 customers affected by an outage that never touched them, and **no query will
-reveal the error** — the graph looks healthy.
+reveal the error** - the graph looks healthy.
 
 Stemming has the same risk from the other direction: an aggressive stemmer maps
 both to `pay`.
 
 **So: normalisation and canonical ids can auto-apply. Similarity proposes and a
-human decides.** The asymmetry is deliberate — under-merging degrades results
+human decides.** The asymmetry is deliberate - under-merging degrades results
 visibly (missing edges, incomplete answers), over-merging corrupts them
 invisibly.
 
@@ -471,7 +471,7 @@ Estimate the cost drivers and say what you would do first.
 
 **The cost drivers, in order:**
 
-1. **Extraction: 200,000 full model calls.** Not embeddings — a capable model per
+1. **Extraction: 200,000 full model calls.** Not embeddings - a capable model per
    chunk, because extraction is a reasoning task. This is roughly two orders of
    magnitude above embedding the same corpus, and it dominates everything else.
 2. **Entity resolution**, including human review of the ambiguous middle. Days of
@@ -484,23 +484,23 @@ Estimate the cost drivers and say what you would do first.
 
 **Audit the questions.** Collect 100 real questions and classify them: single-hop,
 multi-hop, or aggregate. If fewer than 10% need traversal, the graph is not the
-project — and that finding takes a day.
+project - and that finding takes a day.
 
 **Then, if traversal questions are real, check for structured sources.** The
-multi-hop questions usually concern services, teams, customers or dependencies —
+multi-hop questions usually concern services, teams, customers or dependencies -
 entities that already exist as rows with foreign keys. Building that graph is a
 few recursive CTEs, it is exact rather than extracted, and it costs almost
 nothing. **This alone resolves a large share of graph projects**, and it is
 skipped because it does not look like AI work.
 
-**Only if the relationships genuinely live in prose** — research literature,
-contracts, incident write-ups — does extraction become necessary. Then scope it:
+**Only if the relationships genuinely live in prose** - research literature,
+contracts, incident write-ups - does extraction become necessary. Then scope it:
 extract from the 5,000 documents that matter rather than all 50,000, and measure
 edge precision against a hand-labelled sample before committing to the rest.
 
 **The number that decides it:** extraction precision. At 90% per edge, a two-hop
 traversal is 81% reliable and three hops is 73%. If your questions need three
-hops over extracted edges, the answers will be wrong a quarter of the time — and
+hops over extracted edges, the answers will be wrong a quarter of the time - and
 that may disqualify the approach regardless of budget.
 
 </details>
@@ -519,8 +519,8 @@ that may disqualify the approach regardless of budget.
 >
   <Fragment slot="explanation">
     <p>
-      The first is a three-hop traversal —{' '}
-      <code>CVE → library → services → customers</code> — and crucially{' '}
+      The first is a three-hop traversal -{' '}
+      <code>CVE → library → services → customers</code> - and crucially{' '}
       <em>no document contains the answer</em>. It exists only as a path through
       relationships, so retrieval over chunks cannot find it however good the
       embeddings are.
@@ -533,7 +533,7 @@ that may disqualify the approach regardless of budget.
     </p>
     <p>
       The follow-on worth knowing: for this <em>particular</em> question the data
-      is almost certainly already structured — package manifests, a service
+      is almost certainly already structured - package manifests, a service
       catalogue, an entitlements table. That makes it a recursive CTE over tables
       you have, which is cheaper and far more reliable than extracting the same
       facts from prose with a model.
@@ -547,7 +547,7 @@ that may disqualify the approach regardless of budget.
   kind="concept"
   question="Why should entity resolution never auto-merge on embedding similarity alone?"
   options={[
-    { label: 'Distinct entities can be semantically very close — merging "Payments API" with "Payouts API" corrupts traversals invisibly', correct: true },
+    { label: 'Distinct entities can be semantically very close - merging "Payments API" with "Payouts API" corrupts traversals invisibly', correct: true },
     { label: 'Embedding similarity is too slow to run across all entity pairs' },
     { label: 'Embeddings cannot represent short strings like entity names' },
     { label: 'It would merge too few entities, leaving the graph fragmented' },
@@ -556,7 +556,7 @@ that may disqualify the approach regardless of budget.
   <Fragment slot="explanation">
     <p>
       A threshold loose enough to merge "Payment Service" with "payments-api" is
-      very likely loose enough to merge "Payments" with "Payouts" — names that
+      very likely loose enough to merge "Payments" with "Payouts" - names that
       are semantically adjacent and operationally distinct. The resulting graph
       reports customers affected by an outage that never touched them.
     </p>
@@ -567,7 +567,7 @@ that may disqualify the approach regardless of budget.
       succeed, and the answers are wrong with no signal.
     </p>
     <p>
-      So similarity proposes and something authoritative decides — a canonical id
+      So similarity proposes and something authoritative decides - a canonical id
       match, or human review prioritised by node degree, since a wrong merge on a
       high-degree node corrupts the most paths.
     </p>
@@ -579,7 +579,7 @@ that may disqualify the approach regardless of budget.
 **"When would you use a knowledge graph instead of vector search?"**
 
 > When the question is about connections rather than content. "Which customers
-> are affected by this outage" is a traversal — service to service to customer —
+> are affected by this outage" is a traversal - service to service to customer -
 > and no document contains that path, so chunk retrieval cannot find it however
 > good the embeddings are.
 >
@@ -590,7 +590,7 @@ that may disqualify the approach regardless of budget.
 >
 > The thing I would push hardest on is checking for structured sources first.
 > The multi-hop questions usually concern services, teams and dependencies that
-> already exist as rows with foreign keys — that is a recursive CTE, exact rather
+> already exist as rows with foreign keys - that is a recursive CTE, exact rather
 > than extracted, and nearly free. Extracting the same facts from prose with an
 > LLM makes correct data noisy.
 
@@ -605,7 +605,7 @@ that may disqualify the approach regardless of budget.
 > ambiguous middle.
 >
 > The rule I would not bend is never auto-merging on similarity. "Payments" and
-> "Payouts" are close and distinct, and the failure is asymmetric — under-merging
+> "Payouts" are close and distinct, and the failure is asymmetric - under-merging
 > gives visibly incomplete results, over-merging gives confidently wrong ones
 > that no query reveals.
 
@@ -626,7 +626,7 @@ that may disqualify the approach regardless of budget.
 
 **The caveats worth voicing:**
 
-- Provenance on every edge — source chunk and span — or a wrong edge is
+- Provenance on every edge - source chunk and span - or a wrong edge is
   undebuggable.
 - Bound traversal depth. Dependency graphs have cycles and hub nodes.
 - Extraction is roughly two orders of magnitude more expensive than embedding the

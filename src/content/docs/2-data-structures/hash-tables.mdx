@@ -1,7 +1,7 @@
 ---
 title: Hash Tables
 description: >-
-  Constant-time lookup on average — and what "on average" is quietly hiding,
+  Constant-time lookup on average - and what "on average" is quietly hiding,
   from adversarial collisions to the rehash that stalls one unlucky request.
 sidebar:
   order: 4
@@ -24,7 +24,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 ## Intuition
 
-An array gives you $O(1)$ access — but only if you know the *index*. A hash table
+An array gives you $O(1)$ access - but only if you know the *index*. A hash table
 is the answer to an obvious follow-up question: what if my key is `"user_4821"`
 rather than `7`?
 
@@ -43,14 +43,14 @@ structure.
 The catch is in the folding. An unbounded set of keys is being mapped into a
 bounded set of buckets, so by the pigeonhole principle **some distinct keys must
 land in the same bucket.** That is a collision, it is mathematically unavoidable,
-and essentially everything difficult about hash tables — the load factor, the
-resizing, the worst case, the security vulnerability — is a consequence of dealing
+and essentially everything difficult about hash tables - the load factor, the
+resizing, the worst case, the security vulnerability - is a consequence of dealing
 with it.
 
 ## Visual
 
-Insert a key and watch it hash. Then press **force a collision** — the widget
-finds a key that lands in an already-occupied bucket — and keep inserting until
+Insert a key and watch it hash. Then press **force a collision** - the widget
+finds a key that lands in an already-occupied bucket - and keep inserting until
 the load factor trips a rehash.
 
 <HashPlayground client:visible />
@@ -101,7 +101,7 @@ class HashTable:
         self.size = 0
         self.buckets = [[] for _ in range(self.capacity)]
         for bucket in old:
-            for k, v in bucket:     # every key recomputed — O(n)
+            for k, v in bucket:     # every key recomputed - O(n)
                 self.put(k, v)
 ```
 
@@ -158,7 +158,7 @@ class HashTable<V> {
 Two details in there are easy to skim past and both are load-bearing.
 
 **The equality check is not optional.** Finding the right bucket is not the same as
-finding the right key — the bucket may hold several. A hash match narrows the
+finding the right key - the bucket may hold several. A hash match narrows the
 search; only `==` confirms it. Skipping that comparison is how you return another
 user's data.
 
@@ -170,12 +170,12 @@ loop distinguishes them, and confusing the two gives you duplicate keys.
 
 Two strategies for collisions, with a genuine trade between them.
 
-**Chaining** — each bucket holds a list. Simple, degrades gracefully, tolerates
+**Chaining** - each bucket holds a list. Simple, degrades gracefully, tolerates
 load factors above 1. Costs a pointer per entry and scatters chain nodes across
 the heap, so it is cache-unfriendly. Used by Java's `HashMap` and by most textbook
 implementations.
 
-**Open addressing** — everything lives in the array itself; on a collision, probe
+**Open addressing** - everything lives in the array itself; on a collision, probe
 for the next free slot. No per-entry pointers and excellent cache behaviour, since
 probing walks contiguous memory. But it degrades sharply as the load factor
 approaches 1, and **deletion becomes genuinely tricky**: you cannot simply empty a
@@ -190,11 +190,11 @@ rebuild clears them. Used by Python's `dict` and V8's JavaScript objects.
 | Lookup | $O(1)$ | $O(n)$ | Every key in one bucket |
 | Insert | $O(1)$ amortised | $O(n)$ | Rehash, or a full chain walk |
 | Delete | $O(1)$ | $O(n)$ | Same as lookup |
-| Iterate | $O(n + m)$ | — | `m` = capacity: empty buckets still get visited |
+| Iterate | $O(n + m)$ | - | `m` = capacity: empty buckets still get visited |
 
 ### Where the average case comes from
 
-Assume the hash distributes keys uniformly — the *simple uniform hashing*
+Assume the hash distributes keys uniformly - the *simple uniform hashing*
 assumption. With `n` keys in `m` buckets, the expected chain length is the load
 factor $\alpha = n/m$. A lookup costs one hash, one index, and an expected
 $\alpha$ comparisons:
@@ -203,15 +203,15 @@ $$
 \mathbb{E}[\text{cost}] = O(1 + \alpha)
 $$
 
-Keep $\alpha$ bounded by a constant — which is exactly what the resize policy
-enforces — and the cost is $O(1)$. **The load factor is not a tuning knob bolted on
+Keep $\alpha$ bounded by a constant - which is exactly what the resize policy
+enforces - and the cost is $O(1)$. **The load factor is not a tuning knob bolted on
 afterwards; it is the thing that makes the complexity claim true.**
 
 Note what the assumption is doing. $O(1)$ holds *given uniform distribution*. That
 is a statement about your hash function meeting your data, and an attacker who
 chooses the data can break it. This is the difference between average-case and
 amortised from the [complexity page](/cs-fundamentals/1-complexity/big-o/), and
-here the gap is not academic — it is a live denial-of-service vector.
+here the gap is not academic - it is a live denial-of-service vector.
 
 ### Why iteration is $O(n + m)$, not $O(n)$
 
@@ -226,7 +226,7 @@ capacity does not shrink**, in either Python or JavaScript.
   kind="complexity"
   question="Your API accepts JSON from clients and parses it into a dictionary. What is the worst-case complexity of inserting n keys?"
   options={[
-    { label: 'O(n) — insertion is O(1) each' },
+    { label: 'O(n) - insertion is O(1) each' },
     { label: 'O(n log n)' },
     { label: 'O(n²), if an attacker chooses the keys', correct: true },
     { label: 'O(1)' },
@@ -235,11 +235,11 @@ capacity does not shrink**, in either Python or JavaScript.
   <Fragment slot="explanation">
     <p>
       <strong>O(n²) with adversarial input.</strong> If every key hashes to the
-      same bucket, each insert walks a chain that grows by one each time — the
+      same bucket, each insert walks a chain that grows by one each time - the
       table degenerates into a linked list, and n inserts cost 1+2+3+…+n.
     </p>
     <p>
-      This is a real, named attack — <strong>hash flooding</strong> — and it took
+      This is a real, named attack - <strong>hash flooding</strong> - and it took
       down PHP, Java, Python, and Ruby web frameworks in 2011 with a single POST
       body. The fix shipped by every one of them was <em>hash randomisation</em>:
       seed the hash with a per-process random value, so an attacker cannot
@@ -250,7 +250,7 @@ capacity does not shrink**, in either Python or JavaScript.
 
 ## When NOT to use it
 
-**When you need ordering.** A hash table has no meaningful order — that is the
+**When you need ordering.** A hash table has no meaningful order - that is the
 price of scattering keys by hash. "Give me the 10 smallest" is $O(n)$ here and
 $O(\log n)$ in a balanced tree. Range queries (`WHERE age BETWEEN 20 AND 30`) are
 impossible without scanning everything, which is exactly why database indexes are
@@ -261,8 +261,8 @@ B-trees rather than hash tables.
 of that is pure overhead.
 
 **When memory is tight.** Bounded load factor means paying for empty buckets by
-design — often 25–50% waste, plus per-entry overhead. A Python `dict` with a
-million small entries costs on the order of 50–100 MB. A sorted array of the same
+design - often 25-50% waste, plus per-entry overhead. A Python `dict` with a
+million small entries costs on the order of 50-100 MB. A sorted array of the same
 data can be several times smaller.
 
 **When you need worst-case guarantees.** Real-time systems, and anything facing
@@ -281,7 +281,7 @@ reason.
 and `Map`/`Set`, Java `HashMap`, Go `map`, Redis's entire keyspace.
 
 **Database joins.** A hash join builds a hash table on the smaller relation and
-probes it with the larger — $O(n + m)$ instead of the $O(nm)$ nested-loop join.
+probes it with the larger - $O(n + m)$ instead of the $O(nm)$ nested-loop join.
 When `EXPLAIN` shows `Hash Join`, that is this data structure.
 
 **Caches.** Every LRU is a hash table for $O(1)$ lookup plus a doubly-linked list
@@ -289,7 +289,7 @@ for $O(1)$ eviction ordering. Neither structure alone can do both, and the pairi
 is one of the most reused designs in systems programming.
 
 **Deduplication and membership.** "Have I seen this ID?" over a stream. When even
-the hash set is too large to hold, a Bloom filter trades exactness for space —
+the hash set is too large to hold, a Bloom filter trades exactness for space -
 same idea, several hashes, no stored keys.
 
 **Content addressing.** Git names every object by the SHA-1 of its contents; so do
@@ -297,7 +297,7 @@ Docker layers and IPFS. Same hash, same object, no coordination required.
 
 **Partitioning in distributed stores.** The same load-factor and hot-key reasoning
 resurfaces at cluster scale as the choice of a
-[partition key](/cs-fundamentals/8-databases-storage/cosmosdb/) — a bad key
+[partition key](/cs-fundamentals/8-databases-storage/cosmosdb/) - a bad key
 concentrates writes on one shard the same way a bad hash function concentrates
 entries in one bucket. [Single-table NoSQL
 design](/cs-fundamentals/8-databases-storage/nosql-modelling/) is that idea
@@ -316,11 +316,11 @@ day you restart. Use `hashlib` for anything durable.
 insert time. Change the key, and it is now filed under a hash it no longer has:
 
 ```python
-key = [1, 2]          # (lists are unhashable in Python — this is the point)
+key = [1, 2]          # (lists are unhashable in Python - this is the point)
 # With a custom mutable class that defines __hash__:
 d[obj] = 'value'
 obj.field = 'changed' # hash changes
-d[obj]                # KeyError — the entry is unreachable but still there
+d[obj]                # KeyError - the entry is unreachable but still there
 ```
 
 The entry becomes a permanent leak: it occupies space, appears in iteration, and
@@ -330,7 +330,7 @@ cannot be looked up or deleted. This is precisely why Python forbids `list` and
 **Inconsistent `equals` and `hashCode`.** Two objects that compare equal must hash
 equal. Break that and lookups miss for objects you would swear are in the table.
 In Python, defining `__eq__` without `__hash__` makes the class unhashable, which
-is a *helpful* failure — it fails loudly at insertion rather than silently at
+is a *helpful* failure - it fails loudly at insertion rather than silently at
 lookup.
 
 **JavaScript object keys are strings.** Not obvious, and it silently merges data:
@@ -339,7 +339,7 @@ lookup.
 const counts = {};
 counts[1] = 'one';
 counts['1'] = 'ONE';
-console.log(counts[1]);   // 'ONE' — the same key
+console.log(counts[1]);   // 'ONE' - the same key
 ```
 
 Worse: `obj[{a:1}]` becomes the key `"[object Object]"`, so *every* object key
@@ -371,8 +371,8 @@ def two_sum(numbers, target):
     return None
 ```
 
-$O(n)$ time, $O(n)$ space, versus $O(n^2)$ for the nested loop. The pattern —
-**store what you have seen so the next element can ask about it** — is the single
+$O(n)$ time, $O(n)$ space, versus $O(n^2)$ for the nested loop. The pattern -
+**store what you have seen so the next element can ask about it** - is the single
 most transferable trick in this section.
 
 ### 2. Group anagrams
@@ -410,14 +410,14 @@ function groupAnagrams(words: string[]): string[][] {
 </Tabs>
 
 $O(n \cdot k \log k)$ for `n` words of length `k`. A character-count key gets it to
-$O(nk)$ — worth mentioning, because it shows you noticed the sort is the dominant
+$O(nk)$ - worth mentioning, because it shows you noticed the sort is the dominant
 term rather than reaching for the first key that worked.
 
 ### 3. First non-repeating character
 
 Count in one pass, then scan in a second. $O(n)$ total. In Python, `dict`
 preserves insertion order since 3.7, so a single `Counter` pass followed by
-iteration works — but relying on that ordering is a language-version assumption
+iteration works - but relying on that ordering is a language-version assumption
 worth stating out loud rather than absorbing silently.
 
 ## Interview answers
@@ -425,7 +425,7 @@ worth stating out loud rather than absorbing silently.
 **"How does a hash table work?"**
 
 > You hash the key to an integer and take it modulo the capacity to get an array
-> index — so lookup is a hash computation plus an array access, neither of which
+> index - so lookup is a hash computation plus an array access, neither of which
 > depends on how many keys are stored. Since more keys exist than buckets,
 > collisions are unavoidable, so each bucket holds a small list, or you probe for
 > the next free slot.
@@ -435,14 +435,14 @@ worth stating out loud rather than absorbing silently.
 > Because the table keeps the load factor bounded. Expected chain length is n/m,
 > and resizing whenever that passes about 0.75 keeps it constant, so the expected
 > number of comparisons is constant too. It's O(1) *given* the hash distributes
-> uniformly — that assumption is doing real work in the claim.
+> uniformly - that assumption is doing real work in the claim.
 
 **The caveat that signals production experience:**
 
 > "The thing I'd flag is that O(1) is average, not amortised, and the difference
 > matters when the input is untrusted. If an attacker can choose keys that all
 > collide, every insert walks the whole chain and you get O(n²) from a single
-> request body — that's hash flooding, and it's why every runtime randomises its
+> request body - that's hash flooding, and it's why every runtime randomises its
 > hash seed now. The practical follow-on is that Python's `hash()` isn't stable
 > across processes, so if you're sharding or persisting on it you need `hashlib`
 > instead. And separately, the rehash itself is O(n) on one unlucky insert, which

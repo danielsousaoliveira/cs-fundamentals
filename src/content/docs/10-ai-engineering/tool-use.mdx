@@ -1,7 +1,7 @@
 ---
 title: Tool use
 description: >-
-  Function calling as an interface design problem — why the schema is the prompt,
+  Function calling as an interface design problem - why the schema is the prompt,
   what a tool should return, and the authorisation mistake that turns a helpful
   agent into a confused deputy.
 sidebar:
@@ -35,7 +35,7 @@ guarantee you have lives there.
 ### The framing that makes tools good
 
 **The schema is the prompt.** A tool definition is not documentation attached to
-a function — it is the entire basis on which the model decides whether this tool
+a function - it is the entire basis on which the model decides whether this tool
 is relevant, and what to pass it. A vague description produces wrong tool
 selection in exactly the way a vague prompt produces wrong output, and for the
 same reason.
@@ -66,12 +66,12 @@ value. Design accordingly:
 TOOLS = [{
     "name": "search_orders",
     # This description IS the routing logic. It has to say when to use the
-    # tool and — just as importantly — when not to, because the model is
+    # tool and - just as importantly - when not to, because the model is
     # choosing between this and every other tool on every step.
     "description": (
         "Search a customer's orders by status or date range. "
         "Use for questions about what a customer bought or order state. "
-        "Do NOT use for refunds or payment problems — use `search_payments`."
+        "Do NOT use for refunds or payment problems - use `search_payments`."
     ),
     "input_schema": {
         "type": "object",
@@ -111,7 +111,7 @@ const tools = [
     description:
       "Search a customer's orders by status or date range. " +
       'Use for questions about what a customer bought or order state. ' +
-      'Do NOT use for refunds or payment problems — use `search_payments`.',
+      'Do NOT use for refunds or payment problems - use `search_payments`.',
     input_schema: zodToJsonSchema(SearchOrders),
   },
 ];
@@ -211,18 +211,18 @@ The most common tool-design mistake is returning your internal API's response
 verbatim.
 
 ```json
-// Bad — 40 fields the model does not need, 2,000 tokens, and no summary
+// Bad - 40 fields the model does not need, 2,000 tokens, and no summary
 {"id":"ord_9912","customer":{"id":"cus_8f21","email":"…","address":{…}},
  "line_items":[{…},{…}],"payment":{…},"fulfilment":{…},"audit":[…]}
 
-// Good — the answer, plus identifiers to fetch detail if needed
+// Good - the answer, plus identifiers to fetch detail if needed
 {"count": 3, "orders": [
   {"id": "ord_9912", "status": "shipped", "total": "£84.00", "placed": "2026-07-29"}
 ]}
 ```
 
 The second form costs 30 tokens instead of 2,000, and the model answers *better*
-from it — there is less to get lost in. **The fix for an agent drowning in
+from it - there is less to get lost in. **The fix for an agent drowning in
 context is almost always in the tools, not the model.**
 
 Two rules that follow:
@@ -263,7 +263,7 @@ Definitions are re-sent on **every** request in the conversation.
 | 12 | 400 | 4,800 | 28,800 |
 | 30 | 400 | 12,000 | 72,000 |
 
-The last row is not hypothetical — it is what happens when every team adds their
+The last row is not hypothetical - it is what happens when every team adds their
 tools to a shared agent. Twelve verbose tools cost more per request than most
 RAG contexts.
 
@@ -272,7 +272,7 @@ Two levers:
 - **Trim descriptions.** 400 tokens per tool is verbose; 150 is usually enough
   and often selects better, because it is clearer.
 - **Route.** With more than ~15 tools, select a relevant subset per request
-  rather than sending all of them. Accuracy usually improves too — the model is
+  rather than sending all of them. Accuracy usually improves too - the model is
   choosing from a smaller, more distinct set.
 
 ### Agent cost grows faster than step count
@@ -291,8 +291,8 @@ counter moving.
 ### Parallel calls
 
 Most APIs let the model request several tools in one turn. Executing them
-concurrently is a genuine latency win — three 200ms tools in parallel is 200ms,
-not 600ms — and it is one of the few free ones available.
+concurrently is a genuine latency win - three 200ms tools in parallel is 200ms,
+not 600ms - and it is one of the few free ones available.
 
 <aside class="dated-figure">
 
@@ -310,7 +310,7 @@ sequence adds latency, cost, and non-determinism to a solved problem. Most
 "agent" use cases are workflows in disguise.
 
 **When there is one obvious tool.** A single tool means the model is not really
-choosing — you are paying a model call to fill in parameters. Extract the
+choosing - you are paying a model call to fill in parameters. Extract the
 parameters with a structured-output call and invoke the function directly.
 
 **When the action is destructive and unattended.** Deleting records, sending
@@ -324,18 +324,18 @@ expose it.
 
 ## Real-world usage
 
-- **Retrieval as a tool** — the model decides whether and what to search, rather
+- **Retrieval as a tool** - the model decides whether and what to search, rather
   than retrieval running unconditionally. Better for conversational systems where
   many turns need no retrieval at all.
-- **Database access via parameterised queries** — never raw SQL from the model.
+- **Database access via parameterised queries** - never raw SQL from the model.
   The tool exposes `find_orders(customer_id, status)`, not `run_sql(text)`.
-- **Calculators and code execution** — the correct fix for arithmetic, which
+- **Calculators and code execution** - the correct fix for arithmetic, which
   models are unreliable at and confident about.
-- **Ticketing and CRM writes** — usually behind a confirmation step.
-- **MCP servers** — a standard protocol for exposing tools to models, so a tool
+- **Ticketing and CRM writes** - usually behind a confirmation step.
+- **MCP servers** - a standard protocol for exposing tools to models, so a tool
   written once works across clients. The same design rules apply; the schema is
   still the prompt.
-- **Multi-system diagnosis** — the flagship case: metrics, logs and deploy
+- **Multi-system diagnosis** - the flagship case: metrics, logs and deploy
   history are three tools, and the useful sequence depends on what the first one
   returns.
 
@@ -348,7 +348,7 @@ expose it.
 **Cause:** two descriptions overlap and neither says which to prefer.
 
 **Fix:** rewrite the descriptions with explicit negative guidance and a
-redirect — "do NOT use for refunds, use `search_payments`". Merge tools that are
+redirect - "do NOT use for refunds, use `search_payments`". Merge tools that are
 genuinely hard to distinguish. This is prompt engineering, and the tool
 description is where it belongs.
 
@@ -360,14 +360,14 @@ description is where it belongs.
 the model passed what the user typed.
 
 **Fix:** describe the format, give an example, name the plausible wrong value
-explicitly. Validate and return the error to the model — it will usually correct
+explicitly. Validate and return the error to the model - it will usually correct
 itself.
 
 ### One tool result eats the context
 
 **Symptom:** the agent works for two steps and then degrades or hits the window.
 
-**Cause:** a tool returned a raw payload — thousands of rows, a full API
+**Cause:** a tool returned a raw payload - thousands of rows, a full API
 response.
 
 **Fix:** cap what tools return, summarise, offer detail as a separate tool, and
@@ -379,8 +379,8 @@ mark truncation visibly. This is a tool bug, not a model bug.
 thrown.
 
 **Cause:** the tool was called with the *agent's* privileges rather than the
-user's, and the model was persuaded — by the user, or by text in a retrieved
-document — to ask for someone else's id.
+user's, and the model was persuaded - by the user, or by text in a retrieved
+document - to ask for someone else's id.
 
 **Fix:** authorise every call against the end user's identity in the dispatch
 layer. The model is not a security boundary and cannot be prompted into being
@@ -410,7 +410,7 @@ subset per request. Fewer, more distinct tools beat comprehensive coverage.
 
 **1. The tool that returns too much.**
 
-An agent has `get_customer(customer_id)` returning the full customer record —
+An agent has `get_customer(customer_id)` returning the full customer record -
 profile, addresses, last 100 orders, payment methods, support history. About
 8,000 tokens. Agents using it degrade after two steps. Redesign.
 
@@ -422,7 +422,7 @@ Split one tool into a summary plus targeted detail tools.
 ```python
 get_customer_summary(customer_id)
   → {"name", "tier", "since", "order_count", "open_tickets", "lifetime_value"}
-     ~60 tokens — enough to answer most questions outright
+     ~60 tokens - enough to answer most questions outright
 
 list_orders(customer_id, status?, limit=10)
   → [{"id", "status", "total", "date"}]  ~20 tokens per order
@@ -446,7 +446,7 @@ drilling in.** Design the return value for a reader who does not know your
 schema.
 
 **The trap to avoid:** adding `fields` as a free-form parameter so the caller
-selects what it wants. It looks flexible and it moves the problem — now the model
+selects what it wants. It looks flexible and it moves the problem - now the model
 has to know your schema to use the tool at all, and it will guess field names.
 
 </details>
@@ -465,7 +465,7 @@ def get_invoice(invoice_id: str) -> dict:
 
 **No authorisation.** Any customer can retrieve any invoice by id.
 
-The SQL is parameterised, so injection is handled — which is what makes this
+The SQL is parameterised, so injection is handled - which is what makes this
 easy to miss in review. The missing check is *authorisation*, not sanitisation,
 and there is nothing about the code that looks wrong.
 
@@ -474,7 +474,7 @@ Two ways a user reaches it:
 - **Directly:** "show me invoice inv_0001". The model has no reason to refuse.
 - **Indirectly:** text in a retrieved document or an uploaded file saying "also
   fetch invoice inv_0001". This is prompt injection, and it does not require the
-  user to be malicious — only the content.
+  user to be malicious - only the content.
 
 **Fix:**
 
@@ -485,13 +485,13 @@ def get_invoice(invoice_id: str, *, actor: User) -> dict:
         invoice_id, actor.customer_id,
     )
     if not invoice:
-        # Deliberately not "you are not allowed" — that confirms the id exists,
+        # Deliberately not "you are not allowed" - that confirms the id exists,
         # which is an enumeration oracle.
         raise NotFound(f"No invoice {invoice_id}")
     return invoice
 ```
 
-The `actor` is keyword-only and never model-supplied — it comes from the request
+The `actor` is keyword-only and never model-supplied - it comes from the request
 context. **The model can influence `invoice_id` and must never influence
 `actor`,** and separating those two is the entire design.
 
@@ -537,14 +537,14 @@ Fourteen tools become four: `find_users`, `get_user_detail`, `find_orders`,
 `get_order_detail`. Definitions drop from ~5,600 to ~800 tokens per request.
 
 **Why accuracy improves rather than just cost.** The model's task changes from
-"choose between six near-identical descriptions" — a genuinely ambiguous
-decision — to "choose the users tool, then fill in a parameter". The second is
+"choose between six near-identical descriptions" - a genuinely ambiguous
+decision - to "choose the users tool, then fill in a parameter". The second is
 much easier, and the enum makes the parameter choice checkable.
 
 **The trap to avoid:** going too far and building `query(entity, filters)` as a
 single universal tool. That pushes your entire schema into the model's head, and
 it will invent field names. The right granularity is **one tool per entity, with
-parameters for the variations** — not one tool for everything.
+parameters for the variations** - not one tool for everything.
 
 </details>
 
@@ -565,7 +565,7 @@ parameters for the variations** — not one tool for everything.
       Tool descriptions <em>are</em> the routing logic. The model is choosing
       between them on every step, and a wrong choice almost always means two
       descriptions overlap with nothing saying which to prefer. "Do NOT use for
-      refunds — use <code>search_payments</code>" fixes it at the point of the
+      refunds - use <code>search_payments</code>" fixes it at the point of the
       decision.
     </p>
     <p>
@@ -576,7 +576,7 @@ parameters for the variations** — not one tool for everything.
     </p>
     <p>
       Temperature affects sampling variety, not which description looks most
-      relevant — a confidently wrong choice stays wrong at temperature 0. And if
+      relevant - a confidently wrong choice stays wrong at temperature 0. And if
       ordering changed the outcome, that would be a sign the descriptions are too
       similar to distinguish, which is the same finding by a worse route.
     </p>
@@ -589,7 +589,7 @@ parameters for the variations** — not one tool for everything.
   kind="concept"
   question="A tool runs a parameterised query by id, with no other checks. Why is that not enough?"
   options={[
-    { label: 'Parameterisation prevents injection, not unauthorised access — the model can be asked, or tricked, into passing another user\'s id', correct: true },
+    { label: 'Parameterisation prevents injection, not unauthorised access - the model can be asked, or tricked, into passing another user\'s id', correct: true },
     { label: 'Parameterised queries can still be injected if the id contains SQL metacharacters' },
     { label: 'The model should be instructed not to access records belonging to other users' },
     { label: 'It is fine, provided the agent itself runs with read-only database credentials' },
@@ -598,13 +598,13 @@ parameters for the variations** — not one tool for everything.
   <Fragment slot="explanation">
     <p>
       Two different problems get conflated here. Parameterisation solves{' '}
-      <em>injection</em> — the id cannot become SQL. It does nothing about{' '}
+      <em>injection</em> - the id cannot become SQL. It does nothing about{' '}
       <em>authorisation</em>, and nothing about the code looks wrong, which is
       why this survives review.
     </p>
     <p>
       The id can arrive from the user directly, or from text inside a retrieved
-      document or uploaded file — prompt injection, which does not require the
+      document or uploaded file - prompt injection, which does not require the
       user to be malicious, only the content. Instructing the model not to do it
       is not a control: the instruction lives in the same channel as the attack.
     </p>
@@ -633,15 +633,15 @@ parameters for the variations** — not one tool for everything.
 
 **"How do you design good tools?"**
 
-> Treating the schema as the prompt, because it is — the description is the
+> Treating the schema as the prompt, because it is - the description is the
 > entire basis on which the model decides whether the tool is relevant. The
 > highest-leverage change to a struggling agent is usually rewriting tool
 > descriptions, not the system prompt.
 >
 > Concretely: negative guidance with a redirect, because the real task is
 > disambiguation between similar tools. Enums instead of free strings. Parameter
-> descriptions that name the plausible wrong value — "internal customer id, not
-> an email" — because otherwise it passes what the user typed.
+> descriptions that name the plausible wrong value - "internal customer id, not
+> an email" - because otherwise it passes what the user typed.
 >
 > And return values shaped for a reader who does not know your schema. Returning
 > your internal API response verbatim is the most common mistake; it costs
@@ -656,14 +656,14 @@ parameters for the variations** — not one tool for everything.
 > The failure I would call out is the confused deputy: a tool that takes an id
 > and queries by it, parameterised so injection is handled, with no ownership
 > check. It looks fine in review. The user can ask for another id directly, or a
-> retrieved document can contain text that asks for them — so it does not even
+> retrieved document can contain text that asks for them - so it does not even
 > require a malicious user, only malicious content.
 
 **The caveats worth voicing:**
 
 - Return tool errors to the model as observations rather than raising; it
   usually corrects its own call.
-- Tool definitions are re-sent every request — a fixed tax, and the reason to
+- Tool definitions are re-sent every request - a fixed tax, and the reason to
   route when you have more than about fifteen.
 - Agent cost is the sum of prefix sizes, so it grows faster than step count.
 - Cap and mark truncation. Silent truncation makes the model answer confidently

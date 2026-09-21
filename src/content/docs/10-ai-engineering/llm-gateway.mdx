@@ -1,8 +1,8 @@
 ---
-title: LLM gateway — routing, fallback, and cost attribution across providers
+title: LLM gateway - routing, fallback, and cost attribution across providers
 description: >-
   A gateway is the one place that knows every provider's health, every
-  tenant's spend, and which request should fail over to what — pulling
+  tenant's spend, and which request should fail over to what - pulling
   routing logic out of application code before the second provider makes it
   unavoidable.
 sidebar:
@@ -21,8 +21,8 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 ## Intuition
 
-The rate-limit handling covered on [llmops](/cs-fundamentals/10-ai-engineering/llmops/#rate-limits-and-failure) —
-backoff, a circuit breaker, a fallback model — describes *what* to do when a
+The rate-limit handling covered on [llmops](/cs-fundamentals/10-ai-engineering/llmops/#rate-limits-and-failure) -
+backoff, a circuit breaker, a fallback model - describes *what* to do when a
 provider fails. An **LLM gateway** is *where* that logic lives once it stops
 fitting comfortably inside application code: a single service every LLM call
 routes through, which knows every provider's current health, every tenant's
@@ -45,8 +45,8 @@ LLM Gateway  --- health, routing, cost tracking ---
 OpenAI Claude  Local Llama
 ```
 
-Application code calls one interface — "generate a response for this
-prompt, this model class" — without knowing or caring which actual provider
+Application code calls one interface - "generate a response for this
+prompt, this model class" - without knowing or caring which actual provider
 serves the request. This is the same abstraction-boundary argument made
 elsewhere on the site (a repository hiding a database engine, an interface
 hiding an implementation): the gateway absorbs provider-specific detail so
@@ -70,7 +70,7 @@ async def generate(prompt, model_class="general"):
 
 The routing table is ordered by preference (cost, latency, quality) per
 model class, and the gateway walks it, skipping any provider whose circuit
-breaker is open — the same circuit-breaker mechanism covered generally on
+breaker is open - the same circuit-breaker mechanism covered generally on
 [cascading-failures](/cs-fundamentals/14-production/cascading-failures/),
 applied here to *provider* health specifically rather than a single
 downstream dependency. A provider outage becomes a routing decision made
@@ -97,7 +97,7 @@ class GatewayRequestLog:
 ```
 
 This is the natural extension of the per-request logging already covered on
-[llmops](/cs-fundamentals/10-ai-engineering/llmops/#what-to-log) — a gateway
+[llmops](/cs-fundamentals/10-ai-engineering/llmops/#what-to-log) - a gateway
 is where **per-tenant** cost attribution becomes practical, because it's the
 one place that sees every tenant's traffic across every feature and
 provider, rather than each service independently logging its own slice.
@@ -113,21 +113,21 @@ if response.status == 429:
 
 A 429 handled once, in the gateway, with the provider's own `Retry-After`
 header respected, replaces N copies of similar-but-subtly-different retry
-logic scattered across every service that calls that provider — each of
+logic scattered across every service that calls that provider - each of
 which is a separate opportunity for the retry-storm mistake covered on
 [cascading-failures](/cs-fundamentals/14-production/cascading-failures/).
 
 ## Cost & limits
 
 **A gateway is a new single point of failure**, and its own latency and
-reliability now sit on the critical path of every LLM call in the system —
+reliability now sit on the critical path of every LLM call in the system -
 a gateway that adds meaningful overhead per request, or that itself goes
 down, degrades everything routed through it, which is exactly the
 architectural tradeoff a shared component always makes: consolidating logic
 in one place also consolidates risk there.
 
 **Building and operating a gateway is real, ongoing engineering work**, not
-a configuration toggle — routing tables, circuit breaker state, and cost
+a configuration toggle - routing tables, circuit breaker state, and cost
 attribution logic all need to be built, tested, and kept current as
 providers and models change, which is a cost that has to be justified by
 the number of call sites and providers actually involved.
@@ -136,14 +136,14 @@ the number of call sites and providers actually involved.
 
 **Do not build a gateway for a single provider, single-service system.**
 The entire value proposition is centralizing logic that would otherwise be
-duplicated across multiple call sites or multiple providers — with one
+duplicated across multiple call sites or multiple providers - with one
 provider and one caller, there's nothing to centralize yet, and the gateway
 is pure overhead.
 
 **Do not route every request through the same fallback chain regardless of
 what the request actually needs.** A request requiring a specific model's
 particular capability (a very long context window, a specific fine-tune)
-shouldn't silently fail over to a provider that can't actually satisfy it —
+shouldn't silently fail over to a provider that can't actually satisfy it -
 the routing table needs to encode real capability constraints, not just a
 preference order, or a "successful" fallback produces a response that
 doesn't actually meet the request's requirements.
@@ -151,7 +151,7 @@ doesn't actually meet the request's requirements.
 ## Real-world usage
 
 Any system calling more than one LLM provider, or one provider with more
-than a couple of call sites, converges on some version of a gateway —
+than a couple of call sites, converges on some version of a gateway -
 either a self-built thin routing service, or an off-the-shelf product built
 for exactly this purpose. The trigger is usually the second provider being
 added: at that point, provider-specific logic scattered across services
@@ -164,20 +164,20 @@ investment.
 **The gateway that became the outage.** A gateway with no redundancy of its
 own, or with an internal bug (a routing table update that accidentally
 points every model class at a provider that's down), turns a single point
-of failure into exactly that — every LLM call in the system fails at once,
+of failure into exactly that - every LLM call in the system fails at once,
 even though every actual provider might be healthy.
 
 **The fallback that silently served a worse response.** A routing table
 that falls back to a smaller, cheaper model on provider failure, with no
 signal to the caller that a fallback occurred, means a customer-facing
 feature quietly degrades in quality with nothing in the logs flagging it as
-different from a normal, successful response — discovered only when someone
+different from a normal, successful response - discovered only when someone
 notices response quality dropped and has to reconstruct, after the fact,
 which requests actually hit the fallback path.
 
 **The cost attribution that was wrong because tagging wasn't enforced.** A
 gateway that allows calls without a required `tenant_id` or `feature` tag
-accumulates a growing bucket of unattributed cost — the exact metric the
+accumulates a growing bucket of unattributed cost - the exact metric the
 gateway exists to make easy becomes unreliable because nothing enforced
 that every call site actually populated it.
 
@@ -189,7 +189,7 @@ others. What's the argument for consolidating this into a gateway, beyond
 "it's tidier"?**
 
 Six independent retry implementations are six independent opportunities for
-the retry-storm mistake — a naive, unbounded retry loop in even one of them
+the retry-storm mistake - a naive, unbounded retry loop in even one of them
 can amplify load on a struggling provider regardless of how well the other
 five are implemented. Consolidating into a gateway means the
 backoff/circuit-breaker logic is correct in exactly one place, and fixing a
@@ -198,10 +198,10 @@ patches applied consistently.
 
 **2. A gateway's fallback chain routes a request that needed a 200k-token
 context window to a provider whose model only supports 32k tokens. The
-fallback "succeeds" — a response comes back. What's actually wrong here?**
+fallback "succeeds" - a response comes back. What's actually wrong here?**
 
 The routing table treated provider preference as interchangeable without
-checking capability constraints — a response that comes back doesn't mean
+checking capability constraints - a response that comes back doesn't mean
 the request was actually served correctly if the model silently truncated
 or couldn't process the full context it needed. The routing table needs to
 encode hard capability requirements (context length, specific features) as
@@ -212,7 +212,7 @@ preferences ordered by cost or latency.
 growing each month. What does this suggest, and how would you fix it?**
 
 Some call sites are making requests without populating the required
-`tenant_id` or `feature` tags — the gateway is only as good as the tagging
+`tenant_id` or `feature` tags - the gateway is only as good as the tagging
 discipline enforced at the call site. The fix is making those tags
 mandatory at the gateway's API boundary (reject or flag untagged requests)
 rather than optional fields that are easy to forget, since the whole value
@@ -242,19 +242,19 @@ the metadata needed to attribute it.
 in application code?"** Once more than one provider or more than a couple
 of call sites are involved, provider-specific retry, circuit-breaking, and
 fallback logic duplicated across services becomes a maintenance and
-correctness risk — each duplicate is an independent chance to get the retry
+correctness risk - each duplicate is an independent chance to get the retry
 logic wrong, and a gateway consolidates it into one place, tested once. The
-caveat that shows real production experience: this isn't free — the gateway
+caveat that shows real production experience: this isn't free - the gateway
 becomes a new single point of failure and a genuine engineering investment,
 which is why it's not worth building for a single-provider,
 single-call-site system.
 
 **"How would you track LLM cost per customer across multiple services and
 providers?"** Route every call through a gateway that logs tenant ID,
-feature, provider, model, and token counts per request — this turns
+feature, provider, model, and token counts per request - this turns
 per-tenant cost attribution from a manual reconciliation exercise into a
 query, because the gateway is the one place that sees every tenant's
 traffic across every feature and provider. The caveat: this only works if
-tagging is enforced, not optional — a gateway that allows untagged calls
+tagging is enforced, not optional - a gateway that allows untagged calls
 accumulates an unattributed cost bucket that undermines the entire point of
 centralizing the tracking.

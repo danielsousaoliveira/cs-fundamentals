@@ -25,7 +25,7 @@ Cleansing is where a profiling finding ([Data
 profiling](/cs-fundamentals/7-data-engineering/data-profiling/) covers how
 you find it) turns into a decision: fix it, remove it, or leave it and
 document why. The risk in this stage isn't usually "the fix is technically
-wrong" — it's that a fix applied without measuring its effect changes the
+wrong" - it's that a fix applied without measuring its effect changes the
 dataset's statistical properties in a way nobody checked for, and the
 change ships silently inside a pipeline that reports success.
 
@@ -51,12 +51,12 @@ FROM customers GROUP BY 1 HAVING count(*) > 1;
 ```
 
 Exact-match deduplication is straightforward and catches only exact
-duplicates — genuinely identical rows, usually from a double-submitted form
+duplicates - genuinely identical rows, usually from a double-submitted form
 or a retried write. Fuzzy deduplication requires a definition of "same" that
 someone has to decide on: does it account for case, punctuation, common
 abbreviations, transliteration? Every choice in that definition changes
 which rows get merged, and getting it wrong in either direction has a real
-cost — too loose, and distinct people or entities get incorrectly merged;
+cost - too loose, and distinct people or entities get incorrectly merged;
 too strict, and genuine duplicates survive as separate rows.
 
 ### The dedup decision that isn't obvious: which row survives
@@ -71,7 +71,7 @@ FROM customers
 ORDER BY customer_id, updated_at DESC;
 ```
 
-"Most recent" is a defensible default and not automatically correct — a
+"Most recent" is a defensible default and not automatically correct - a
 customer record updated by an automated enrichment process might have a more
 recent `updated_at` than a manually-verified update, and "most recent" would
 pick the automated (potentially lower-quality) version. The dedup rule needs
@@ -85,7 +85,7 @@ overlooked consequence: it artificially reduces the column's variance, because
 every imputed value sits exactly at the mean, contributing zero spread where
 a real (unobserved) value would have contributed some. A column that's 20%
 imputed-with-mean has its true variance understated by roughly that
-proportion — any downstream statistical analysis (a standard deviation, a
+proportion - any downstream statistical analysis (a standard deviation, a
 confidence interval, a correlation) computed on the imputed column is
 computing over data that looks artificially more consistent than it really
 is.
@@ -116,7 +116,7 @@ if dropped / before > 0.01:  # more than 1% dropped -- worth a hard stop
 
 The first version is one line of legitimate cleansing logic that, if the
 upstream data quality degrades and suddenly 40% of rows are missing
-`customer_id`, silently processes 60% of the data and reports success — a
+`customer_id`, silently processes 60% of the data and reports success - a
 pipeline that "worked" while quietly discarding almost half its input. The
 second version turns a silent degradation into a loud failure, which is
 almost always the outcome you want from a step that removes data.
@@ -124,7 +124,7 @@ almost always the outcome you want from a step that removes data.
 ## Cost & limits
 
 **Fuzzy deduplication's cost scales worse than linearly with dataset size**
-if done naively (comparing every row to every other row is $O(n^2)$) —
+if done naively (comparing every row to every other row is $O(n^2)$) -
 production fuzzy-matching systems use blocking (grouping likely candidates
 by a cheap key first, like the first three letters of a name) to reduce the
 comparison set before running expensive similarity scoring, trading a small
@@ -132,7 +132,7 @@ risk of missing a true match against a comparison in a different block for
 a massive reduction in comparisons made.
 
 **Every cleansing rule needs to be re-validated against new data over
-time**, not applied once and assumed permanent — a deduplication threshold
+time**, not applied once and assumed permanent - a deduplication threshold
 tuned against last year's data can start producing false merges or missed
 duplicates as the underlying data's characteristics shift, and there's no
 signal that this has happened unless someone re-measures.
@@ -141,32 +141,32 @@ signal that this has happened unless someone re-measures.
 
 **Do not impute a value for a column where "missing" is itself meaningful
 information.** A `cancellation_reason` field that's null because the order
-wasn't cancelled shouldn't be imputed with any value — the null *is* the
+wasn't cancelled shouldn't be imputed with any value - the null *is* the
 correct value, encoding "not applicable," and imputing it (with a mode, a
 default string, anything) destroys that distinction.
 
 **Do not deduplicate based on a single field without checking for
 legitimate collisions.** Two different real customers can share an email
 (a shared family account, a data entry error on one side) or a name (common
-names exist) — deduplicating purely on one of these without corroborating
+names exist) - deduplicating purely on one of these without corroborating
 signals (matching address, matching phone, matching purchase history) risks
 merging genuinely distinct entities.
 
 **Do not silently drop rows in a cleansing step without measuring and
 alerting on the drop rate.** As shown above, an unmonitored `dropna` or
 equivalent filter is one of the most common ways for a data quality problem
-upstream to become invisible downstream — the pipeline "succeeds" while
+upstream to become invisible downstream - the pipeline "succeeds" while
 processing a shrinking fraction of its intended input.
 
 ## Real-world usage
 
 Customer data platforms and CRM systems are the canonical deduplication use
-case — the same person entering their details slightly differently across a
+case - the same person entering their details slightly differently across a
 website form, a support ticket, and a sales call, needing to be recognized
 as one entity for accurate customer counts and unified communication.
 Imputation shows up most often in feature engineering for machine learning
 pipelines, where a model requires a complete feature matrix and "drop every
-row with any missing value" would discard too much data — the trade there
+row with any missing value" would discard too much data - the trade there
 is explicit: some bias from imputation versus a smaller, potentially biased
 (non-randomly-missing) training set.
 
@@ -175,7 +175,7 @@ is explicit: some bias from imputation versus a smaller, potentially biased
 **The customer count that's wrong because dedup was too aggressive or too
 lenient.** Merging distinct customers who happen to share a normalized name,
 or failing to merge the same customer represented three different ways,
-both produce a customer count that's confidently wrong — and unlike many
+both produce a customer count that's confidently wrong - and unlike many
 data quality issues, this one often isn't caught by any downstream check,
 because a plausible-looking customer count doesn't trigger scrutiny.
 
@@ -183,13 +183,13 @@ because a plausible-looking customer count doesn't trigger scrutiny.
 imputation.** A machine learning model or statistical report built on a
 partially mean-imputed column understates the true variance in its inputs,
 which can produce confidence intervals or error bars that are narrower than
-reality warrants — a subtle failure that looks like good model performance
+reality warrants - a subtle failure that looks like good model performance
 until the model is wrong more often in production than its stated
 confidence would predict.
 
 **The pipeline that "succeeded" while dropping a growing share of its
 input.** An unmonitored row-dropping cleansing step degrades gradually as
-upstream data quality degrades, with no error at any point — until someone
+upstream data quality degrades, with no error at any point - until someone
 notices the output row count has been quietly shrinking for weeks, and by
 then, reconstructing what should have been in the dropped rows may not be
 possible.
@@ -201,8 +201,8 @@ match. Two customers, a parent and child sharing a family email address, get
 incorrectly merged into one. What corroborating signal would have prevented
 this?**
 
-Requiring agreement on additional fields — matching name, matching phone,
-matching billing address — before merging, rather than treating email match
+Requiring agreement on additional fields - matching name, matching phone,
+matching billing address - before merging, rather than treating email match
 alone as sufficient. The fix trades some missed true duplicates (where the
 corroborating fields legitimately differ, like a recent address change) for
 far fewer false merges.
@@ -211,7 +211,7 @@ far fewer false merges.
 correlation with another variable. What's the likely effect on the
 correlation coefficient, and why?**
 
-The correlation is likely attenuated (pulled toward zero) — imputed values
+The correlation is likely attenuated (pulled toward zero) - imputed values
 carry no real relationship to the other variable (they're a constant, the
 mean), so 30% of the data contributes no genuine covariance while still
 counting toward the total, diluting whatever true correlation exists in the
@@ -221,7 +221,7 @@ remaining 70%.
 and 8% of rows on Tuesday, with no code change between runs. What would you
 check?**
 
-An upstream data quality regression on Tuesday's source data — check
+An upstream data quality regression on Tuesday's source data - check
 whether a specific upstream system, field, or partition is responsible for
 the spike in missing values, since an 80x jump in drop rate with no pipeline
 change points at the input, not the cleansing logic.
@@ -246,19 +246,19 @@ change points at the input, not the cleansing logic.
 ## Interview answers
 
 **"How would you approach deduplicating a customer dataset?"** Start by
-defining "same" precisely — exact match on a unique identifier is easy and
+defining "same" precisely - exact match on a unique identifier is easy and
 catches little; fuzzy matching on name/email/address needs normalization and
 a decision about how much variation counts as the same entity, ideally
 validated against corroborating fields rather than any single one. The
 caveat that shows real experience: the "which record survives" decision
-(usually "most recent") isn't automatically correct — a more recent
+(usually "most recent") isn't automatically correct - a more recent
 automated update can be lower quality than an older manually-verified one,
 and the merge rule should reflect source trustworthiness, not just
 timestamp.
 
 **"What's a risk with mean imputation?"** It reduces the column's measured
 variance, because every imputed value contributes zero deviation from the
-mean — any downstream statistic (a standard deviation, a correlation, a
+mean - any downstream statistic (a standard deviation, a correlation, a
 confidence interval) computed on the imputed column understates the true
 spread in the data. The caveat: this effect scales with how much of the
 column was imputed, so it's worth reporting the imputation rate alongside

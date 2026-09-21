@@ -1,5 +1,5 @@
 ---
-title: Distributed tracing — spans, context propagation, and where the time actually went
+title: Distributed tracing - spans, context propagation, and where the time actually went
 description: >-
   A trace is a tree of spans reconstructing one request across every service
   it touched. Drag one span's duration and watch why optimising the wrong
@@ -26,7 +26,7 @@ Metrics tell you *that* something is wrong, aggregated across every request.
 Logs tell you *what happened*, one event at a time, usually scoped to one
 service. Neither answers the specific question a slow individual request
 raises: **which part of this one request's journey consumed the time?**
-That's what a trace is for — a reconstruction of one request as it crossed
+That's what a trace is for - a reconstruction of one request as it crossed
 every service boundary, with the duration of each hop attached.
 
 ## Mechanics
@@ -45,7 +45,7 @@ Trace: request abc123
 Total: 3024ms
 ```
 
-Each row is a **span** — one unit of work, with a start time, a duration,
+Each row is a **span** - one unit of work, with a start time, a duration,
 and (in a real multi-service trace) a parent-child relationship to the span
 that called it. The **trace** is the whole tree for one request. A span
 that calls another service creates a **child span** inside that service,
@@ -66,8 +66,8 @@ traceparent: 00-abc123...-defspan01-01
 
 Every service receiving that header creates its own child span under the
 same trace ID and propagates an updated header to whatever it calls next.
-Drop this header anywhere along the chain — a queue that doesn't forward
-message metadata, a background job that starts fresh — and the trace
+Drop this header anywhere along the chain - a queue that doesn't forward
+message metadata, a background job that starts fresh - and the trace
 fractures into two disconnected pieces, which is a specific, common, and
 easy-to-miss failure mode of tracing instrumentation, not a bug in the
 tracing tool itself.
@@ -78,7 +78,7 @@ tracing tool itself.
 
 The downstream call above starts at 3000ms because that's the real p95
 measured from the `slow-dependency` fixture (see [reading the
-symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)) — not a
+symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)) - not a
 round number chosen for effect. Every other span is genuinely small. Shaving
 milliseconds off the fast spans changes the total by milliseconds; shaving
 the slow span changes it by however much you shave. This is the entire
@@ -89,7 +89,7 @@ total by nothing worth mentioning.
 ### OpenTelemetry, briefly
 
 OpenTelemetry is the vendor-neutral standard most tracing setups are built
-on today — an SDK that generates spans and propagates context, exporting to
+on today - an SDK that generates spans and propagates context, exporting to
 whichever backend (Jaeger, Datadog, Honeycomb, a self-hosted collector)
 actually stores and visualises them. The practical benefit mirrors the same
 argument made for OTel metrics on the [observability
@@ -100,12 +100,12 @@ change backends later without re-instrumenting.
 
 **Trace volume scales with request volume, and storing every span at full
 fidelity is a real cost at scale.** Production systems almost universally
-apply sampling — recording every trace for errors and slow requests, but
+apply sampling - recording every trace for errors and slow requests, but
 only a small fraction of fast, successful ones, since those mostly look
 alike and are rarely inspected individually.
 
-**Propagating context correctly through every hop — HTTP calls, queue
-messages, background jobs — is genuine engineering effort**, and it's
+**Propagating context correctly through every hop - HTTP calls, queue
+messages, background jobs - is genuine engineering effort**, and it's
 exactly the kind of plumbing that's invisible when done right and silently
 broken when a new code path forgets it, producing a trace that looks
 complete but is actually missing a whole branch.
@@ -126,9 +126,9 @@ often, traces to see exactly where the time went on a specific occurrence.
 ## Real-world usage
 
 Any system built from more than a handful of services in production
-eventually needs tracing, because the alternative — reconstructing a slow
+eventually needs tracing, because the alternative - reconstructing a slow
 request's path by manually correlating timestamps across separate service
-logs — becomes impractical past a small number of hops. The standard
+logs - becomes impractical past a small number of hops. The standard
 workflow: a metric alert fires, a trace for a representative slow request
 shows which span dominates, and logs from that specific span (correlated by
 the same trace ID) supply the detail needed to understand why.
@@ -137,14 +137,14 @@ the same trace ID) supply the detail needed to understand why.
 
 **The week spent optimising the wrong 2%.** A team profiles their own
 application code, finds and fixes a genuinely slow function, ships it, and
-sees no change in end-to-end latency — because a trace, which nobody
+sees no change in end-to-end latency - because a trace, which nobody
 checked first, would have shown the application's own code was 1% of the
 total request time, and the other 99% was a downstream call nobody
 optimised.
 
 **The trace that silently stops at a queue boundary.** A request enters a
 message queue for async processing, and the background worker that picks it
-up starts a fresh trace with no parent — the two halves of the same logical
+up starts a fresh trace with no parent - the two halves of the same logical
 request appear as two unrelated traces, and nobody investigating a slow
 async job can see the original request that triggered it, because context
 propagation was never wired through the queue message.
@@ -152,7 +152,7 @@ propagation was never wired through the queue message.
 **The trace backend bill that outpaced traffic growth.** A system recording
 100% of traces at full fidelity finds trace storage cost scaling linearly
 with request volume, even though the overwhelming majority of traces look
-identical and are never individually opened — the fix (sampling, full
+identical and are never individually opened - the fix (sampling, full
 fidelity only for errors and outliers) is standard practice specifically
 because this is common and avoidable.
 
@@ -163,7 +163,7 @@ because this is common and avoidable.
 they believe can be halved to 1.5ms. What would that change the total to,
 and is it worth the engineering effort?**
 
-The total moves from 2921ms to about 2919.5ms — a 1.5ms improvement on a
+The total moves from 2921ms to about 2919.5ms - a 1.5ms improvement on a
 nearly 3-second request, imperceptible to any user and almost certainly not
 worth dedicated engineering time. The arithmetic makes the priority obvious
 once written down: the `downstream call` span, at over 99% of the total, is
@@ -184,7 +184,7 @@ a child of the producer's, not a fresh root.
 keeping 100% of errors and slow requests) not meaningfully hurt debugging
 capability?**
 
-Fast, successful requests overwhelmingly resemble each other — once you've
+Fast, successful requests overwhelmingly resemble each other - once you've
 seen the trace shape for a handful of them, seeing the ten-thousandth adds
 little new information. Errors and outliers are exactly the traces someone
 is actually going to open during an investigation, so keeping those at full
@@ -214,19 +214,19 @@ cost, which comes from the high-volume, low-information successful requests.
 Metrics show that something changed in aggregate; logs show discrete events,
 usually within one service; a trace reconstructs one specific request's full
 path across every service boundary it crossed, with each hop's duration
-attached — which is the only one of the three that directly answers "where
+attached - which is the only one of the three that directly answers "where
 did this one slow request's time actually go." The caveat that shows real
-use: a trace is about one occurrence, not a trend — it complements metrics
+use: a trace is about one occurrence, not a trend - it complements metrics
 rather than replacing them, and the standard workflow uses a metric to know
 something's wrong before pulling a trace to see where.
 
 **"How does context propagate across services in a distributed trace?"** A
 trace ID and the current span ID are carried forward on every outbound call
-a service makes — typically an HTTP header like `traceparent` — so each
+a service makes - typically an HTTP header like `traceparent` - so each
 downstream service can create a child span under the same trace and pass an
 updated header to whatever it calls next. The caveat that signals real
 tracing experience: this breaks silently at any hop that doesn't forward the
-context — a queue message without propagated metadata, a background job
-that starts fresh — producing two disconnected traces instead of one
+context - a queue message without propagated metadata, a background job
+that starts fresh - producing two disconnected traces instead of one
 continuous one, which is a common instrumentation gap rather than a flaw in
 the tracing standard itself.

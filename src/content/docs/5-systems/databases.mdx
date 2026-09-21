@@ -24,7 +24,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 ## Intuition
 
 A database without indexes is an array. Every query is a linear scan: read every
-row, test it, discard it. That is genuinely fine for a hundred rows — the scan is
+row, test it, discard it. That is genuinely fine for a hundred rows - the scan is
 sequential, disks and memory are fast at sequential, and maintaining an index
 would cost more than it saves.
 
@@ -38,7 +38,7 @@ That is the whole idea, and everything else on this page is a consequence of it:
 
 - Because the index is *ordered*, it serves ranges and `ORDER BY` too, not just
   equality.
-- Because it is *a copy*, every write has to update it — so indexes make writes
+- Because it is *a copy*, every write has to update it - so indexes make writes
   slower, and "just add an index" is not a free action.
 - Because it is ordered *by specific columns in a specific sequence*, the order of
   those columns decides which queries it can serve at all.
@@ -53,7 +53,7 @@ must be true exactly once.
 ### What the index actually is
 
 Almost always a **B-tree**: a balanced tree with a very high branching factor.
-High fanout is the point — with a few hundred keys per node, a table of a billion
+High fanout is the point - with a few hundred keys per node, a table of a billion
 rows is only about four levels deep, so a lookup is four page reads rather than
 thirty. The leaves hold the values in sorted order and are linked to each other,
 which is what makes range scans cheap.
@@ -75,7 +75,7 @@ serves:
 ```sql
 WHERE doctor_id = ?                        -- ✓ leftmost column
 WHERE doctor_id = ? AND starts_at > ?      -- ✓ leftmost, then a range on the next
-WHERE doctor_id = ? ORDER BY starts_at     -- ✓ already in order — no sort step at all
+WHERE doctor_id = ? ORDER BY starts_at     -- ✓ already in order - no sort step at all
 ```
 
 but not:
@@ -86,7 +86,7 @@ WHERE starts_at > ?                        -- ✗ needs its own index
 
 The intuition: it is a phone book sorted by surname, then first name. You can find
 every "Oliveira", and every "Oliveira, Daniel". You cannot use it to find every
-"Daniel" — those are scattered through the whole book.
+"Daniel" - those are scattered through the whole book.
 
 The rule of thumb for choosing the order is **equality, then sort, then range**
 (MongoDB spells this out as the ESR rule; it applies equally to Postgres). So
@@ -101,28 +101,28 @@ CREATE INDEX ON appointments (doctor_id, starts_at) INCLUDE (status);
 ```
 
 That matters because the table lookup is a *random* I/O per row, which is the
-expensive part — skipping it can be a bigger win than the index itself.
+expensive part - skipping it can be a bigger win than the index itself.
 
 ### Transactions and what the isolation levels actually promise
 
 ACID, with each letter given a sentence, because the acronym on its own carries
 no information:
 
-- **Atomicity** — every statement applies, or none does. No half-applied transfer.
-- **Consistency** — declared constraints hold at commit. Note this is *not* the
+- **Atomicity** - every statement applies, or none does. No half-applied transfer.
+- **Consistency** - declared constraints hold at commit. Note this is *not* the
   same "consistency" as in CAP, which is a property about replicas. Same word, two
   meanings.
-- **Isolation** — concurrent transactions do not see each other's incomplete work.
+- **Isolation** - concurrent transactions do not see each other's incomplete work.
   How strictly is the isolation level.
-- **Durability** — once committed, it survives a crash. Achieved by writing to a
+- **Durability** - once committed, it survives a crash. Achieved by writing to a
   write-ahead log and `fsync`ing *before* acknowledging.
 
 The isolation levels are defined by which anomalies they prevent:
 
-- **Dirty read** — you read a row another transaction has modified but not
+- **Dirty read** - you read a row another transaction has modified but not
   committed. If it rolls back, you acted on data that never existed.
-- **Non-repeatable read** — you read the same row twice and get different values.
-- **Phantom read** — you run the same *query* twice and get a different set of
+- **Non-repeatable read** - you read the same row twice and get different values.
+- **Phantom read** - you run the same *query* twice and get a different set of
   rows, because someone inserted or deleted one matching your `WHERE`. This one is
   about the set, which is why it needs different machinery to prevent.
 
@@ -139,7 +139,7 @@ Three details worth having exactly right:
 syntax and behaves as Read Committed.
 
 **Postgres's Repeatable Read is snapshot isolation**, and is stronger than the
-standard requires — it does prevent phantoms (hence the asterisk). What it does
+standard requires - it does prevent phantoms (hence the asterisk). What it does
 *not* prevent is **write skew**: two transactions each read a consistent snapshot,
 each make a decision that is valid on its own, and together they break an
 invariant. That is exactly the double-booking shape, and it is why "I'll raise the
@@ -147,7 +147,7 @@ isolation level" is not automatically the fix.
 
 **`SERIALIZABLE` in Postgres is optimistic.** It does not block; it detects a
 conflict at commit time and aborts one transaction with SQLSTATE `40001`. So
-choosing Serializable means **you must implement retry** — otherwise you have
+choosing Serializable means **you must implement retry** - otherwise you have
 converted a rare data corruption into a rare 500.
 
 ```ts
@@ -234,14 +234,14 @@ $$
 | 1,000,000,000 | 30 | 4 |
 
 This is why the constant matters more than the class. A binary tree of a billion
-rows is 30 levels — 30 random reads. The B-tree is 4, and the top two levels are
+rows is 30 levels - 30 random reads. The B-tree is 4, and the top two levels are
 always cached, so it is really 2 reads that touch disk. **The $O(\log n)$ is the
 same; the base of the logarithm is the entire engineering.**
 
 **Why writes get slower.** With $k$ indexes on a table, an `INSERT` does 1 table
 write plus $k$ index writes, each of which may split a node. So write cost is
 $O(k \log n)$ while an unindexed read is $O(n)$. Indexes trade a factor of $k$ on
-writes for a factor of $n/\log n$ on reads — an enormous win, right up until the
+writes for a factor of $n/\log n$ on reads - an enormous win, right up until the
 table is write-heavy and the reads are rare, which is the case people forget.
 
 **Selectivity decides whether the index is used at all.** Selectivity is the
@@ -255,7 +255,7 @@ $$
 where $s$ is the selected fraction, against $C_{\text{scan}} = n \cdot
 C_{\text{sequential}}$ for a scan. Random I/O costs perhaps 4× sequential, so once
 $s$ exceeds roughly 25% the scan wins. That is why an index on a boolean, or on a
-status column where 90% of rows are `CONFIRMED`, is dead weight — the planner
+status column where 90% of rows are `CONFIRMED`, is dead weight - the planner
 correctly ignores it.
 
 The fix is a **partial index**, which indexes only the interesting minority:
@@ -282,7 +282,7 @@ Serializable costs throughput on every transaction and obliges you to write retr
 logic. A unique or exclusion constraint costs one index and cannot be got wrong.
 
 **Do not denormalise before you have a measured read problem.** Normalisation
-means each fact lives in exactly one place, and the benefit is not disk space —
+means each fact lives in exactly one place, and the benefit is not disk space -
 it is the absence of **update anomalies**. If a patient's name is on the patient
 row, renaming is one `UPDATE`. If it is copied onto 400 appointments, renaming is
 400 updates that must all succeed, and any you miss is a permanently wrong copy
@@ -298,20 +298,20 @@ works:
 1. **Fix the queries.** An index or an N+1 fix routinely gives 100× for an
    afternoon's work and no new infrastructure. Nobody should shard a database
    whose queries have not been looked at.
-2. **Vertical scaling.** Unfashionable and correct — modern machines are very
+2. **Vertical scaling.** Unfashionable and correct - modern machines are very
    large, and the alternative adds permanent complexity.
 3. **Connection pooling.** Postgres uses a process per connection, so its ceiling
    is in the hundreds. Twenty autoscaled app instances with a pool of 20 each is
    400 connections from a mostly-idle service. PgBouncer in transaction mode
-   multiplexes them — with the catch that transaction-mode pooling breaks
+   multiplexes them - with the catch that transaction-mode pooling breaks
    session-level features: prepared statements, `LISTEN/NOTIFY`, session
    variables, because you do not get the same backend twice.
 4. **Read replicas.** Two problems to name: replication lag, and its user-visible
-   form, **read-your-own-writes** — a user saves a change, the next read hits a
+   form, **read-your-own-writes** - a user saves a change, the next read hits a
    lagging replica, and their change appears to have vanished.
-5. **Partitioning** — splitting one table within one database. Cheap deletion of
+5. **Partitioning** - splitting one table within one database. Cheap deletion of
    old data by dropping a partition, and the planner skips irrelevant ones.
-6. **Sharding** — splitting across separate databases. A one-way door. The whole
+6. **Sharding** - splitting across separate databases. A one-way door. The whole
    game is the shard key: it must distribute evenly (`doctor_id`, not `country`)
    and keep common queries inside one shard, because cross-shard joins and
    transactions are either impossible or slow enough to force a redesign.
@@ -328,15 +328,15 @@ production](/cs-fundamentals/8-databases-storage/postgres/) goes through a real
 plan end to end; the shape of what to look for:
 
 - **`Seq Scan` on a large table** where you expected an index scan.
-- **Bad row estimates** — the plan says `rows=12` and reality is `rows=48000`. The
+- **Bad row estimates** - the plan says `rows=12` and reality is `rows=48000`. The
   planner chose its strategy on wrong information, usually stale statistics
   (`ANALYZE`) or a predicate it cannot estimate, like a function call. Fixing the
   estimate often fixes the plan by itself.
-- **A `Nested Loop` over a large set** — fine for a handful of rows, catastrophic
+- **A `Nested Loop` over a large set** - fine for a handful of rows, catastrophic
   for a million, where you want a hash join.
-- **Sorts spilling to disk** (`external merge Disk: 40MB`) — raise `work_mem` or
+- **Sorts spilling to disk** (`external merge Disk: 40MB`) - raise `work_mem` or
   provide an index in that order.
-- **`loops=5000`** — the per-row cost multiplied. This is how an N+1 shows up
+- **`loops=5000`** - the per-row cost multiplied. This is how an N+1 shows up
   inside a single plan.
 
 **Functions on an indexed column defeat the index**, because the index stores the
@@ -362,7 +362,7 @@ question becomes embed versus reference:**
 - **Reference** when the array could grow without bound, the child is queried on
   its own, or the relationship is many-to-many.
 - **The 16 MB document limit is a hard ceiling**, so "unbounded array" is not a
-  stylistic worry — it is a scheduled outage. The document eventually refuses
+  stylistic worry - it is a scheduled outage. The document eventually refuses
   another push. Updating a growing document also rewrites it, and indexes on large
   arrays get expensive.
 - **The hybrid is what real schemas do**: embed a summary (`{ patientId,
@@ -371,13 +371,13 @@ question becomes embed versus reference:**
 
 **CAP, stated correctly.** When a network partition happens, a distributed system
 must give up either consistency or availability. It is a choice you face *during a
-partition* — the common misstatement is treating it as "pick two of three" in
+partition* - the common misstatement is treating it as "pick two of three" in
 normal operation. The useful extension is **PACELC**: during a **P**artition choose
 **A** or **C**; **E**lse choose **L**atency or **C**onsistency. That second half is
 the trade you live with every day, because a synchronous replica costs latency on
 every write forever, partition or not.
 
-Applying it beats defining it: bookings choose consistency — better to fail the
+Applying it beats defining it: bookings choose consistency - better to fail the
 write than risk a double booking. Notification counts can be eventually
 consistent, because a stale count for four seconds costs nothing. "We are a CP
 system" is rarely true of a whole system, only of specific operations.
@@ -385,7 +385,7 @@ system" is rarely true of a whole system, only of specific operations.
 ## Failure modes
 
 **Symptom: an endpoint is 60 ms instead of 3 ms, and every query in the log is
-fast.** The N+1 — one query for a list, then one per item:
+fast.** The N+1 - one query for a list, then one per item:
 
 ```ts
 const appts = await repo.findByDoctor(id);           // 1 query
@@ -401,7 +401,7 @@ collectively fatal" quality is exactly why it survives code review.
 
 Fixes by layer: a `JOIN` or a batched `WHERE patient_id IN (...)` with an
 in-memory stitch; eager loading in an ORM (`include` in Prisma, `relations` in
-TypeORM, `.populate()` in Mongoose — note the default is *lazy*, which is how the
+TypeORM, `.populate()` in Mongoose - note the default is *lazy*, which is how the
 bug happens); DataLoader in GraphQL.
 
 Detection is the part that shows experience: query logging in development with a
@@ -410,7 +410,7 @@ at; and in production, an APM trace showing 200 identical queries with different
 parameters, which is unmistakable once you have seen it once.
 
 **Symptom: two transactions hang, then one dies with SQLSTATE `40P01`.** A
-deadlock — each holds a lock the other wants. The classic cause is grabbing the
+deadlock - each holds a lock the other wants. The classic cause is grabbing the
 same rows in different orders:
 
 ```text
@@ -420,7 +420,7 @@ T2: lock B … then wants A      → deadlock
 
 The mitigation is almost embarrassingly simple: **acquire locks in a consistent
 order**. A one-line `sort` by id before a batch update removes an entire class of
-deadlock. Keep transactions small, and retry — deadlocks are transient by nature.
+deadlock. Keep transactions small, and retry - deadlocks are transient by nature.
 
 **Symptom: disk usage grows, queries slow down, and nothing was deleted.** In
 Postgres, a long-running or idle-in-transaction session pins an old snapshot and
@@ -435,7 +435,7 @@ short window after that user writes, or pin their session to the primary.
 **Symptom: the app is idle and the database refuses connections.** Pool exhaustion
 from autoscaling, or connections leaked by a path that does not release on error.
 `try/finally` around every checkout, and a pool size chosen against the database's
-ceiling divided by the maximum instance count — not against what one instance
+ceiling divided by the maximum instance count - not against what one instance
 would like.
 
 **Symptom: a query that was instant last month now takes four seconds, unchanged.**
@@ -466,7 +466,7 @@ Apply equality-sort-range: `doctor_id` is equality so it goes first; `starts_at`
 serves both the range and the `ORDER BY`, and because the index is already in
 that order the sort step disappears entirely.
 
-`INCLUDE (id, status)` makes it covering — every column the query selects is in
+`INCLUDE (id, status)` makes it covering - every column the query selects is in
 the index, so Postgres can use an index-only scan and never do the random table
 fetch per row. On a range returning a few hundred rows, that heap-fetch elimination
 is often the larger half of the win.
@@ -490,12 +490,12 @@ await db.seats.update(id, { taken: true });
 <summary>Solution</summary>
 
 The bug is the gap between the read and the write. Every `await` is a yield, so
-another request — or another process entirely — can run between lines 2 and 3, and
+another request - or another process entirely - can run between lines 2 and 3, and
 both requests can observe `taken: false`.
 
 Wrapping it in a transaction at the default isolation level does **not** fix it:
 Read Committed lets both transactions read the old value. Even snapshot isolation
-does not, because each sees a snapshot where the seat is free — this is write
+does not, because each sees a snapshot where the seat is free - this is write
 skew.
 
 The fix is to make the check and the write a single atomic statement:
@@ -512,7 +512,7 @@ The database evaluates `taken = false` while holding the row lock, so exactly on
 of the two updates affects a row. The other gets `rowCount === 0` and a clean 409.
 
 Why not a distributed lock: it adds a dependency that can fail, needs a lease
-timeout you will get wrong, and is *still* only advisory — anything that writes
+timeout you will get wrong, and is *still* only advisory - anything that writes
 without taking the lock corrupts the invariant anyway. The database constraint
 cannot be bypassed.
 
@@ -539,7 +539,7 @@ Two things, and the second is the cause of the first.
 happening *inside* a single query plan.
 
 **The root cause** is the estimate. The planner predicted `rows=1` and got 48,213.
-It chose a nested loop because a nested loop is the right plan for one row — the
+It chose a nested loop because a nested loop is the right plan for one row - the
 strategy was reasonable given the information, and the information was wrong. With
 a correct estimate it would have chosen a hash join and read `patients` once.
 
@@ -570,7 +570,7 @@ time.
   <Fragment slot="explanation">
     <p>
       The one that skips <code>country</code>. The index is sorted by country
-      first, so entries for Porto are scattered across every country's section —
+      first, so entries for Porto are scattered across every country's section -
       there is no contiguous range to scan.
     </p>
     <p>
@@ -607,12 +607,12 @@ time.
       snapshot isolation sees no conflict to report.
     </p>
     <p>
-      Raising to <code>SERIALIZABLE</code> would catch it — Postgres detects the
+      Raising to <code>SERIALIZABLE</code> would catch it - Postgres detects the
       conflict at commit and aborts one with SQLSTATE <code>40001</code>, which
       means you must write a retry loop or you have traded corruption for a 500.
     </p>
     <p>
-      The cheaper and more robust answer is an exclusion constraint. It costs one
+      The cheaper and more reliable answer is an exclusion constraint. It costs one
       index, works at every isolation level, and cannot be bypassed by a code path
       that forgot the rule.
     </p>
@@ -624,13 +624,13 @@ time.
 **"What is an index, and what does it cost?"**
 
 > An index is a separate ordered structure holding the indexed columns plus a
-> pointer to the row — almost always a B-tree, with a branching factor high enough
+> pointer to the row - almost always a B-tree, with a branching factor high enough
 > that a billion rows is about four levels deep. That gives $O(\log n)$ lookup, and
 > because the leaves are in sorted order it also serves range scans and `ORDER BY`
 > without a sort step.
 >
 > The cost is that every index has to be updated on every insert, update of an
-> indexed column, and delete — so writes get slower in proportion to how many you
+> indexed column, and delete - so writes get slower in proportion to how many you
 > have, and each one competes for memory with the data you wanted cached. So
 > "add an index" is a trade, not a free win. I would also check selectivity first:
 > an index on a boolean, or on a status where 90% of rows share one value, will be
@@ -639,7 +639,7 @@ time.
 **"How would you debug a slow endpoint?"**
 
 > Query count first, then query plan. A per-request query count catches N+1s
-> immediately, and that is the most common cause by a wide margin — fifty
+> immediately, and that is the most common cause by a wide margin - fifty
 > individually fast queries that nothing in the logs flags as slow. Then
 > `EXPLAIN ANALYZE` on the remaining suspect, and the first thing I look at is
 > estimated versus actual rows, because a bad estimate explains a bad plan choice,
@@ -648,14 +648,14 @@ time.
 **"How do you prevent double booking?"** The answer that signals experience is
 choosing the cheapest correct mechanism rather than the most powerful one:
 
-> With a database constraint — an exclusion constraint on the doctor and the time
+> With a database constraint - an exclusion constraint on the doctor and the time
 > range, or a conditional `UPDATE … WHERE taken = false` and checking the affected
 > row count. Not with an application-level check, because there is always a window
 > between the read and the write, and not with a distributed lock, because that is
 > advisory and adds a dependency that can fail.
 >
 > The reason I would not just raise the isolation level: snapshot isolation does
-> not prevent this — it is write skew, and both transactions see a snapshot where
+> not prevent this - it is write skew, and both transactions see a snapshot where
 > the slot is free. Serializable does catch it, but it costs throughput on
 > everything and obliges me to write retry logic for `40001`. The constraint is one
 > index and cannot be got wrong.

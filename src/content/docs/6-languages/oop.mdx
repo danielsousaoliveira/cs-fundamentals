@@ -39,7 +39,7 @@ Everything else follows from asking "where can this invariant be broken?":
 encapsulation is the answer "in one guarded place"; abstraction is hiding *how* the
 guard works; polymorphism is letting several implementations satisfy one contract.
 
-Inheritance is the odd one out. It is not a way to protect invariants — it is a way
+Inheritance is the odd one out. It is not a way to protect invariants - it is a way
 to *share implementation*, and it is the tightest coupling available in a
 programming language. It earns its place occasionally. The default is composition,
 and the second half of this page is the arithmetic showing why.
@@ -48,7 +48,7 @@ and the second half of this page is the arithmetic showing why.
 
 ### The four words, defined properly
 
-**Encapsulation** — bundle data with the behaviour that operates on it, and hide
+**Encapsulation** - bundle data with the behaviour that operates on it, and hide
 the internals so callers cannot put the object into an invalid state.
 
 ```ts
@@ -81,21 +81,21 @@ class B { #secret = 1; }        // real runtime privacy, enforced by the engine
 TypeScript's `private` is erased at compile time and is therefore **not a security
 boundary**.
 
-**Abstraction** — expose *what* something does, hide *how*.
+**Abstraction** - expose *what* something does, hide *how*.
 `repo.findConflicting(...)` says nothing about SQL. Encapsulation hides state;
 abstraction hides implementation. People conflate them; distinguishing them cleanly
 is a small win.
 
-**Inheritance** — an *is-a* relationship where the subclass reuses and specialises
+**Inheritance** - an *is-a* relationship where the subclass reuses and specialises
 the parent's implementation.
 
-**Polymorphism** — one interface, many implementations, with behaviour selected by
+**Polymorphism** - one interface, many implementations, with behaviour selected by
 the runtime type. Three kinds, worth naming:
 
-- **Subtype** — `shape.area()` dispatching on the real type.
-- **Parametric** — generics. `first<T>(arr: T[]): T | undefined` works for every
+- **Subtype** - `shape.area()` dispatching on the real type.
+- **Parametric** - generics. `first<T>(arr: T[]): T | undefined` works for every
   `T` with one implementation.
-- **Ad-hoc / overloading** — the same name with different signatures. **JavaScript
+- **Ad-hoc / overloading** - the same name with different signatures. **JavaScript
   has no true overloading**: a second `function f()` replaces the first. TypeScript
   overload *signatures* are compile-time only and collapse to one implementation
   that must sort out the arguments itself:
@@ -117,7 +117,7 @@ abstract class Shape {
   abstract area(): number; // subclasses MUST implement
 
   describe(): string {
-    // Shared, concrete behaviour — the Template Method idea. The base owns the
+    // Shared, concrete behaviour - the Template Method idea. The base owns the
     // skeleton; subclasses fill in the one variable step.
     return `${this.name} with area ${this.area().toFixed(2)}`;
   }
@@ -144,7 +144,7 @@ class Circle extends Shape {
   }
 }
 
-// One call site, many behaviours. Adding a Triangle requires zero changes here —
+// One call site, many behaviours. Adding a Triangle requires zero changes here -
 // that is Open/Closed achieved through subtype polymorphism.
 const shapes: Shape[] = [new Rectangle(2, 3), new Circle(1)];
 const total = shapes.reduce((sum, s) => sum + s.area(), 0);
@@ -158,26 +158,26 @@ inconsistent.
 
 `class` is syntactic sugar over **prototypal inheritance**. `extends` sets
 `Rectangle.prototype`'s internal prototype to `Shape.prototype`, and a method call
-walks that chain — instance, then `Rectangle.prototype`, then `Shape.prototype`,
-then `Object.prototype` — until it finds the property or runs out.
+walks that chain - instance, then `Rectangle.prototype`, then `Shape.prototype`,
+then `Object.prototype` - until it finds the property or runs out.
 
 ```js
 const c = new Circle(1);
 Object.getPrototypeOf(c) === Circle.prototype; // true
 Object.getPrototypeOf(Circle.prototype) === Shape.prototype; // true
-c.hasOwnProperty('area'); // false — it lives on the prototype
+c.hasOwnProperty('area'); // false - it lives on the prototype
 ```
 
 Two consequences worth having ready:
 
 **Methods are shared, not copied per instance.** A million circles share one
-`area` function. This is why an arrow-function class field is a real trade — it
+`area` function. This is why an arrow-function class field is a real trade - it
 creates a per-instance closure instead.
 
 **Everything is dynamically dispatched.** JavaScript methods are always virtual;
 there is no `final` and no compile-time binding. And `this` is determined by the
 [call site](/cs-fundamentals/6-languages/javascript-semantics/), not by where the
-method was defined — `const f = c.area; f()` loses it.
+method was defined - `const f = c.area; f()` loses it.
 
 ### Composition over inheritance
 
@@ -186,7 +186,7 @@ cuts across the taxonomy rather than down it.**
 
 Suppose some shapes can be rendered in 3D, some serialised, some animated. Circle
 needs 3D and serialisation; Rectangle needs serialisation and animation. Inheritance
-is single-axis — one parent — so it cannot express two independent axes. Trying
+is single-axis - one parent - so it cannot express two independent axes. Trying
 gives you `Serializable3DShape`, `SerializableAnimatableShape`, and a combinatorial
 explosion.
 
@@ -203,7 +203,7 @@ class Rectangle extends Shape implements Serializable, Animatable {}
 ```
 
 Each class declares exactly the capabilities it has, the compiler checks it, and a
-function that only needs to draw takes `Drawable` — accepting anything drawable,
+function that only needs to draw takes `Drawable` - accepting anything drawable,
 including things that are not shapes at all.
 
 </TabItem>
@@ -262,13 +262,13 @@ $$
 
 where $d$ is the distance up the prototype chain to the property. V8 hides most of
 this with inline caches, but a deep hierarchy defeats them when call sites become
-megamorphic — several different shapes reaching the same call site — and the
+megamorphic - several different shapes reaching the same call site - and the
 optimisation falls back to a dictionary lookup. Three levels is where this starts
 to matter, which coincidentally is where the design smell starts too.
 
 **Fragile base class is a coupling metric.** A change to a base class can affect
 all $n$ subclasses, so the blast radius of an edit is proportional to the subtree
-below it — even though none of those subclasses' code changed. Composition bounds
+below it - even though none of those subclasses' code changed. Composition bounds
 the blast radius to the direct consumers of the changed interface, which is a set
 you can enumerate.
 
@@ -290,7 +290,7 @@ to name:
   now knows about its children, which inverts the entire point.
 
 **Do not model with classes when a discriminated union fits.** Classes give you
-open extension — anyone can add a subtype — at the cost of no exhaustiveness
+open extension - anyone can add a subtype - at the cost of no exhaustiveness
 checking. A [discriminated union](/cs-fundamentals/6-languages/typescript/) gives
 you the opposite: a closed set the compiler can verify you have handled completely.
 For a fixed set of states, the union is better.
@@ -300,7 +300,7 @@ state is a function with extra ceremony. `new Validator().validate(x)` is
 `validate(x)`.
 
 **Do not write an anemic domain model.** A class of public fields and no behaviour,
-with all the rules in a separate service, is a struct wearing a class costume — it
+with all the rules in a separate service, is a struct wearing a class costume - it
 gives up encapsulation, which is the one thing objects are genuinely good at.
 
 **Do not use TypeScript's `private` as a security boundary.** It is erased at
@@ -310,7 +310,7 @@ compile time. `#field` is the real thing.
 
 **Where inheritance genuinely earns its place:**
 
-- **Framework extension points** — `extends Error`, `extends React.Component`,
+- **Framework extension points** - `extends Error`, `extends React.Component`,
   `extends HTMLElement`. A real is-a relationship with substantial shared
   implementation you do not own.
 - **The Template Method pattern**, as in `describe()` above: the base owns an
@@ -347,7 +347,7 @@ demonstration of the argument on this page: the combinatorial problem of wrappin
 components in five HOCs is exactly the product formula above.
 
 **Structural typing makes composition cheaper in TypeScript than in Java.** A class
-does not have to declare that it implements an interface — if the shape matches, it
+does not have to declare that it implements an interface - if the shape matches, it
 satisfies it. So a consumer can declare the narrow interface it needs and existing
 implementations satisfy it with no changes at all.
 
@@ -359,7 +359,7 @@ axis.
 
 **Symptom: a subclass throws `NotImplementedError` for a method it inherited.** A
 Liskov violation. The taxonomy says is-a and the behaviour says otherwise, so every
-consumer must now know which subtype it has — which defeats polymorphism entirely.
+consumer must now know which subtype it has - which defeats polymorphism entirely.
 
 **Symptom: class names contain more than one adjective.**
 `CachedRetryingJsonHttpClient` is the product formula manifesting as a filename.
@@ -417,7 +417,7 @@ class SmsNotifier implements Notifier {
   async send(msg: Message) {/* … */}
 }
 
-// Each decorator implements Notifier AND wraps one — so they compose in any
+// Each decorator implements Notifier AND wraps one - so they compose in any
 // order, with any channel, without knowing what they wrap.
 class Retrying implements Notifier {
   constructor(
@@ -452,7 +452,7 @@ const notifier = new Retrying(new RateLimited(new EmailNotifier(), limiter));
 ```
 
 Three classes plus two decorators covers every combination of two channels and two
-behaviours — and a third channel now costs one class rather than four.
+behaviours - and a third channel now costs one class rather than four.
 
 The ordering is a real decision, not an incidental detail: `Retrying(RateLimited(…))`
 takes a rate-limit slot per attempt, while `RateLimited(Retrying(…))` takes one slot
@@ -513,7 +513,7 @@ way.
 <summary>Solution</summary>
 
 This is one of the cases where inheritance genuinely fits, because there is a
-**fixed skeleton with variable steps** — the Template Method pattern:
+**fixed skeleton with variable steps** - the Template Method pattern:
 
 ```ts
 abstract class PaymentProcessor {
@@ -535,13 +535,13 @@ abstract class PaymentProcessor {
 ```
 
 Why inheritance rather than composition here: the shared behaviour is not a
-*collaborator*, it is a **sequence** — and specifically a sequence you want to be
+*collaborator*, it is a **sequence** - and specifically a sequence you want to be
 non-negotiable. A composed design would put the audit row in each implementation,
 where it can be forgotten.
 
 **The counter-argument, which is worth being able to make**: this only holds while
 the skeleton is genuinely fixed. The moment one provider needs a step in a different
-order, or needs to skip the event, the base class grows a flag or a conditional —
+order, or needs to skip the event, the base class grows a flag or a conditional -
 and a base class with conditionals about its children is the smell listed above. At
 that point the right move is a composed pipeline of steps.
 
@@ -558,7 +558,7 @@ That is more useful than a rule in either direction.
   options={[
     { label: '12 subclasses versus 7 composable pieces', correct: true },
     { label: '7 subclasses versus 12 composable pieces' },
-    { label: '12 versus 12 — the count is the same either way' },
+    { label: '12 versus 12 - the count is the same either way' },
     { label: '3 subclasses versus 4 composable pieces' },
   ]}
 >
@@ -571,7 +571,7 @@ That is more useful than a rule in either direction.
     <p>
       The growth rate matters more than the totals. Adding a fifth destination
       costs <em>one</em> class under composition and <em>three</em> under
-      inheritance — and adding a third axis, say compression, takes the
+      inheritance - and adding a third axis, say compression, takes the
       inheritance count to 36 while composition goes to 9.
     </p>
     <p>
@@ -604,7 +604,7 @@ console.log('area' in c);`}
   <Fragment slot="explanation">
     <p>
       <code>hasOwnProperty</code> checks only the instance itself, and{' '}
-      <code>area</code> is not there — methods live on{' '}
+      <code>area</code> is not there - methods live on{' '}
       <code>Shape.prototype</code>, shared by every instance rather than copied
       into each one.
     </p>
@@ -625,11 +625,11 @@ console.log('area' in c);`}
 ## Interview answers
 
 **"Explain the four OOP principles."** Give a definition, an example, and the
-*why* — the why is what distinguishes the answer:
+*why* - the why is what distinguishes the answer:
 
 > **Encapsulation** is bundling data with the behaviour that operates on it and
 > hiding the internals, so callers cannot put the object into an invalid state. The
-> point is not the `private` keyword — it is that the invariant has exactly one
+> point is not the `private` keyword - it is that the invariant has exactly one
 > place it can be broken, and that place is guarded. Otherwise you enforce the rule
 > by code review forever.
 >
@@ -641,7 +641,7 @@ console.log('area' in c);`}
 > the parent's implementation.
 >
 > **Polymorphism** is one interface with many implementations, selected by the
-> runtime type. Worth splitting into subtype, parametric — which is generics — and
+> runtime type. Worth splitting into subtype, parametric - which is generics - and
 > ad-hoc, which JavaScript does not really have, since a second declaration just
 > replaces the first.
 
@@ -649,8 +649,8 @@ console.log('area' in c);`}
 the Java-model answer:
 
 > `class` is sugar over prototypal inheritance. `extends` sets one prototype's
-> internal prototype to the other, and a method call walks that chain — instance,
-> then the subclass prototype, then the parent's, then `Object.prototype` — until
+> internal prototype to the other, and a method call walks that chain - instance,
+> then the subclass prototype, then the parent's, then `Object.prototype` - until
 > it finds the property. So methods are shared rather than copied per instance, and
 > everything is dynamically dispatched: JavaScript methods are always virtual,
 > there is no `final` and no compile-time binding.
@@ -658,7 +658,7 @@ the Java-model answer:
 **"Composition or inheritance?"** Lead with the arithmetic, because it is
 checkable:
 
-> Composition by default. Inheritance is the tightest coupling there is — the
+> Composition by default. Inheritance is the tightest coupling there is - the
 > subclass depends on the parent's implementation, not just its interface, so an
 > upstream change can break every class below it without any of their code
 > changing. That is the fragile base class problem.
@@ -668,13 +668,13 @@ checkable:
 > subclasses or six injectable pieces, and a third axis makes it 27 against 9.
 >
 > I use inheritance when there is a genuine is-a relationship *plus* real shared
-> implementation — a framework extension point, an error hierarchy, a fixed
+> implementation - a framework extension point, an error hierarchy, a fixed
 > skeleton with one variable step.
 
 **The signals worth naming unprompted**, because they pre-empt the follow-up:
 
 - A third level of hierarchy.
-- A subclass overriding a method to throw or do nothing — a Liskov violation
+- A subclass overriding a method to throw or do nothing - a Liskov violation
   telling you the taxonomy is wrong.
 - A base class with a `type` field and conditionals in its methods, which means the
   base already knows about its children.

@@ -1,7 +1,7 @@
 ---
 title: Sliding Window
 description: >-
-  Reusing the previous answer instead of recomputing it — and the monotonicity
+  Reusing the previous answer instead of recomputing it - and the monotonicity
   requirement that decides whether the window is allowed to shrink.
 sidebar:
   order: 4
@@ -29,7 +29,7 @@ its whole idea is one observation:
 > for each one throws away the work you just did.
 
 Take the maximum sum of any 3 consecutive elements of `[2, 1, 5, 1, 3, 2]`. The
-naive approach sums each window independently — $O(n \cdot k)$. But look at what
+naive approach sums each window independently - $O(n \cdot k)$. But look at what
 changes between two adjacent windows:
 
 ```text
@@ -46,13 +46,13 @@ each step is two arithmetic operations instead of $k$ additions, and the whole
 scan is $O(n)$ regardless of window size.
 
 That is the fixed-size case, and it is the easy one. The interesting family is
-**variable-size** windows — "the longest substring with no repeated character",
-"the shortest subarray summing to at least $S$" — where the window grows and
+**variable-size** windows - "the longest substring with no repeated character",
+"the shortest subarray summing to at least $S$" - where the window grows and
 shrinks according to a condition. Those have a subtler cost argument and a real
 precondition, and both are what the rest of this page is about.
 
 The recognition signal: **"contiguous" plus "longest / shortest / maximum /
-count"**. If the problem allows skipping elements, it is not a window — that is
+count"**. If the problem allows skipping elements, it is not a window - that is
 usually [dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/).
 
 ## Mechanics
@@ -72,7 +72,7 @@ def max_sum_k(a, k):
 ```
 
 $O(n)$ time, $O(1)$ space. The only thing to be careful about is doing both
-operations — adding the new element and removing the old — as a single update, so
+operations - adding the new element and removing the old - as a single update, so
 the invariant "`window` is the sum of the last $k$ elements" holds at every
 iteration.
 
@@ -161,7 +161,7 @@ makes the window sum *monotonic* in the window: extending the window can only
 increase the sum, shrinking it can only decrease it.
 
 With negative numbers that breaks completely. Shrinking might *increase* the sum,
-so a window you rejected could become valid after removing an element — and the
+so a window you rejected could become valid after removing an element - and the
 algorithm has already moved past it.
 
 ```python
@@ -193,7 +193,7 @@ def sliding_max(a, k):
 
     for i, value in enumerate(a):
         # Anything smaller than the incoming value can never be a maximum
-        # again — it is both smaller and older. Discard it permanently.
+        # again - it is both smaller and older. Discard it permanently.
         while dq and a[dq[-1]] <= value:
             dq.pop()
         dq.append(i)
@@ -221,7 +221,7 @@ amortised rather than per-iteration:
 - `right` advances exactly $n$ times, once per outer iteration.
 - `left` only ever advances, never retreats, and it is bounded by $n$.
 
-So across the *entire run*, the inner loop executes at most $n$ times in total —
+So across the *entire run*, the inner loop executes at most $n$ times in total -
 not $n$ times per outer iteration.
 
 $$
@@ -231,7 +231,7 @@ $$
 This is the same accounting as
 [dynamic array growth](/cs-fundamentals/2-data-structures/arrays-lists/): an
 individual step can be expensive, but a monotonic counter bounds the total. **The
-moment `left` can move backwards, the argument collapses** — which is exactly what
+moment `left` can move backwards, the argument collapses** - which is exactly what
 negative numbers cause.
 
 **Against the brute force:**
@@ -247,7 +247,7 @@ negative numbers cause.
 For $n = 10{,}000$: the quadratic version is $10^8$ operations, the window is
 $10^4$. Four orders of magnitude, and the gap widens with $n$.
 
-**Space is $O(k)$, not $O(1)$, whenever you track window contents** — a frequency
+**Space is $O(k)$, not $O(1)$, whenever you track window contents** - a frequency
 map or a deque. The deque holds at most $k$ indices, and the frequency map at most
 $\min(k, |\Sigma|)$ distinct keys where $\Sigma$ is the alphabet. For ASCII that is
 bounded by 128, so it is genuinely $O(1)$ in that case, which is worth saying
@@ -261,7 +261,7 @@ bounded by $n$ even though a single step can pop many elements.
 
 **When the elements are not contiguous.** A window is a contiguous range by
 definition. "Longest increasing *subsequence*" allows skipping, so it is not a
-window problem — it is dynamic programming.
+window problem - it is dynamic programming.
 
 **When values can be negative and the condition is a sum.** Covered above, and
 worth repeating because it is the failure that ships. The monotonicity that
@@ -284,7 +284,7 @@ a window; it is a different problem wearing a window's clothes.
 
 **Rate limiting** is the most direct application, and the choice of window shape is
 user-visible. A *fixed* window resets its counter at a boundary, so a user can send
-100 requests at 11:59:59 and 100 more at 12:00:00 — 200 in one second, both windows
+100 requests at 11:59:59 and 100 more at 12:00:00 - 200 in one second, both windows
 technically legal. A *sliding* window over request timestamps has no boundary to
 game:
 
@@ -301,7 +301,7 @@ the ZSET is doing the window's bookkeeping.
 is a sliding window, and the incremental-update trick is what makes it affordable
 to compute continuously rather than on demand.
 
-**TCP's congestion window** is a sliding window in the original sense — the range
+**TCP's congestion window** is a sliding window in the original sense - the range
 of bytes in flight, sliding forward as acknowledgements arrive.
 
 **Bioinformatics** uses fixed windows constantly: GC content over a genome,
@@ -309,7 +309,7 @@ $k$-mer counting, and sequence alignment scoring all slide a window of fixed wid
 and update incrementally.
 
 **Log and stream processing.** "Errors in the last minute", "unique users in the
-last hour" — anything phrased as *the last N of something* is a window, and the
+last hour" - anything phrased as *the last N of something* is a window, and the
 implementation question is whether you can update incrementally or must retain the
 contents.
 
@@ -321,7 +321,7 @@ what feels natural.
 
 **Symptom: quadratic runtime despite "using a sliding window".** `left` is being
 reset backwards, or the window contents are recomputed rather than updated. The
-amortised argument requires `left` to move monotonically — check that it only ever
+amortised argument requires `left` to move monotonically - check that it only ever
 increases.
 
 **Symptom: off-by-one in the window length.** `right - left + 1`, not
@@ -338,7 +338,7 @@ if counts[a[left]] == 0:
 ```
 
 If you use `len(counts)` as "number of distinct elements in the window", leaving
-zero entries in makes that count permanently wrong — and the bug appears only after
+zero entries in makes that count permanently wrong - and the bug appears only after
 the first shrink.
 
 **Symptom: a duplicate check jumps `left` backwards.** The `last_seen[char] >= left`
@@ -349,7 +349,7 @@ back, which both gives wrong answers and breaks linearity.
 deque. $O(n \cdot k)$, and at $k = n/2$ that is quadratic.
 
 **Symptom: the answer is right but the window is not.** Recording `best` at the
-wrong point — before shrinking rather than after, or vice versa. For *shortest*
+wrong point - before shrinking rather than after, or vice versa. For *shortest*
 valid window, record inside the shrink loop while it is still valid; for *longest*,
 record after shrinking has restored validity. Getting this backwards is the most
 common logic error in the template.
@@ -372,7 +372,7 @@ def longest_k_distinct(s, k):
     for right, char in enumerate(s):
         counts[char] += 1
 
-        while len(counts) > k:              # invalid — shrink until valid
+        while len(counts) > k:              # invalid - shrink until valid
             counts[s[left]] -= 1
             if counts[s[left]] == 0:
                 del counts[s[left]]         # or len(counts) lies forever
@@ -391,7 +391,7 @@ after the first shrink, so short tests miss it.
 
 **`best` is recorded after the shrink loop**, because this asks for the *longest
 valid* window and the window is only guaranteed valid at that point. For a
-*shortest valid* window the recording moves inside the loop — that inversion is the
+*shortest valid* window the recording moves inside the loop - that inversion is the
 main thing to get right when adapting the template.
 
 $O(n)$ time, since `left` only advances; $O(k)$ space, since the map never holds
@@ -423,12 +423,12 @@ def min_window(s, t):
 
     for right, char in enumerate(s):
         window[char] += 1
-        # `have` counts characters whose requirement is EXACTLY met — the
+        # `have` counts characters whose requirement is EXACTLY met - the
         # equality is what stops extra copies incrementing it again.
         if char in need and window[char] == need[char]:
             have += 1
 
-        while have == required:                  # valid — try to shrink
+        while have == required:                  # valid - try to shrink
             if right - left + 1 < best[0]:
                 best = (right - left + 1, left, right)
 
@@ -445,7 +445,7 @@ increment `have` on every additional copy of an already-satisfied character, so
 `have` would exceed `required` and the shrink condition would misfire.
 
 This is the *shortest* variant, so the answer is recorded **inside** the shrink
-loop — while the window is still valid — which is the mirror image of the previous
+loop - while the window is still valid - which is the mirror image of the previous
 problem.
 
 $O(|s| + |t|)$ time. The brute force over all substrings is $O(|s|^2 \cdot |t|)$.
@@ -468,7 +468,7 @@ def sliding_max(a, k):
 
     for i, value in enumerate(a):
         while dq and a[dq[-1]] <= value:
-            dq.pop()            # smaller AND older — never a maximum again
+            dq.pop()            # smaller AND older - never a maximum again
         dq.append(i)
 
         if dq[0] <= i - k:
@@ -485,14 +485,14 @@ def sliding_max(a, k):
 tell whether the maximum is still inside the window.
 
 **Why `<=` rather than `<` in the pop condition:** with equal values, keeping the
-older one is pointless — it expires sooner and is not larger — so popping it keeps
+older one is pointless - it expires sooner and is not larger - so popping it keeps
 the deque smaller. Either works, but `<=` is strictly better.
 
 **Why it is $O(n)$ despite the inner `while`:** each index is appended exactly once
 and popped at most once, so total pop work across the whole run is bounded by $n$.
 Same amortised argument as `left` in the standard template.
 
-A max-heap is the tempting alternative and is $O(n \log k)$ — worse, and it needs
+A max-heap is the tempting alternative and is $O(n \log k)$ - worse, and it needs
 lazy deletion because there is no efficient way to remove the element that just
 expired.
 
@@ -506,7 +506,7 @@ expired.
   options={[
     { label: 'It silently returns wrong answers on some inputs', correct: true },
     { label: 'It still works, but becomes O(n²)' },
-    { label: 'It works — the sign of the values is irrelevant' },
+    { label: 'It works - the sign of the values is irrelevant' },
     { label: 'It throws once the running total goes negative' },
   ]}
 >
@@ -524,7 +524,7 @@ expired.
     <p>
       This is the most common misapplication of the technique, and it ships because
       every hand-written test uses positive numbers. With negatives you need prefix
-      sums plus a hash map or a sorted structure — O(n) or O(n log n), but not a
+      sums plus a hash map or a sorted structure - O(n) or O(n log n), but not a
       window.
     </p>
   </Fragment>
@@ -539,13 +539,13 @@ expired.
     { label: '`left` only ever advances, so total inner iterations are bounded by n', correct: true },
     { label: 'The inner loop runs at most a constant number of times per step' },
     { label: 'The inner loop is O(log n), giving O(n log n) rounded down' },
-    { label: 'It is O(n²) in the worst case — O(n) is only the average' },
+    { label: 'It is O(n²) in the worst case - O(n) is only the average' },
   ]}
 >
   <Fragment slot="explanation">
     <p>
       The bound is amortised, not per-iteration. A single outer step can run the
-      inner loop many times — but <code>left</code> never moves backwards and
+      inner loop many times - but <code>left</code> never moves backwards and
       cannot exceed n, so across the <em>entire run</em> the inner loop body
       executes at most n times in total.
     </p>
@@ -569,8 +569,8 @@ expired.
 
 > When the problem is about a *contiguous* subarray or substring and asks for a
 > longest, shortest, maximum or count. The insight is that consecutive windows
-> overlap almost entirely, so I can update the answer incrementally — one element
-> in, one out — instead of recomputing it for each window.
+> overlap almost entirely, so I can update the answer incrementally - one element
+> in, one out - instead of recomputing it for each window.
 >
 > If the problem allows skipping elements it is not a window; that is usually
 > dynamic programming, and confusing the two is the first mistake to avoid.
@@ -578,7 +578,7 @@ expired.
 **"Why is the variable-size version O(n) when it has a nested loop?"**
 
 > Because the inner loop is bounded in total rather than per iteration. `right`
-> advances n times, and `left` only ever advances and is bounded by n — so across
+> advances n times, and `left` only ever advances and is bounded by n - so across
 > the whole run the inner loop runs at most n times. It is the same amortised
 > argument as dynamic array doubling.
 >
@@ -588,8 +588,8 @@ expired.
 **"What breaks it?"** The caveat that signals you have actually used it:
 
 > Negative numbers, when the condition is a sum. The shrink step assumes
-> monotonicity — that extending can only increase the sum and shrinking can only
-> decrease it — and one negative value destroys that. The algorithm then returns
+> monotonicity - that extending can only increase the sum and shrinking can only
+> decrease it - and one negative value destroys that. The algorithm then returns
 > wrong answers with no error, and it passes every test anyone writes by hand,
 > because people instinctively test with positive numbers.
 >
@@ -604,5 +604,5 @@ expired.
 - If you use `len(counts)` as the number of distinct elements, delete keys when
   they hit zero, or the count is permanently wrong after the first shrink.
 - Window *maximum* cannot be maintained by add-and-subtract, because you do not
-  know the next-largest when the maximum leaves. That needs a monotonic deque —
+  know the next-largest when the maximum leaves. That needs a monotonic deque -
   $O(n)$ amortised, versus $O(n \log k)$ for a heap.

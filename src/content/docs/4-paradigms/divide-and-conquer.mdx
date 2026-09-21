@@ -1,7 +1,7 @@
 ---
 title: Divide and Conquer
 description: >-
-  Split, solve, combine — and the Master Theorem that tells you which of those
+  Split, solve, combine - and the Master Theorem that tells you which of those
   three steps actually decides the cost.
 sidebar:
   order: 1
@@ -32,13 +32,13 @@ Divide and conquer is three steps:
 Stated that way it sounds like a description of recursion, and the distinction is
 worth being precise about: **all divide and conquer is recursion; most recursion is
 not divide and conquer.** Walking a linked list recursively divides the problem into
-one subproblem of size $n-1$. That is not conquering anything — it is a loop with a
+one subproblem of size $n-1$. That is not conquering anything - it is a loop with a
 stack. Divide and conquer means splitting into *multiple* substantially smaller
 pieces, and the payoff comes from the fact that the pieces shrink geometrically.
 
 The reason it works is worth making concrete. Halving repeatedly reaches 1 in
 $\log_2 n$ steps, so a problem of size one billion has only 30 levels of
-subdivision. If the work per level is linear, the total is $n \log n$ — and that
+subdivision. If the work per level is linear, the total is $n \log n$ - and that
 $\log n$ factor is very nearly free compared to the $n$ you were already paying.
 
 The non-obvious part, and the actual content of this page, is that **the combine
@@ -80,7 +80,7 @@ def merge_sort(a):
     mid = len(a) // 2
     left = merge_sort(a[:mid])       # divide is just arithmetic
     right = merge_sort(a[mid:])
-    return merge(left, right)        # ALL the work is here — O(n)
+    return merge(left, right)        # ALL the work is here - O(n)
 ```
 
 $T(n) = 2T(n/2) + O(n) \Rightarrow O(n \log n)$.
@@ -91,12 +91,12 @@ $T(n) = 2T(n/2) + O(n) \Rightarrow O(n \log n)$.
 def quicksort(a, lo, hi):
     if lo >= hi:
         return
-    p = partition(a, lo, hi)         # ALL the work is here — O(n)
+    p = partition(a, lo, hi)         # ALL the work is here - O(n)
     quicksort(a, lo, p - 1)
     quicksort(a, p + 1, hi)          # no combine step at all
 ```
 
-Same recurrence, same $O(n \log n)$ average — but the work moved from combine to
+Same recurrence, same $O(n \log n)$ average - but the work moved from combine to
 divide. That relocation is why quicksort sorts in place while merge sort needs an
 auxiliary array, and it is also why quicksort has a bad worst case: an unbalanced
 *divide* has no combine step to smooth it out.
@@ -128,7 +128,7 @@ $$
 xy = ac \cdot 10^{n} + (ad + bc) \cdot 10^{n/2} + bd
 $$
 
-That is four multiplications of half-size numbers — $T(n) = 4T(n/2) + O(n)$, which
+That is four multiplications of half-size numbers - $T(n) = 4T(n/2) + O(n)$, which
 solves to $O(n^2)$. No gain.
 
 Karatsuba's observation is that the middle term can be recovered from the other
@@ -160,9 +160,9 @@ def karatsuba(x, y):
 
 $T(n) = 3T(n/2) + O(n) \Rightarrow O(n^{\log_2 3}) = O(n^{1.585})$.
 
-This is the example worth remembering, because it shows the leverage is in **how
-many subproblems you recurse into**, not in how you split. Trading a multiplication
-for a few additions changed the exponent.
+This is the example worth remembering, because it shows what actually matters is
+**how many subproblems you recurse into**, not how you split. Trading a
+multiplication for a few additions changed the exponent.
 
 ## Complexity
 
@@ -208,11 +208,12 @@ size $n/b^i$, so the work at that level is $a^i f(n/b^i)$. For merge sort:
 | $\log_2 n$ | $n$ | 1 | $n$ |
 
 **Every level costs $n$, and there are $\log_2 n$ levels.** That is the entire
-derivation of $n \log n$, and it makes clear why the result is so robust: the work
-is spread evenly, so nothing at either end dominates.
+derivation of $n \log n$. The work is spread evenly across levels, which is why
+the result holds regardless of where you look in the recursion, and nothing at
+either end dominates.
 
-Contrast with tree traversal, where the per-level work *halves* — $n, n/2, n/4,
-\ldots$ — summing to $2n$, hence $O(n)$. The geometric series collapses to a
+Contrast with tree traversal, where the per-level work *halves* - $n, n/2, n/4,
+\ldots$ - summing to $2n$, hence $O(n)$. The geometric series collapses to a
 constant factor, which is the same reason
 [dynamic array doubling](/cs-fundamentals/2-data-structures/arrays-lists/) is
 amortised $O(1)$.
@@ -224,7 +225,7 @@ S(n) = O(\text{depth}) + O(\text{auxiliary per level})
 $$
 
 Merge sort's depth is $\log n$ but its auxiliary arrays total $O(n)$, so it is
-$O(n)$ space. Quicksort's in-place partition makes it $O(\log n)$ — stack only —
+$O(n)$ space. Quicksort's in-place partition makes it $O(\log n)$ - stack only -
 and that difference is why quicksort is usually preferred in practice despite the
 identical average time.
 
@@ -238,7 +239,7 @@ regardless of balance.
 
 **When the subproblems overlap.** This is the boundary with
 [dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/) and it is
-the important one. Divide and conquer assumes subproblems are *independent* — it
+the important one. Divide and conquer assumes subproblems are *independent* - it
 solves each from scratch. Naive Fibonacci is "divide and conquer" on that
 definition and takes $O(2^n)$, because `fib(n-1)` and `fib(n-2)` share almost all
 their work.
@@ -247,11 +248,11 @@ their work.
 > programming.
 
 **When the combine step is more expensive than solving directly.** If combining
-costs $O(n^2)$, the recursion buys nothing — the root term dominates and you have
+costs $O(n^2)$, the recursion buys nothing - the root term dominates and you have
 paid recursion overhead for the same complexity.
 
-**When $n$ is small.** The recursion overhead — call frames, argument copying,
-allocation — has a real constant factor. Every production sort switches to
+**When $n$ is small.** The recursion overhead - call frames, argument copying,
+allocation - has a real constant factor. Every production sort switches to
 insertion sort below about 16 elements for exactly this reason, and a
 divide-and-conquer implementation without a cutoff is leaving a large constant on
 the table.
@@ -272,7 +273,7 @@ are *hybrid* divide and conquer: recurse until small, then switch strategy.
 
 **MapReduce is divide and conquer across machines.** Split the data, map in
 parallel, reduce to combine. The framework is essentially a distributed combine
-step, and its constraints are the paradigm's constraints — which is why MapReduce
+step, and its constraints are the paradigm's constraints - which is why MapReduce
 jobs must be expressible as independent per-chunk work plus an associative
 combine.
 
@@ -281,14 +282,14 @@ to $O(n \log n)$ by splitting into even and odd-indexed samples. That single
 algorithmic change is what makes digital signal processing, audio compression, and
 much of modern telecommunications practical.
 
-**Strassen's matrix multiplication** — $O(n^{2.807})$ instead of $O(n^3)$ — is the
+**Strassen's matrix multiplication** - $O(n^{2.807})$ instead of $O(n^3)$ - is the
 same trick as Karatsuba, one dimension up: seven multiplications of half-size
 matrices instead of eight. Worth knowing as the answer to "can you beat the obvious
 bound", though the constant factor and numerical stability mean it only pays off on
 genuinely large matrices.
 
 **Closest pair of points** in $O(n \log n)$ rather than $O(n^2)$ is the classic
-geometry example, and its combine step is unusually instructive — after solving both
+geometry example, and its combine step is unusually instructive - after solving both
 halves, you only need to check points within the current best distance of the
 dividing line, and a geometric argument bounds that to 7 comparisons per point.
 
@@ -308,7 +309,7 @@ depth $O(n)$ rather than $O(\log n)$. Recurse into the smaller side and iterate 
 the larger.
 
 **Symptom: it is slower than the naive version.** Either $n$ is below the crossover
-point, or the split and combine are allocating. `a[:mid]` in Python copies — that
+point, or the split and combine are allocating. `a[:mid]` in Python copies - that
 is $O(n)$ per call on top of the algorithm's own cost, and it is easy to miss
 because it looks like index arithmetic.
 
@@ -322,7 +323,7 @@ every level. $\log n$ levels each allocating $O(n)$ is fine if they are freed on
 unwind, and is $O(n \log n)$ if they are retained.
 
 **Symptom: correct for powers of two, wrong otherwise.** The classic
-divide-and-conquer off-by-one — an odd-length range where `mid` calculation leaves
+divide-and-conquer off-by-one - an odd-length range where `mid` calculation leaves
 one element in neither half, or in both. Test lengths 0, 1, 2, 3 and 5 explicitly.
 
 **Symptom: parallel version is slower than sequential.** Task-spawning overhead
@@ -331,7 +332,7 @@ beneath.
 
 ## Practice problems
 
-**1. Count inversions** — pairs $(i, j)$ with $i < j$ and $a[i] > a[j]$ — in
+**1. Count inversions** - pairs $(i, j)$ with $i < j$ and $a[i] > a[j]$ - in
 $O(n \log n)$.
 
 <details>
@@ -339,7 +340,7 @@ $O(n \log n)$.
 
 Piggyback on merge sort. The insight is that during a merge, when you take an
 element from the right half, **every remaining element in the left half forms an
-inversion with it** — and they are all counted in one arithmetic operation rather
+inversion with it** - and they are all counted in one arithmetic operation rather
 than one at a time.
 
 ```python
@@ -368,11 +369,11 @@ def count_inversions(a):
 ```
 
 That single line `z += len(left) - i` is the whole algorithm. Because both halves
-are already sorted, `left[i] > right[j]` implies every element after `i` is too —
+are already sorted, `left[i] > right[j]` implies every element after `i` is too -
 so a comparison that would have been one inversion in the brute force accounts for
 up to $n/2$ of them here.
 
-The recurrence is unchanged from merge sort — $T(n) = 2T(n/2) + O(n)$ — so it is
+The recurrence is unchanged from merge sort - $T(n) = 2T(n/2) + O(n)$ - so it is
 $O(n \log n)$ against $O(n^2)$ for checking every pair.
 
 This generalises usefully: **any quantity that can be accumulated during a merge
@@ -429,7 +430,7 @@ def kadane(a):
 
 The comparison is the useful part. Divide and conquer solves each half without
 using anything learned from the other, so it re-derives information at every level.
-Kadane carries one value forward — the best subarray *ending here* — which is a
+Kadane carries one value forward - the best subarray *ending here* - which is a
 [dynamic programming](/cs-fundamentals/4-paradigms/dynamic-programming/) state, and
 it makes the whole $\log n$ factor disappear.
 
@@ -439,7 +440,7 @@ genuinely cannot.
 
 </details>
 
-**3. Find the majority element** — one appearing more than $n/2$ times — using
+**3. Find the majority element** - one appearing more than $n/2$ times - using
 divide and conquer, in $O(n \log n)$.
 
 <details>
@@ -467,11 +468,11 @@ def majority(a, lo, hi):
 The correctness argument is the interesting bit: **if an element is the majority of
 the whole range, it must be the majority of at least one half.** If it were the
 majority of neither, it would hold at most half of each and therefore at most half
-overall — a contradiction. So checking both halves' candidates is sufficient.
+overall - a contradiction. So checking both halves' candidates is sufficient.
 
 $T(n) = 2T(n/2) + O(n) = O(n \log n)$.
 
-**And again there is a better answer.** Boyer–Moore voting is $O(n)$ time and
+**And again there is a better answer.** Boyer-Moore voting is $O(n)$ time and
 $O(1)$ space:
 
 ```python
@@ -489,7 +490,7 @@ something else. Since the majority has more than $n/2$ occurrences, it cannot be
 fully cancelled, so it survives as the candidate.
 
 The caveat matters: it assumes a majority exists. Without that guarantee it returns
-an arbitrary element, so a verification pass is required — which is still $O(n)$
+an arbitrary element, so a verification pass is required - which is still $O(n)$
 overall.
 
 </details>
@@ -503,18 +504,18 @@ overall.
     { label: 'O(n) and O(n log n)', correct: true },
     { label: 'O(log n) and O(n)' },
     { label: 'O(n log n) and O(n²)' },
-    { label: 'Both O(n log n) — the combine is a constant factor' },
+    { label: 'Both O(n log n) - the combine is a constant factor' },
   ]}
 >
   <Fragment slot="explanation">
     <p>
-      O(n) and O(n log n). With an O(1) combine the per-level work halves — n, n/2,
-      n/4 … — a geometric series summing to 2n. With an O(n) combine every level
+      O(n) and O(n log n). With an O(1) combine the per-level work halves - n, n/2,
+      n/4 … - a geometric series summing to 2n. With an O(n) combine every level
       costs n, and there are log n levels.
     </p>
     <p>
       That is why tree traversal is linear and merge sort is linearithmic despite
-      identical recursion structure. The recursion is not what decides the class —
+      identical recursion structure. The recursion is not what decides the class -
       the combine step is, which is where to look first when analysing one of these.
     </p>
     <p>
@@ -540,7 +541,7 @@ overall.
   <Fragment slot="explanation">
     <p>
       Overlap. Divide and conquer assumes subproblems are <em>independent</em> and
-      solves each from scratch — merge sort's two halves share nothing, so there is
+      solves each from scratch - merge sort's two halves share nothing, so there is
       nothing to reuse. Dynamic programming exists precisely because subproblems
       recur, and caching each one collapses an exponential tree to a polynomial.
     </p>
@@ -548,7 +549,7 @@ overall.
       The clearest demonstration is naive Fibonacci: structurally it is divide and
       conquer, and it takes O(2ⁿ) because <code>fib(n−1)</code> and{' '}
       <code>fib(n−2)</code> re-derive almost all of the same work. Add memoisation
-      — no structural change at all — and it is O(n).
+      - no structural change at all - and it is O(n).
     </p>
     <p>
       So the diagnostic question is: does the same subproblem appear more than
@@ -563,12 +564,12 @@ overall.
 **"Explain divide and conquer."**
 
 > Split the problem into smaller instances of itself, solve those recursively, and
-> combine the results. Merge sort is the canonical one — split in half, sort each
+> combine the results. Merge sort is the canonical one - split in half, sort each
 > half, merge.
 >
 > The part worth adding is that the *combine* step usually decides the complexity,
-> not the recursion. Tree traversal and merge sort have identical recursion — two
-> halves each — but tree traversal combines in constant time and is O(n), while
+> not the recursion. Tree traversal and merge sort have identical recursion - two
+> halves each - but tree traversal combines in constant time and is O(n), while
 > merge sort combines in linear time and is O(n log n). When I analyse one of these
 > I look at the combine step first.
 
@@ -586,11 +587,11 @@ overall.
 **"When is it the wrong tool?"** The distinction that matters:
 
 > When the subproblems overlap. Divide and conquer solves each from scratch, so if
-> they share work it re-derives it exponentially — naive Fibonacci is exactly this,
+> they share work it re-derives it exponentially - naive Fibonacci is exactly this,
 > and it is O(2ⁿ) until you add memoisation, at which point it is dynamic
 > programming and O(n).
 >
-> Also when the split cannot be balanced, since the log n depth depends on halving —
+> Also when the split cannot be balanced, since the log n depth depends on halving -
 > a split that peels off one element gives O(n²) and a stack overflow.
 
 **The caveats worth voicing:**

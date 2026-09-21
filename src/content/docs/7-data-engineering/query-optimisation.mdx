@@ -24,15 +24,15 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 [Postgres](/cs-fundamentals/8-databases-storage/postgres/) covers reading a
 query plan and the index-selectivity trade-off. This page is about the
-predicate itself — the shape of the `WHERE` clause — independent of whether
+predicate itself - the shape of the `WHERE` clause - independent of whether
 an index is even involved, because a badly-shaped predicate costs extra work
 whether or not an index exists to make it worse.
 
 A predicate is **SARGable** (Search ARGument-able) when the database can
 evaluate it directly against stored or indexed values, without first
-computing a function over every row. Wrapping the column in a function —
+computing a function over every row. Wrapping the column in a function -
 `WHERE EXTRACT(year FROM created_at) = 2023` instead of a direct range
-comparison — is semantically equivalent and computationally different: one
+comparison - is semantically equivalent and computationally different: one
 runs the function 500,000 times before it can compare anything, the other
 compares stored values directly.
 
@@ -55,7 +55,7 @@ WHERE created_at >= '2023-01-01' AND created_at < '2024-01-01';
 
 Both captured against the same 500,000-row table, both scanning nearly every
 row (this filter matches almost the whole table, so an index wouldn't
-change the scan type either way) — the **4.3x difference is purely the cost
+change the scan type either way) - the **4.3x difference is purely the cost
 of calling `EXTRACT()` half a million times** versus comparing two
 timestamps directly. This is the cost of non-sargability in isolation, with
 index selection held constant, so it isolates exactly the thing this page is
@@ -63,9 +63,9 @@ about.
 
 The planner's own estimate reveals the same gap from a different angle: the
 non-sargable version estimated 1,042 matching rows against an actual 500,000
-— off by nearly 500x, because `EXTRACT(year FROM created_at) = 2023` isn't a
+- off by nearly 500x, because `EXTRACT(year FROM created_at) = 2023` isn't a
 form the planner's statistics can reason about. The sargable version
-estimated 208,333 against the same actual — much closer, because range
+estimated 208,333 against the same actual - much closer, because range
 comparisons against a real column are exactly what column statistics are
 built to estimate.
 
@@ -109,10 +109,10 @@ Execution Time: 8.975 ms
 ```
 
 `WHERE status = 'cancelled'` reduced 500,000 rows to 5,000 *before* the
-`HashAggregate` ran — the aggregation step only ever touched 5,000 rows, then
+`HashAggregate` ran - the aggregation step only ever touched 5,000 rows, then
 `HAVING` filtered the resulting 1,459 groups down to 200. If the status
-filter had been written as `HAVING status = 'cancelled'` instead — filtering
-groups instead of rows — the aggregation step would have processed all
+filter had been written as `HAVING status = 'cancelled'` instead - filtering
+groups instead of rows - the aggregation step would have processed all
 500,000 rows across every status before discarding most of the resulting
 groups, doing the expensive part of the work on 100x more data than it
 needed to.
@@ -123,21 +123,21 @@ needed to.
 complexity.** The 4.3x measured gap above is on 500,000 rows; the same
 non-sargable predicate on a 50-million-row table costs proportionally more,
 because it's per-row function-call overhead multiplied by every row
-scanned — it doesn't get relatively worse as the table grows, but it also
+scanned - it doesn't get relatively worse as the table grows, but it also
 never gets better.
 
 **A functional index can make a specific non-sargable predicate sargable
 again**, at the cost of maintaining that index on every write: `CREATE INDEX
 ON orders (EXTRACT(year FROM created_at))` lets the planner index-scan on
 that exact expression. This only helps queries using that *exact* expression
-— a functional index on `EXTRACT(year FROM created_at)` does nothing for a
+- a functional index on `EXTRACT(year FROM created_at)` does nothing for a
 query filtering on `EXTRACT(month FROM created_at)`.
 
 ## When NOT to use it
 
 **Do not chase sargability for a predicate that already matches most of the
 table.** [Postgres](/cs-fundamentals/8-databases-storage/postgres/) covers
-why a sequential scan is correctly chosen for a high-selectivity predicate —
+why a sequential scan is correctly chosen for a high-selectivity predicate -
 making that predicate sargable reduces the per-row cost, but if a sequential
 scan was always going to be the plan (as in the measured example above,
 where the filter matches nearly the whole table), sargability is worth
@@ -146,7 +146,7 @@ scan type gets chosen.
 
 **Do not add a functional index reactively to every non-sargable query you
 find.** Each one is a real, ongoing write-time cost. Prioritize the
-predicates that run most often and touch the most rows — a rarely-run report
+predicates that run most often and touch the most rows - a rarely-run report
 query with a non-sargable filter is a lower-priority fix than the same
 pattern in a hot API path.
 
@@ -157,13 +157,13 @@ Non-sargable predicates most often creep in through ORMs generating
 date-range logic implemented as `EXTRACT()` comparisons because they read
 more naturally than the equivalent range comparison. Both are easy to write
 without realizing the cost, because the SQL is correct and the query returns
-the right answer — only its *speed* signals the problem, and only once the
+the right answer - only its *speed* signals the problem, and only once the
 table is large enough for the per-row overhead to be noticeable.
 
 ## Failure modes
 
 **The query that got slower as the table grew, with no code change.** A
-non-sargable predicate's cost scales linearly with row count — fine on a
+non-sargable predicate's cost scales linearly with row count - fine on a
 10,000-row table in development, and a measurable drag on the same query
 against a production table two orders of magnitude larger. Symptom: latency
 that correlates with table growth over months, not with any deploy.
@@ -176,7 +176,7 @@ correctness signals the performance difference.
 
 **The ORM-generated non-sargable query nobody wrote by hand.** A framework's
 case-insensitive search helper wrapping a column in `LOWER()` on every query
-is invisible in application code — the non-sargable SQL only becomes visible
+is invisible in application code - the non-sargable SQL only becomes visible
 by reading the generated query or the query plan, not by reading the
 application-level code that produced it.
 
@@ -195,7 +195,7 @@ than `WHERE customer_id = 4790`, even though they're mathematically
 identical?**
 
 The `+ 0` wraps the column in an expression, which can prevent the planner
-from recognizing it as a direct comparison against an indexed column — even
+from recognizing it as a direct comparison against an indexed column - even
 trivial arithmetic on the column side can defeat sargability, depending on
 the database's expression-matching sophistication. The fix is removing the
 unnecessary expression entirely.
@@ -203,7 +203,7 @@ unnecessary expression entirely.
 **3. A report query has both a `WHERE` clause and a `HAVING` clause. How
 would you check whether either one could be moved to reduce cost?**
 
-Check whether each condition references an aggregate result — if not, and
+Check whether each condition references an aggregate result - if not, and
 it's currently in `HAVING`, it can move to `WHERE` to filter before
 grouping. Confirm the actual saving with `EXPLAIN (ANALYZE, BUFFERS)`
 before and after: compare the row count entering the aggregate step in each
@@ -230,7 +230,7 @@ version.
 
 **"What does SARGable mean, and why does it matter?"** A predicate is
 SARGable when the database can evaluate it directly against stored values
-without computing a function over every row first — wrapping the column in
+without computing a function over every row first - wrapping the column in
 `LOWER()`, `EXTRACT()`, or arithmetic breaks that, forcing per-row
 computation and, often, preventing index use. The caveat: the fix is almost
 always moving the transformation to the constant side of the comparison
@@ -239,10 +239,10 @@ lowercased literal instead of lowercasing the column) rather than removing
 the logic.
 
 **"How would you speed up a slow SQL query?"** Start with `EXPLAIN (ANALYZE,
-BUFFERS)` to see what's actually happening rather than guessing — check for
+BUFFERS)` to see what's actually happening rather than guessing - check for
 non-sargable predicates (a function wrapping a filtered column), a filter
 that could move from `HAVING` to `WHERE`, and whether an applicable index is
 actually being used. The caveat that shows real experience: these are
-independent issues that can compound — a non-sargable predicate on an
+independent issues that can compound - a non-sargable predicate on an
 otherwise well-indexed column pays the per-row function cost even when the
 index selection itself is correct.

@@ -21,13 +21,13 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 ## Intuition
 
 A cron job runs a script on a schedule. An orchestrator (Airflow, Dagster,
-Prefect) runs a **graph of tasks with dependencies** — task B doesn't start
+Prefect) runs a **graph of tasks with dependencies** - task B doesn't start
 until task A succeeds, a failed task retries or halts the graph rather than
 letting downstream tasks run against incomplete input, and the whole run's
 history (did it run, when, did it succeed, what did each task log) is
 tracked rather than left to whoever remembered to check the cron log.
 
-The dependency graph — a **DAG**, directed acyclic graph — is the part that
+The dependency graph - a **DAG**, directed acyclic graph - is the part that
 actually matters, and it's not primarily about parallelism. It's about
 making "what does this depend on, and what depends on it" an explicit,
 inspectable structure instead of an implicit assumption buried in the order
@@ -41,7 +41,7 @@ needs a property the orchestrator can't provide for you: **idempotency.**
 ### Idempotency: the property that makes retries safe
 
 A task is idempotent when running it twice with the same input produces the
-same result as running it once — no duplicated rows, no double-counted
+same result as running it once - no duplicated rows, no double-counted
 totals, no side effect that compounds.
 
 ```python
@@ -58,14 +58,14 @@ def load_daily_orders(date):
 ```
 
 The non-idempotent version works perfectly the first time. It also works
-"successfully" the second time — no error, no warning — while silently
+"successfully" the second time - no error, no warning - while silently
 doubling every row for that date. This is the single most common cause of a
 data pipeline producing quietly wrong numbers: not a bug in the transform
 logic, but a retry (automatic, or a human re-running a failed task) hitting
 a step that wasn't designed to be re-run.
 
-The fix pattern above — delete-then-insert scoped to exactly the data this
-run is responsible for (the partition for `date`) — is one of several
+The fix pattern above - delete-then-insert scoped to exactly the data this
+run is responsible for (the partition for `date`) - is one of several
 idempotency strategies. Others: an `INSERT ... ON CONFLICT DO UPDATE`
 (upsert) keyed on a natural identifier, or writing to a uniquely-named
 staging location per run and only atomically swapping it into place on
@@ -73,8 +73,8 @@ success.
 
 ### Why backfills specifically expose non-idempotent tasks
 
-A backfill — re-running a pipeline for a range of past dates, to fix a bug
-or load history — runs each date's task, often multiple times if any date
+A backfill - re-running a pipeline for a range of past dates, to fix a bug
+or load history - runs each date's task, often multiple times if any date
 fails and gets retried. A task that happens to work fine in normal daily
 operation (where it runs exactly once per day and nobody re-runs it) can
 silently corrupt data the first time it's backfilled and any date needs a
@@ -92,7 +92,7 @@ def load_daily_orders(date):
 
 The retry mechanism that makes an orchestrator resilient to transient
 failures is the same mechanism that turns a non-idempotent task into a
-silent data corruption bug — retries and idempotency are not separable
+silent data corruption bug - retries and idempotency are not separable
 concerns; a pipeline with automatic retries and non-idempotent tasks has
 retries as a latent bug generator, not a reliability feature.
 
@@ -105,17 +105,17 @@ validate_orders << transform_orders
 ```
 
 `extract_orders` failing means `transform_orders` never runs against
-partial or missing input — the dependency is enforced by the orchestrator,
+partial or missing input - the dependency is enforced by the orchestrator,
 not by hoping the cron schedule leaves enough of a gap between jobs. This is
 the actual value: a cron-based pipeline where job B is scheduled 30 minutes
 after job A is *implicitly* depending on A finishing within 30 minutes, with
-nothing checking that assumption — an orchestrated DAG makes the dependency
+nothing checking that assumption - an orchestrated DAG makes the dependency
 explicit and enforced, so a slow A correctly delays B rather than letting B
 run against A's incomplete output.
 
 ## Cost & limits
 
-**An orchestrator is infrastructure with its own operational burden** — a
+**An orchestrator is infrastructure with its own operational burden** - a
 scheduler process, a metadata database, task queues, worker processes to
 scale. For a small number of simple, independent jobs, this overhead can
 exceed what a handful of well-monitored cron jobs would cost to operate;
@@ -124,7 +124,7 @@ enough jobs that visibility into failures matters, or a need for backfills
 and reruns that cron doesn't support cleanly.
 
 **Idempotent design usually costs more code and sometimes more runtime**
-than the non-idempotent equivalent — a delete-then-insert pattern does more
+than the non-idempotent equivalent - a delete-then-insert pattern does more
 work than a plain insert, and an upsert typically costs more than an
 append-only write. That cost buys safety against exactly the retry and
 backfill scenarios above, and it's a cost worth paying deliberately rather
@@ -135,7 +135,7 @@ once.
 
 **Do not adopt a full orchestrator for a single, independent, infrequent
 job with no dependencies.** A daily report generated by one script with no
-upstream or downstream dependency doesn't need a DAG — the orchestration
+upstream or downstream dependency doesn't need a DAG - the orchestration
 overhead (learning curve, infrastructure, maintenance) isn't earning its
 keep for that case, and a scheduled job with basic failure alerting covers
 it.
@@ -143,20 +143,20 @@ it.
 **Do not design a task as idempotent-by-convention ("we just don't retry
 this one") instead of idempotent-by-construction.** A team norm of "don't
 manually re-run this task" is a policy, not a property of the code, and it
-fails the moment someone unfamiliar with the norm — or an automatic retry
-policy nobody remembered was configured — re-runs it anyway.
+fails the moment someone unfamiliar with the norm - or an automatic retry
+policy nobody remembered was configured - re-runs it anyway.
 
 **Do not backfill a date range without first confirming every task in the
 path is actually idempotent.** A backfill is the highest-risk time to
 discover non-idempotency, because it deliberately re-runs tasks (often for
-many dates at once) — verify idempotency on a single date first, check the
+many dates at once) - verify idempotency on a single date first, check the
 row counts before and after a repeat run, before backfilling a wide range.
 
 ## Real-world usage
 
-Any organization with more than a handful of interdependent data jobs —
+Any organization with more than a handful of interdependent data jobs -
 extract from a source, transform, load into a warehouse, then trigger a
-downstream model or report — uses some form of orchestration, because the
+downstream model or report - uses some form of orchestration, because the
 alternative (independently scheduled cron jobs with implicit timing
 dependencies) becomes unmanageable and fragile past a small number of jobs.
 Backfills are routine in this world: a transformation bug discovered after
@@ -177,14 +177,14 @@ the task's run history for that date.
 
 **The backfill that took down a downstream dashboard.** Backfilling a wide
 date range against non-idempotent tasks, without first testing on a single
-date, can corrupt a large swath of historical data in one operation —
+date, can corrupt a large swath of historical data in one operation -
 turning a planned maintenance task into an incident, and one that's often
 larger in scope than the original bug the backfill was meant to fix.
 
 **The DAG that "succeeded" while silently skipping a dependency.**
 Misconfigured task dependencies (a missing edge in the DAG) can let a
 downstream task run against stale or partial upstream data without any
-task itself failing — every individual task reports success, and the
+task itself failing - every individual task reports success, and the
 orchestrator's dashboard shows a fully green run, while the actual data
 flowing through it is wrong because a dependency that should have blocked
 execution didn't exist in the graph.
@@ -196,7 +196,7 @@ with no deduplication. An automatic retry policy is configured with 3
 retries. What's the risk, and how would you fix it?**
 
 If the insert itself succeeds but a later step in the same task fails
-(triggering a retry of the whole task), the insert runs again — same rows,
+(triggering a retry of the whole task), the insert runs again - same rows,
 inserted twice. Fix: make the load step idempotent, either by deleting the
 target partition before inserting, or using an upsert keyed on a unique
 identifier so a repeat insert updates existing rows instead of duplicating
@@ -207,8 +207,8 @@ doesn't, even though it's running the exact same task code?**
 
 Daily operation typically runs each date's task exactly once, so
 non-idempotency (running twice = wrong result) never gets exercised. A
-backfill re-runs tasks — deliberately for a range of dates, and often
-additionally due to retries within the backfill itself — making "run twice"
+backfill re-runs tasks - deliberately for a range of dates, and often
+additionally due to retries within the backfill itself - making "run twice"
 the normal case rather than an edge case, which is exactly the condition a
 non-idempotent task fails under.
 
@@ -217,7 +217,7 @@ non-idempotent task fails under.
 belong in the dependency graph, and why does it matter that it's enforced
 by the orchestrator rather than by convention?**
 
-`extract >> transform >> validate >> load` — inserted between transform and
+`extract >> transform >> validate >> load` - inserted between transform and
 load so a validation failure prevents `load` from running against
 unvalidated data. Enforcing it as an explicit DAG edge (rather than a
 comment or a team norm saying "always check the validation report before
@@ -246,19 +246,19 @@ to check.
 
 **"What does idempotency mean in a data pipeline context, and why does it
 matter?"** A task is idempotent when running it multiple times with the
-same input produces the same result as running it once — no duplicated
+same input produces the same result as running it once - no duplicated
 rows, no compounded side effects. It matters because orchestrators retry
 failed tasks automatically, and backfills deliberately re-run tasks across
 date ranges; without idempotency, both of those normal, expected operations
 become silent data corruption risks. The caveat: idempotency has to be
-designed into the task (delete-then-insert, upsert, atomic swap) — it's not
+designed into the task (delete-then-insert, upsert, atomic swap) - it's not
 something an orchestrator provides for you by default.
 
 **"When would you use an orchestrator like Airflow versus a simple cron
 job?"** Once there are real dependencies between jobs (B shouldn't run
 until A succeeds), enough jobs that failure visibility matters, or a
-recurring need for backfills and reruns — a DAG makes those dependencies
+recurring need for backfills and reruns - a DAG makes those dependencies
 explicit and enforced rather than implicit in scheduling gaps. The caveat:
 this is real infrastructure with its own operational cost, and a handful of
-genuinely independent scheduled jobs don't need it — matching the tool to
+genuinely independent scheduled jobs don't need it - matching the tool to
 the actual dependency complexity, not defaulting to the heavier one.

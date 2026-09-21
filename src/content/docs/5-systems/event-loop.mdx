@@ -22,13 +22,13 @@ import { EventLoopSim } from '../../../components/viz/widgets/EventLoopSim.tsx';
 
 Almost every language you might have learned first handles many users the same
 way: one thread per request. Thread 1 serves Alice, thread 2 serves Bob, and when
-thread 1 asks the database for a row it *blocks* — the thread sits there, using
+thread 1 asks the database for a row it *blocks* - the thread sits there, using
 memory and a kernel scheduling slot, doing nothing at all until bytes come back.
 
 That is fine until you notice the ratio. A typical web request spends something
 like 1 ms executing your code and 100 ms waiting on a database, an HTTP call, or
-a disk. Under the thread-per-request model you are paying for a thread — about
-1 MB of stack, plus context-switch cost — to spend 99% of its life asleep.
+a disk. Under the thread-per-request model you are paying for a thread - about
+1 MB of stack, plus context-switch cost - to spend 99% of its life asleep.
 
 JavaScript makes the opposite trade. **There is one thread that runs your code,
 and it is never allowed to wait.** When you ask for a database row, the request
@@ -49,7 +49,7 @@ Two consequences fall out of that, and they are the whole page:
 
 1. **Waiting is free.** Ten thousand connections all waiting on I/O cost almost
    nothing, because none of them occupies the thread while waiting.
-2. **Working is not.** While your code is running, *nothing else can run* — no
+2. **Working is not.** While your code is running, *nothing else can run* - no
    other request, no timer, no callback. There is one thread, and you have it.
 
 The first is why Node is a good fit for a typical API server. The second is the
@@ -66,10 +66,10 @@ arbitrarily long by callbacks in a higher-priority one.
 
 | Queue | What lands here | Drained |
 |---|---|---|
-| **Call stack** | Currently executing code | Always first — the queues are only consulted when it is empty |
+| **Call stack** | Currently executing code | Always first - the queues are only consulted when it is empty |
 | **`process.nextTick`** | `process.nextTick(fn)` (Node only) | Completely, before microtasks |
 | **Microtasks** | `.then` / `catch` / `finally` callbacks, code after an `await`, `queueMicrotask` | Completely, before the next macrotask |
-| **Macrotasks** | `setTimeout`, `setInterval`, `setImmediate`, I/O callbacks | **One per loop turn** — then the microtask queue is drained again |
+| **Macrotasks** | `setTimeout`, `setInterval`, `setImmediate`, I/O callbacks | **One per loop turn** - then the microtask queue is drained again |
 
 The asymmetry in the last column is the detail that makes orderings surprising.
 Microtasks are drained *to empty*; macrotasks are taken *one at a time*. So a
@@ -77,7 +77,7 @@ promise chain that keeps adding to the microtask queue can hold off a timer
 indefinitely, while a chain of `setTimeout` calls politely lets everything else
 interleave.
 
-Step through it rather than taking my word for it — the second button is the one
+Step through it rather than taking my word for it - the second button is the one
 worth watching, and the third is the one that catches people out:
 
 <EventLoopSim client:visible />
@@ -103,7 +103,7 @@ console.log('C');
 ```
 
 `await null` has nothing to wait for and still defers, because `await` does not
-mean "wait for this value" — it means "suspend here and resume as a microtask".
+mean "wait for this value" - it means "suspend here and resume as a microtask".
 
 This is also why the most common async bug in JavaScript is a bug at all:
 
@@ -123,7 +123,7 @@ unhandled rejection, which in modern Node crashes the process by default.
 <TabItem label="Sequential">
 
 ```ts
-// One at a time. Slower, but bounded — and each iteration sees the last one's
+// One at a time. Slower, but bounded - and each iteration sees the last one's
 // effect, which matters if they touch shared state.
 for (const item of items) {
   await save(item);
@@ -134,7 +134,7 @@ for (const item of items) {
 <TabItem label="Parallel">
 
 ```ts
-// All at once. Fastest, and unbounded — 10,000 items means 10,000 simultaneous
+// All at once. Fastest, and unbounded - 10,000 items means 10,000 simultaneous
 // connections, which is how you take down your own database.
 await Promise.all(items.map(save));
 ```
@@ -154,17 +154,17 @@ await Promise.all(items.map((item) => limit(() => save(item))));
 </Tabs>
 
 The bounded version is the one to reach for by default. `Promise.all` over an
-unbounded array is not "the fast option" — it is an unmetered load generator
+unbounded array is not "the fast option" - it is an unmetered load generator
 pointed at whatever `save` talks to.
 
 ### The combinators, precisely
 
-They differ in exactly one respect — what makes them settle — and the difference
+They differ in exactly one respect - what makes them settle - and the difference
 decides whether a partial failure loses your good results.
 
 | | Settles when | You get |
 |---|---|---|
-| `Promise.all` | all fulfil, **or one rejects** | the array, or the first error — and the other results are discarded |
+| `Promise.all` | all fulfil, **or one rejects** | the array, or the first error - and the other results are discarded |
 | `Promise.allSettled` | all settle | `[{ status: 'fulfilled', value }, { status: 'rejected', reason }]` |
 | `Promise.race` | first to **settle**, fulfilled or rejected | that value or that error |
 | `Promise.any` | first to **fulfil** | the value, or `AggregateError` if all reject |
@@ -176,7 +176,7 @@ Reaching for `allSettled` there is the difference between a degraded page and a
 
 Note also that `all` rejecting does **not** cancel the other promises. They keep
 running to completion; you have simply stopped listening. There is no cancellation
-in the promise model — that is what `AbortController` is for.
+in the promise model - that is what `AbortController` is for.
 
 ## Complexity
 
@@ -184,11 +184,11 @@ The usual Big-O analysis does not apply to a scheduler, but the cost model is
 just as mechanical, and it is worth deriving rather than asserting.
 
 **Concurrent connections.** Each idle connection costs a socket, a small amount
-of bookkeeping, and one entry in the kernel's readiness list — call it a few KB.
+of bookkeeping, and one entry in the kernel's readiness list - call it a few KB.
 Thread-per-request costs a stack, conventionally 1 MB, plus a scheduler entry. For
 $n$ mostly-idle connections that is $O(n)$ either way, but with constants roughly
 two orders of magnitude apart. That constant factor is the entire architectural
-argument, and it is a constant factor — which is why the "Node scales better" claim
+argument, and it is a constant factor - which is why the "Node scales better" claim
 is only true for I/O-bound work.
 
 **Latency under blocking.** Here is the part that actually predicts incidents.
@@ -202,7 +202,7 @@ W = \frac{\rho \, b}{2(1 - \rho)} \quad \text{where} \quad \rho = \lambda b
 $$
 
 The important feature of that formula is the $(1 - \rho)$ in the denominator. As
-utilisation $\rho$ approaches 1, wait time does not rise linearly — it goes to
+utilisation $\rho$ approaches 1, wait time does not rise linearly - it goes to
 infinity. Concretely, with a 10 ms blocking section:
 
 | Arrival rate | $\rho$ | Mean queueing delay |
@@ -223,7 +223,7 @@ multiplier.
 
 ## When NOT to use it
 
-The event loop is not a choice you make per project — it is what you get when you
+The event loop is not a choice you make per project - it is what you get when you
 choose Node. So this section is really about when to choose something else, or
 when to route work off the loop.
 
@@ -239,7 +239,7 @@ a deadline is a correctness requirement rather than a quality-of-service target,
 this is the wrong runtime.
 
 **Work that must not be lost.** An in-process callback is not durable. If the
-process dies — deploy, OOM, crash — everything queued in it is gone with no
+process dies - deploy, OOM, crash - everything queued in it is gone with no
 record that it existed. Anything that must survive a restart belongs in a
 [message broker](/cs-fundamentals/5-systems/message-brokers/) or a database
 table, not in `setTimeout`.
@@ -256,12 +256,12 @@ requests*. Separate process, always.
 
 **Node's own I/O is not what most people think.** The runtime is single-threaded
 for JavaScript, but the process is not single-threaded. libuv maintains a thread
-pool — four threads by default — which handles filesystem operations, DNS lookups
+pool - four threads by default - which handles filesystem operations, DNS lookups
 via `dns.lookup`, and `crypto` and `zlib` work.
 
 Network I/O does not use that pool at all. It uses the kernel's readiness
-notification mechanism — `epoll` on Linux, `kqueue` on BSD and macOS, IOCP on
-Windows — which is why a single Node process can hold tens of thousands of open
+notification mechanism - `epoll` on Linux, `kqueue` on BSD and macOS, IOCP on
+Windows - which is why a single Node process can hold tens of thousands of open
 sockets while only **four** filesystem reads proceed at once.
 
 That asymmetry explains a real and initially baffling symptom: a service doing
@@ -277,7 +277,7 @@ the limit (up to 1024), and knowing to look there is most of the diagnosis.
 ┌───────▼───────────────┐  4 threads by default (UV_THREADPOOL_SIZE).
 │ libuv thread pool     │  fs.*, dns.lookup, crypto.pbkdf2, zlib
 └───────────────────────┘
-┌───────────────────────┐  not threads at all — the kernel says when data is ready,
+┌───────────────────────┐  not threads at all - the kernel says when data is ready,
 │ epoll / kqueue: net   │  which is why network I/O scales to thousands of sockets
 └───────────────────────┘
 ```
@@ -289,7 +289,7 @@ microtask that never yields will drop every frame.
 
 **Nginx, Redis, and HAProxy** are all event-loop servers, written in C but built
 on exactly the same `epoll` idea. Redis being single-threaded is the reason its
-operations are atomic without locks — the same run-to-completion guarantee, used
+operations are atomic without locks - the same run-to-completion guarantee, used
 deliberately as a feature.
 
 **A framework built on this loop inherits every trade-off above.** [Node
@@ -308,10 +308,10 @@ cause.
 core.** Something is blocking the loop. The classic offenders, in rough order of
 how often they turn up:
 
-- Synchronous `fs` calls in a request handler — `readFileSync`, `existsSync`.
+- Synchronous `fs` calls in a request handler - `readFileSync`, `existsSync`.
   Perfectly fine at startup, fatal per request.
 - `JSON.parse` or `JSON.stringify` on a multi-megabyte payload.
-- Large synchronous loops — sorting or aggregating a million-element array.
+- Large synchronous loops - sorting or aggregating a million-element array.
 - Synchronous crypto: `crypto.pbkdf2Sync`, `randomBytes` in its sync form. Password
   hashing is *designed* to be expensive; using the async form puts that cost on the
   libuv pool instead of the loop.
@@ -338,10 +338,10 @@ setInterval(() => {
 
 **Export event loop lag as a metric and alert on it.** It is a better health
 signal for a Node service than CPU, because it measures the thing users actually
-experience — and unlike CPU it stays flat right up until it doesn't.
+experience - and unlike CPU it stays flat right up until it doesn't.
 
 **Symptom: a promise rejection crashes the process with no useful stack.** An
-unhandled rejection. Usually a promise created and never awaited — the `forEach`
+unhandled rejection. Usually a promise created and never awaited - the `forEach`
 pattern above, or a `.then` chain missing its `.catch`.
 
 **Symptom: memory grows steadily and never comes back.** A common cause is
@@ -361,7 +361,7 @@ JavaScript is run-to-completion: a function runs to its end, or to its next
 read and the write in `total += x`, so it cannot be torn the way it can in Java or
 C. The increment is atomic by construction.
 
-But do not over-learn that. Single-threaded does not mean race-free — it means
+But do not over-learn that. Single-threaded does not mean race-free - it means
 **races only happen at `await` boundaries**, and every `await` is a yield where
 another request's handler can run and change state you already read:
 
@@ -373,7 +373,7 @@ if (seat.taken) throw new Error('gone');
 await db.markTaken(id);
 ```
 
-Two requests can both pass the check. The fix is not a lock in JavaScript — it is
+Two requests can both pass the check. The fix is not a lock in JavaScript - it is
 a unique constraint or a conditional update in the database, so the second write
 fails rather than the second read succeeding.
 
@@ -421,7 +421,7 @@ last regardless.
 
 </details>
 
-**2. Fix the concurrency without removing it.** This is correct but slow — the
+**2. Fix the concurrency without removing it.** This is correct but slow - the
 requests are independent, so the 300 ms is 3 × 100 ms of pure waiting:
 
 ```ts
@@ -448,7 +448,7 @@ async function loadDashboard(userId: string) {
 ```
 
 All three start before anything is awaited, so the cost is the slowest one rather
-than the sum — 100 ms instead of 300 ms.
+than the sum - 100 ms instead of 300 ms.
 
 The follow-up worth thinking about: if recommendations are optional, `Promise.all`
 is now the wrong tool, because a failure there loses the profile and orders too.
@@ -473,7 +473,7 @@ async function mapLimit<T, R>(
   let cursor = 0;
 
   // `limit` workers pulling from a shared cursor. Because JS is
-  // run-to-completion, `cursor++` cannot be torn — no lock needed.
+  // run-to-completion, `cursor++` cannot be torn - no lock needed.
   const worker = async () => {
     while (cursor < items.length) {
       const index = cursor++;
@@ -511,7 +511,7 @@ console.log('done');`}
   options={[
     { label: "'saved 1', 'saved 2', 'saved 3', 'done'" },
     { label: "'done', 'saved 1', 'saved 2', 'saved 3'", correct: true },
-    { label: "'done' only — the callbacks never run" },
+    { label: "'done' only - the callbacks never run" },
     { label: 'The order is non-deterministic' },
   ]}
 >
@@ -524,8 +524,8 @@ console.log('done');`}
       <code>forEach</code> returns.
     </p>
     <p>
-      The order of the three saves <em>is</em> deterministic here — the
-      microtask queue is FIFO and they were queued in order — but relying on
+      The order of the three saves <em>is</em> deterministic here - the
+      microtask queue is FIFO and they were queued in order - but relying on
       that is fragile: it only holds because <code>save</code> resolves after
       the same number of microtask turns for every item.
     </p>
@@ -545,8 +545,8 @@ console.log('done');`}
   options={[
     { label: 'The promise chain', correct: true },
     { label: 'The setTimeout chain' },
-    { label: 'Both — an infinite loop is an infinite loop' },
-    { label: 'Neither — the loop always makes progress' },
+    { label: 'Both - an infinite loop is an infinite loop' },
+    { label: 'Neither - the loop always makes progress' },
   ]}
 >
   <Fragment slot="explanation">
@@ -564,7 +564,7 @@ console.log('done');`}
     <p>
       This is the practical reason to break long recursive async work with{' '}
       <code>setImmediate</code> rather than an already-resolved promise. It is
-      also worth knowing that <code>process.nextTick</code> is worse still — it
+      also worth knowing that <code>process.nextTick</code> is worse still - it
       drains ahead of microtasks, so an unbounded <code>nextTick</code> recursion
       starves promises as well.
     </p>
@@ -575,14 +575,14 @@ console.log('done');`}
 
 **"Explain the event loop."** Two minutes, spoken:
 
-> JavaScript runs on a single thread, so it can never block waiting for I/O — if
+> JavaScript runs on a single thread, so it can never block waiting for I/O - if
 > it did, nothing else could run. Instead, an I/O call is handed to the operating
 > system with a callback, and the thread moves on. The event loop is the thing
 > that picks callbacks back up: it runs the call stack to empty, then takes work
 > from the queues.
 >
 > There is more than one queue and they are not equal. `process.nextTick` drains
-> first, then microtasks — promise callbacks and everything after an `await` —
+> first, then microtasks - promise callbacks and everything after an `await` -
 > and both of those are drained *completely*. Macrotasks, which is timers and I/O
 > callbacks, are taken one per turn. That asymmetry is why `setTimeout(fn, 0)`
 > runs after every pending promise, and why a runaway promise chain can starve
@@ -596,14 +596,14 @@ console.log('done');`}
 **The caveats that signal you have run this in production:**
 
 - "Single-threaded" is about your JavaScript, not the process. libuv keeps a
-  four-thread pool for filesystem and crypto work — and network I/O does not use
+  four-thread pool for filesystem and crypto work - and network I/O does not use
   it at all, which is why 10,000 sockets are fine but four concurrent file reads
   are the limit until you raise `UV_THREADPOOL_SIZE`.
 - The metric I actually alert on is event loop lag, not CPU. It measures what
   users feel, and it stays flat until it doesn't.
 - Single-threaded does not mean race-free. Every `await` is a yield, so a
   check-then-write across an `await` is a genuine race. I fix that with a database
-  constraint, not with a lock in JavaScript — the database is the only thing that
+  constraint, not with a lock in JavaScript - the database is the only thing that
   can arbitrate between two processes anyway.
 - Worker threads are the answer to CPU-bound work, and specifically *not* the
   answer to slow I/O. If the work is `await db.query()`, the loop was already free
@@ -611,7 +611,7 @@ console.log('done');`}
 
 **If asked to predict output**, say the rule out loud before the answer: all
 synchronous code, then `nextTick`, then microtasks, then one macrotask. And it is
-worth knowing that the famous `1 5 4 3 2` answer is a CommonJS result — in an ES
+worth knowing that the famous `1 5 4 3 2` answer is a CommonJS result - in an ES
 module the same file prints `1 5 3 4 2`, because module evaluation is itself a
 promise job and the microtask checkpoint at its end runs before control returns to
 the `nextTick` queue.

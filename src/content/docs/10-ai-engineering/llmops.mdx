@@ -1,7 +1,7 @@
 ---
 title: LLMOps
 description: >-
-  Running LLM features in production — what to log when output is
+  Running LLM features in production - what to log when output is
   non-deterministic, where the cost actually goes, and how to ship a model
   upgrade without breaking things silently.
 sidebar:
@@ -32,13 +32,13 @@ request, because the model may decide differently. You cannot diff two versions
 by their outputs, because they differ anyway.
 
 So the discipline shifts. Instead of catching failures, you **measure
-distributions** — of cost, latency, refusal rate, retrieval recall, output
-length — and watch for the shape changing. And instead of reproducing failures,
+distributions** - of cost, latency, refusal rate, retrieval recall, output
+length - and watch for the shape changing. And instead of reproducing failures,
 you **record them completely enough that reproduction is unnecessary**.
 
 The three things that pay for themselves fastest, in order:
 
-1. **Log the assembled prompt.** Not the template — the actual final string.
+1. **Log the assembled prompt.** Not the template - the actual final string.
    Most "the model is wrong" reports turn out to be "the model was never shown
    the thing".
 2. **Cache aggressively.** Cost and latency both, and it is the one lever with no
@@ -57,7 +57,7 @@ The three things that pay for themselves fastest, in order:
 @dataclass
 class LLMTrace:
     request_id: str
-    feature: str                 # attribution — which feature spent this
+    feature: str                 # attribution - which feature spent this
     tenant_id: str | None
 
     model: str
@@ -136,7 +136,7 @@ apply to this table exactly as they do to the source data.
 | Retrieval recall on a sample | fall | index staleness |
 
 **Refusal rate is the most underrated.** It is a single cheap number that tracks
-retrieval health, and it moves before users complain — because a refusal is what
+retrieval health, and it moves before users complain - because a refusal is what
 a well-behaved system does when retrieval fails.
 
 ### Caching, in three layers
@@ -152,16 +152,16 @@ flowchart LR
   M --> W[write both caches] --> O
 ```
 
-**Exact cache** — hash of `(prompt, model, version, temperature)`. Free, exact,
+**Exact cache** - hash of `(prompt, model, version, temperature)`. Free, exact,
 and on real support traffic the hit rate is usually far higher than teams expect,
 because a few questions dominate.
 
-**Semantic cache** — embed the question, return a cached answer if a previous one
+**Semantic cache** - embed the question, return a cached answer if a previous one
 is close enough. Real savings and **a real risk**: too loose a threshold serves a
 confidently wrong answer to a question nobody asked. Calibrate it against
 labelled pairs, and never enable it for personalised or time-sensitive answers.
 
-**Provider prompt cache** — discounts a repeated prefix. Requires only correct
+**Provider prompt cache** - discounts a repeated prefix. Requires only correct
 ordering, so it is the cheapest of the three to adopt. See
 [context engineering](/cs-fundamentals/10-ai-engineering/context-engineering/).
 
@@ -172,7 +172,7 @@ answers from the old model.
 ### Shipping a model change
 
 A model upgrade is a **migration**, not a config change, and the reason is that
-nothing fails when it goes wrong — quality just drops.
+nothing fails when it goes wrong - quality just drops.
 
 ```mermaid
 flowchart LR
@@ -184,7 +184,7 @@ flowchart LR
 
 Shadow mode is the step usually skipped and the one that pays. Run both models on
 real traffic, serve the incumbent, and store both outputs. You get a paired
-comparison on your actual distribution — which is strictly better evidence than
+comparison on your actual distribution - which is strictly better evidence than
 any benchmark, and it costs a second call on a sampled fraction of traffic.
 
 ## Cost & limits
@@ -199,7 +199,7 @@ tokens:
 | Input (context) | 250M | ~89% |
 | Output | 30M | ~11% |
 
-Input dominates by volume — but output is priced several times higher per token,
+Input dominates by volume - but output is priced several times higher per token,
 so the **cost** split is much closer than the token split. Compute both before
 optimising, because the two point at different fixes.
 
@@ -209,7 +209,7 @@ The levers, in order of effect per unit of work:
 2. **Prompt caching.** Requires only prompt reordering.
 3. **Fewer retrieved chunks.** Cuts cost *and* usually improves quality.
 4. **Trim tool definitions.** Re-sent on every request.
-5. **Route to a smaller model** for easy requests — classification, routing,
+5. **Route to a smaller model** for easy requests - classification, routing,
    extraction. A large fraction of traffic does not need the frontier model.
 6. **Shorter outputs.** Also the most effective latency fix available.
 
@@ -276,16 +276,16 @@ moves.
 
 ## Real-world usage
 
-- **Prompt and output logging** with a hash for grouping — the foundation
+- **Prompt and output logging** with a hash for grouping - the foundation
   everything else is built on.
 - **Cost attribution by feature and tenant**, which is what makes an
   optimisation conversation possible at all.
 - **Semantic caching** in high-volume support, with a conservative threshold and
   a per-question kill switch.
 - **Shadow deployments** for model upgrades, comparing on live traffic.
-- **Sampled online evaluation** — score 1% of production traffic continuously, to
+- **Sampled online evaluation** - score 1% of production traffic continuously, to
   catch drift a fixed golden set cannot see.
-- **Model routing** — a cheap classifier sends easy requests to a small model.
+- **Model routing** - a cheap classifier sends easy requests to a small model.
   Often the single largest cost saving available.
 - **Per-tenant token quotas**, so one customer's runaway loop does not consume
   everyone's capacity.
@@ -306,8 +306,8 @@ observability change in most LLM codebases.
 
 **Symptom:** the bill grows week over week; nothing changed.
 
-**Cause:** usually the context growing — more documents indexed, longer
-conversations, an added tool — or a cache hit rate quietly falling.
+**Cause:** usually the context growing - more documents indexed, longer
+conversations, an added tool - or a cache hit rate quietly falling.
 
 **Fix:** track tokens per request as a time series per feature. It shows the
 drift; the bill only shows the total.
@@ -316,7 +316,7 @@ drift; the bill only shows the total.
 
 **Symptom:** costs jump after an unrelated deploy.
 
-**Cause:** something entered the prompt prefix — a version string, a timestamp, a
+**Cause:** something entered the prompt prefix - a version string, a timestamp, a
 reordered list.
 
 **Fix:** alert on cache hit rate directly. It is a leading indicator of a cost
@@ -369,17 +369,17 @@ a 200 response.
 
 **Three fields would surface all of it:**
 
-1. **`stop_reason`** — "cut off mid-sentence" is `max_tokens`. This is returned
+1. **`stop_reason`** - "cut off mid-sentence" is `max_tokens`. This is returned
    as a normal successful response, and it is the single most common silently
    shipped bug in LLM systems. Alert on any nonzero rate.
-2. **Refusal rate** — "it says it doesn't know" is the model behaving
+2. **Refusal rate** - "it says it doesn't know" is the model behaving
    *correctly* on a retrieval failure. A rising refusal rate is your earliest
    signal that retrieval degraded, and it is one cheap number.
-3. **Grounding validity** — did cited ids appear in the context? Deterministic
+3. **Grounding validity** - did cited ids appear in the context? Deterministic
    and free.
 
-**Implement as an `outcome` enum** — `ok | invalid_output | ungrounded | refused
-| truncated | error` — set by your code after validation, not by the HTTP status.
+**Implement as an `outcome` enum** - `ok | invalid_output | ungrounded | refused
+| truncated | error` - set by your code after validation, not by the HTTP status.
 Then the dashboard shows what users experience.
 
 **The immediate diagnosis to expect:** the refusal rate rose because the indexing
@@ -388,7 +388,7 @@ the most common version of this. Add `documents_processed_per_run` while you are
 in there.
 
 **The trap to avoid:** raising `max_tokens` to fix the truncation. That treats a
-symptom — the real question is whether answers should be that long, and longer
+symptom - the real question is whether answers should be that long, and longer
 answers cost more and are slower.
 
 </details>
@@ -413,7 +413,7 @@ is the number to explain, and it means the answer is in what each request sends.
    no other change, and it is the most common single cause.
 3. **Input versus output split.** They have different fixes: input growth is
    context bloat, output growth is answers getting longer.
-4. **Per-feature attribution.** Almost always concentrated — one feature is
+4. **Per-feature attribution.** Almost always concentrated - one feature is
    usually most of the spend and a small share of usage.
 
 **The likely findings, in rough order of frequency:** more documents indexed so
@@ -436,19 +436,19 @@ serves 50,000 requests/day. Plan the rollout.
 <details>
 <summary>Solution</summary>
 
-Treat it as a migration. Nothing throws when a model upgrade goes wrong — quality
+Treat it as a migration. Nothing throws when a model upgrade goes wrong - quality
 just drops, and you find out from users.
 
 **1. Offline, paired.** Run the golden set on both models, same cases, and count
 individual flips rather than comparing aggregate percentages. Paired comparison
 removes case-to-case variance and is far more sensitive. Ignore the public
-benchmark — it measures a different distribution from yours.
+benchmark - it measures a different distribution from yours.
 
 **2. Shadow, 5% of live traffic.** Call both, serve the incumbent, store both
 outputs. This is the step usually skipped and it is the one that pays: a paired
 comparison on your real distribution, at the cost of a second call on a
 twentieth of traffic. Compare grounding validity, refusal rate, output length and
-token counts — not just "which answer is better".
+token counts - not just "which answer is better".
 
 **3. Canary 5% for real**, watching `outcome` rates rather than answer quality.
 A rise in `invalid_output` usually means structured output changed shape, which
@@ -469,7 +469,7 @@ version in the cache key so rollback does not serve new-model answers from cache
 - **Structured output conformance**, if you rely on schemas.
 
 **The trap to avoid:** shipping on the benchmark and the price. Both are real and
-neither measures your distribution — the model that scores better in general can
+neither measures your distribution - the model that scores better in general can
 be worse on your corpus, and the cheaper model can cost more per answer.
 
 </details>
@@ -480,7 +480,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
   kind="concept"
   question="Your LLM feature reports a 99.9% success rate but users complain about truncated and unhelpful answers. What is the most likely gap?"
   options={[
-    { label: 'Only the API status is monitored — truncation, refusals and ungrounded answers all return 200', correct: true },
+    { label: 'Only the API status is monitored - truncation, refusals and ungrounded answers all return 200', correct: true },
     { label: 'The p95 latency threshold is set too high to catch slow responses' },
     { label: 'Errors are being retried successfully, hiding the underlying failure rate' },
     { label: 'The success rate is sampled, so rare failures are not represented' },
@@ -490,7 +490,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
     <p>
       A response truncated at <code>max_tokens</code> is a successful HTTP call.
       So is a refusal, and so is a confidently ungrounded answer. The provider
-      cannot tell you these are failures because from its side they are not — only
+      cannot tell you these are failures because from its side they are not - only
       your application knows what a good outcome looks like.
     </p>
     <p>
@@ -502,7 +502,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
     </p>
     <p>
       Refusal rate deserves its own alert. It is one cheap number that tracks
-      retrieval health, and it moves before users complain — a refusal is exactly
+      retrieval health, and it moves before users complain - a refusal is exactly
       what a well-behaved system does when retrieval fails.
     </p>
   </Fragment>
@@ -514,7 +514,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
   kind="concept"
   question="Costs rose 60% with no deploy and no traffic increase. What do you check first?"
   options={[
-    { label: 'Cache hit rate and tokens per request over time — context growth and cache misses both raise cost silently', correct: true },
+    { label: 'Cache hit rate and tokens per request over time - context growth and cache misses both raise cost silently', correct: true },
     { label: 'Whether the provider raised prices without notice' },
     { label: 'Whether retries are duplicating requests' },
     { label: 'Whether output token limits were raised in configuration' },
@@ -523,8 +523,8 @@ be worse on your corpus, and the cheaper model can cost more per answer.
   <Fragment slot="explanation">
     <p>
       Cost per request is what changed, and the two things that move it without a
-      deploy are the context growing — more documents indexed, longer
-      conversations, a bigger <code>k</code> — and the prompt cache quietly
+      deploy are the context growing - more documents indexed, longer
+      conversations, a bigger <code>k</code> - and the prompt cache quietly
       missing. Both are visible as time series and invisible on the bill, which
       shows only a total.
     </p>
@@ -538,7 +538,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
       The distractors are all real causes with different signatures. A price
       change is trivially checkable and rarely silent. Retries would show as a
       request-count increase, which was ruled out. A config change is a deploy,
-      which was also ruled out — and reading the question that carefully is most
+      which was also ruled out - and reading the question that carefully is most
       of the answer.
     </p>
   </Fragment>
@@ -553,8 +553,8 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 > all 200s, so a dashboard built on status codes shows 100% success while users
 > complain.
 >
-> So I log an application-level outcome — did the JSON parse, did the cited ids
-> appear in the context, was `stop_reason` `max_tokens` — and alert on rates
+> So I log an application-level outcome - did the JSON parse, did the cited ids
+> appear in the context, was `stop_reason` `max_tokens` - and alert on rates
 > rather than individual outputs, because output is non-deterministic and one bad
 > answer is a sample.
 >
@@ -565,7 +565,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 
 **"How would you cut LLM costs?"**
 
-> Measure attribution first — per-feature token counts — because the spend is
+> Measure attribution first - per-feature token counts - because the spend is
 > almost always concentrated in one feature that is a small share of usage, and
 > without that you are optimising blind.
 >
@@ -576,7 +576,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 > smaller model, which is often the largest single saving.
 >
 > Semantic caching I would leave until last. It is the only one on the list with
-> a correctness risk — too loose a threshold serves a confident answer to a
+> a correctness risk - too loose a threshold serves a confident answer to a
 > different question.
 
 **"How do you roll out a new model version?"**
@@ -584,7 +584,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 > As a migration, because nothing throws when it goes wrong. Quality drops and
 > you hear it from users.
 >
-> Offline evaluation on the golden set first, paired — same cases, count
+> Offline evaluation on the golden set first, paired - same cases, count
 > individual flips rather than comparing two percentages. Then shadow mode on a
 > slice of live traffic: call both, serve the incumbent, store both outputs. That
 > gives a paired comparison on my actual distribution, which is better evidence
@@ -593,7 +593,7 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 >
 > Two things I check that people miss. Output length, because a model that
 > answers 30% longer is slower and more expensive even at a lower per-token
-> price — that erases the saving surprisingly often. And structured output
+> price - that erases the saving surprisingly often. And structured output
 > conformance, which is the most common thing an upgrade breaks.
 
 **The caveats worth voicing:**
@@ -603,4 +603,4 @@ be worse on your corpus, and the cheaper model can cost more per answer.
 - Pin explicit model versions; an alias changes your system without a deploy.
 - Put the model version in the cache key, or an upgrade serves stale answers.
 - Retries need jitter, or a fleet retries in lockstep and makes the outage.
-- Streaming improves perceived latency only — the generation takes just as long.
+- Streaming improves perceived latency only - the generation takes just as long.

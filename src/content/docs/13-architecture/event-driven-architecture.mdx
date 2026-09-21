@@ -2,7 +2,7 @@
 title: Event-Driven Architecture
 description: >-
   What a service gives up when a synchronous call becomes an event it fires
-  and forgets — and the specific things you have to build back to recover
+  and forgets - and the specific things you have to build back to recover
   the traceability that call had for free.
 sidebar:
   order: 4
@@ -19,7 +19,7 @@ sources: []
 
 This page is not about brokers. Delivery guarantees, dead-letter queues,
 and at-least-once versus exactly-once semantics are covered in
-[message-brokers](/cs-fundamentals/5-systems/message-brokers/) — the
+[message-brokers](/cs-fundamentals/5-systems/message-brokers/) - the
 mechanics of getting an event from a producer to a consumer reliably are
 solved there, and this page assumes you already have that plumbing
 working. What it's about is the architectural consequence of switching
@@ -30,7 +30,7 @@ A synchronous call has a property you stop noticing until it's gone: the
 caller *knows what happened*. `chargeCard()` returns success or a
 specific exception, and the calling code branches on it. Publish
 `OrderPlaced` instead, and the producer's job ends the instant the broker
-accepts the message — it has no return value, no exception, and by design
+accepts the message - it has no return value, no exception, and by design
 no idea whether zero, one, or five services will act on it, whether they
 succeeded, or whether they will act on it in the next ten milliseconds or
 after a redeploy tomorrow. Decoupling and knowing are the same trade
@@ -43,7 +43,7 @@ to close that gap back up.
 ## Mechanics
 
 **Choreography versus orchestration.** In choreography, each service
-reacts to events and emits its own, with no central coordinator — `Order
+reacts to events and emits its own, with no central coordinator - `Order
 Service` emits `OrderPlaced`, `Inventory Service` reacts by reserving
 stock and emits `StockReserved`, `Billing Service` reacts to that and
 emits `PaymentCharged`. Nobody owns the sequence; it emerges from each
@@ -62,13 +62,13 @@ sequenceDiagram
 ```
 
 This works cleanly for three services and becomes unreadable for ten,
-because the "sequence" — what actually happens when an order is placed —
+because the "sequence" - what actually happens when an order is placed -
 now lives nowhere as a single artifact; it's the emergent result of
 reading every service's event handlers and mentally simulating them. In
 orchestration, a coordinator (a saga, a workflow engine) holds the
 sequence explicitly and calls or awaits each step, trading the emergent
 flexibility of choreography for a single place that says what happens
-and in what order — at the cost of a component that now has to know
+and in what order - at the cost of a component that now has to know
 about every step, which is exactly the coupling event-driven design was
 trying to remove. Neither is strictly better: choreography suits a small
 number of loosely related reactions; orchestration suits a business
@@ -78,9 +78,9 @@ and change.
 **What the producer used to get for free, and no longer does.** A
 synchronous call chain gives you, without any extra work: a return value,
 a set of correlated spans across process boundaries if you had
-distributed tracing wired up on the call path — trace context propagated
+distributed tracing wired up on the call path - trace context propagated
 on the call, so every hop's span nests under the same trace and reads as
-one continuous timeline — and a request ID that ties every downstream
+one continuous timeline - and a request ID that ties every downstream
 effect back to the request that caused it, visible in one trace. Switch
 `Order Service → Billing Service` from an HTTP call to
 `Order Service` publishing `OrderPlaced` and `Billing Service` consuming
@@ -103,25 +103,25 @@ be close together in time.
   [distributed-tracing](/cs-fundamentals/14-production/distributed-tracing/))
   extended across the broker, so a span exists for "publish" and another
   for "consume," stitched together by the propagated trace context riding
-  in the event's headers — the same discipline a synchronous call gets
+  in the event's headers - the same discipline a synchronous call gets
   automatically from most APM agents.
 - **An event log to reconstruct "what happened."** Because no single
   service holds the full sequence in choreography, the append-only stream
   of events becomes the artifact you replay to answer "what happened to
   order 4471," rather than any one service's database. A broker's own
-  retained topic is not automatically this artifact, though — brokers
+  retained topic is not automatically this artifact, though - brokers
   retain messages for operational reasons (replay after an outage, a
   finite window for slow consumers), not for audit, and their retention
   period, compaction rules, and access model are usually tuned for
   throughput, not for "prove to an auditor what happened eighteen months
-  ago." A business or compliance audit trail — one with guaranteed
+  ago." A business or compliance audit trail - one with guaranteed
   retention, immutability, and access controls independent of the
-  broker's operational settings — is normally a separate durable store
+  broker's operational settings - is normally a separate durable store
   the events are also written to, not a rebranding of whatever the broker
   happens to still be holding.
 - **Consumer-side status reporting back to a queryable store.** If the
   producer (or an operator) needs to know whether `Billing Service`
-  actually processed `OrderPlaced`, that has to be built explicitly —
+  actually processed `OrderPlaced`, that has to be built explicitly -
   typically the consumer writes its own outcome (`processed`, `failed`,
   `retrying`) to a status table keyed by the event ID, which something
   can poll or query. This is new code that a synchronous call never
@@ -136,7 +136,7 @@ convention for correlation/causation IDs, tracing instrumentation across
 the broker, a durable event log with a retention policy, and a status
 table per consumer with its own storage and query cost. On a five-service
 choreographed flow, this is roughly the same order of engineering effort
-as building the business logic those services contain — teams that skip
+as building the business logic those services contain - teams that skip
 it ship the events and discover the debugging gap during the first
 production incident that spans three services, not before.
 
@@ -144,7 +144,7 @@ production incident that spans three services, not before.
 synchronous call chain has a latency that's the sum of every hop, held
 open the whole time; a choreographed flow's *user-facing* latency can be
 much lower (the client gets a response the instant the first event is
-accepted) at the cost of the *business* completing asynchronously — "order
+accepted) at the cost of the *business* completing asynchronously - "order
 placed" and "order fully processed, stock reserved, and payment
 captured" are now different moments, sometimes by seconds, sometimes by
 minutes if a consumer is backed up. Whether that gap is acceptable is a
@@ -158,7 +158,7 @@ shows "pending."
   A checkout flow that must confirm inventory is actually reserved before
   telling the customer the order succeeded needs a synchronous call (or a
   synchronous-feeling request/reply over the broker) for that specific
-  step, even if the rest of the flow is eventful — don't force a
+  step, even if the rest of the flow is eventful - don't force a
   fire-and-forget event onto a step where the answer gates the response.
 - **The team can't yet operate a synchronous system reliably.** Event-driven
   architecture adds an entire second observability problem (tracing across
@@ -166,8 +166,8 @@ shows "pending."
   debugging synchronous timeouts and retries hasn't earned the additional
   surface area yet.
 - **The sequence has two or three steps and one team owns all of them.**
-  The choreography/orchestration overhead — schemas, correlation IDs,
-  status tables — pays for itself when it decouples teams or scales
+  The choreography/orchestration overhead - schemas, correlation IDs,
+  status tables - pays for itself when it decouples teams or scales
   independently. One team, three steps, one deploy: a function call inside
   a single service is strictly simpler and gives you the stack trace for
   free.
@@ -177,13 +177,13 @@ shows "pending."
 Order-fulfillment pipelines at e-commerce scale are the textbook case:
 `OrderPlaced` fans out to inventory, billing, shipping, and notification
 services that each react independently, and the platform invests in a
-central event log — typically a dedicated store with its own retention
+central event log - typically a dedicated store with its own retention
 and durability guarantees, not just whatever window the broker happens
-to retain — specifically so "what happened to this order" is answerable
+to retain - specifically so "what happened to this order" is answerable
 without reconstructing state from five databases. Financial ledgers and
-audit-heavy domains lean on event sourcing — the event stream *is* the
+audit-heavy domains lean on event sourcing - the event stream *is* the
 record of truth, held in a purpose-built event store, and current state
-is a projection of it — precisely because the traceability that a
+is a projection of it - precisely because the traceability that a
 mutable database's current row doesn't give you (what sequence of changes
 produced this balance) is the entire point of the audit requirement.
 
@@ -191,7 +191,7 @@ produced this balance) is the entire point of the audit requirement.
 
 **The event that nobody's consuming.** A producer ships `OrderCancelled`,
 a downstream team's consumer is still being built, and the event is
-silently dropped or piles up in a queue with no alert — the symptom is a
+silently dropped or piles up in a queue with no alert - the symptom is a
 customer-reported bug ("I cancelled but still got charged") days after
 the event was published, with no error anywhere because nothing failed
 loudly; it just never happened. Detection requires monitoring consumer
@@ -200,7 +200,7 @@ ticket.
 
 **Debugging by grepping five services' logs.** Without correlation IDs
 propagated through the event chain, tracing a single business
-transaction across services degrades to matching timestamps by eye —
+transaction across services degrades to matching timestamps by eye -
 the exact traceability loss this page opened with, showing up as a
 multi-hour incident investigation for a bug that would have been a
 five-minute trace lookup in a synchronous system.
@@ -210,7 +210,7 @@ five or six services, "what happens when an order is placed" stops being
 answerable by reading any single file, and onboarding a new engineer to
 the flow requires them to trace it live in a staging environment because
 no artifact describes the sequence. This is the specific point at which
-teams migrate parts of the flow to orchestration — not because
+teams migrate parts of the flow to orchestration - not because
 choreography is wrong, but because the sequence has become something
 stakeholders need to read, and only an orchestrator's definition is
 readable in one place.
@@ -225,7 +225,7 @@ readable in one place.
    question fastest?
 2. A choreographed flow across six services has no single document
    describing what happens on `OrderPlaced`. A new consumer is added that
-   creates an unexpected cycle — its output event triggers a handler that
+   creates an unexpected cycle - its output event triggers a handler that
    re-triggers the original flow. What made this bug possible, and what
    would orchestration have prevented that choreography didn't?
 3. Given a correlation ID and a causation ID on every event, sketch the
@@ -236,17 +236,17 @@ readable in one place.
 
 **Two-minute version:** "Switching a call to an event decouples the
 producer from the consumer, but the thing you're actually giving up is
-traceability — a synchronous call's return value and a correlated trace
+traceability - a synchronous call's return value and a correlated trace
 across the call chain told you what happened for free, and an event
 fired into a broker doesn't. You get
 that back deliberately: correlation and causation IDs on every event,
 tracing extended across the broker, an event log as the source of truth,
 and consumers reporting their own outcomes somewhere queryable. None of
-that is broker mechanics — it's architecture you build on top regardless
+that is broker mechanics - it's architecture you build on top regardless
 of which broker or delivery guarantee you picked."
 
 **The caveat that signals real usage:** the first time this bit us wasn't
-a lost message — the broker delivered fine — it was a support escalation
+a lost message - the broker delivered fine - it was a support escalation
 that took four hours to resolve because no two services' logs had a
 shared ID to filter by, and by the time we added correlation IDs
 everywhere, we'd already spent more engineering time debugging by hand

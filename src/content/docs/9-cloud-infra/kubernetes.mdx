@@ -1,7 +1,7 @@
 ---
-title: Kubernetes — requests, limits, and why OOMKilled isn't about limits alone
+title: Kubernetes - requests, limits, and why OOMKilled isn't about limits alone
 description: >-
-  Requests decide where a pod is scheduled; limits decide when it's killed —
+  Requests decide where a pod is scheduled; limits decide when it's killed -
   two different numbers, easy to set identically, and the gap between them is
   where most production Kubernetes incidents live.
 sidebar:
@@ -24,11 +24,11 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 Kubernetes schedules and runs containers (from the
 [previous page](/cs-fundamentals/9-cloud-infra/containers/)) across a cluster
 of machines, and the single distinction that explains most of its confusing
-behavior is **requests versus limits** — two separate numbers on every pod
+behavior is **requests versus limits** - two separate numbers on every pod
 that most tutorials introduce together and that behave completely
 differently. A **request** is what the scheduler uses to decide *where* a pod
-can run — a promise of "give me at least this much." A **limit** is what the
-kubelet enforces at runtime to decide *when to kill* a pod — a ceiling on
+can run - a promise of "give me at least this much." A **limit** is what the
+kubelet enforces at runtime to decide *when to kill* a pod - a ceiling on
 "you may use at most this much." Setting them to the same value (a common
 default) hides the distinction; setting them differently is where Kubernetes
 starts behaving in ways that surprise people who learned it from a "just copy
@@ -47,7 +47,7 @@ resources:
 
 [The scheduler places a pod only on a node with enough *unreserved* capacity
 to satisfy its requests](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
-— summed across every pod already scheduled there. Requests are a
+- summed across every pod already scheduled there. Requests are a
 scheduling-time promise, not a runtime cap: a pod can use more than its
 memory request without anything stopping it, right up until it either hits
 its *limit* or the node runs out of actual physical memory.
@@ -62,14 +62,14 @@ resources:
 ```
 
 Limits are enforced by the same cgroups mechanism covered on the
-[containers page](/cs-fundamentals/9-cloud-infra/containers/) — CPU over the
+[containers page](/cs-fundamentals/9-cloud-infra/containers/) - CPU over the
 limit is **throttled** (the process is allowed to run, just slower); memory
 over the limit gets the container **killed**, because you cannot throttle
 memory the way you can throttle CPU time. [This asymmetry is the source of a
 very specific confusion](https://komodor.com/learn/how-to-fix-oomkilled-exit-code-137/):
 "my pod is CPU-throttled" is a performance problem you can observe and tune
 around; "my pod is OOMKilled" is the process being terminated outright,
-restarted, and — if it happens repeatedly and fast — put into a
+restarted, and - if it happens repeatedly and fast - put into a
 `CrashLoopBackOff`.
 
 ```bash
@@ -79,7 +79,7 @@ kubectl describe pod orders-api-7d9f8 | grep -A3 "Last State"
 #   Exit Code: 137
 ```
 
-Exit code 137 is `128 + 9` — SIGKILL. There's no graceful shutdown here: the
+Exit code 137 is `128 + 9` - SIGKILL. There's no graceful shutdown here: the
 kernel's OOM killer terminates the process the instant it exceeds the cgroup
 memory limit, mid-request, with whatever was in flight simply gone.
 
@@ -96,23 +96,23 @@ pods get evicted first when a node runs low on resources:
 | `BestEffort` | neither requests nor limits set | Evicted first |
 
 [Setting requests equal to limits produces `Guaranteed` QoS](https://oneuptime.com/blog/post/2026-01-06-kubernetes-right-size-resources/view)
-— the pod least likely to be evicted under node pressure, though [it can
+- the pod least likely to be evicted under node pressure, though [it can
 still be killed if it exceeds its own limit or the node genuinely can't
 maintain stability otherwise](https://oneuptime.com/blog/post/2026-02-09-rightsize-pod-requests-limits/view).
 This is the real reason production workloads that matter are frequently
-configured with `requests == limits` — not because it's "safer" in the
+configured with `requests == limits` - not because it's "safer" in the
 abstract, but because it opts the pod out of the eviction ordering that
 `Burstable` and `BestEffort` pods are exposed to.
 
 ## Cost & limits
 
 **Setting requests too high wastes cluster capacity that's reserved but never
-used** — the scheduler treats the request as committed, so an
+used** - the scheduler treats the request as committed, so an
 over-provisioned request shrinks the effective capacity of every node for
 other pods, even if the pod itself never approaches that usage. This is a
 direct cost: more nodes provisioned than the actual workload needs.
 
-**Setting requests too low risks the opposite failure** — the scheduler
+**Setting requests too low risks the opposite failure** - the scheduler
 over-packs a node believing there's headroom that doesn't exist under real
 load, and CPU contention (throttling) or memory pressure (eviction) shows up
 exactly when traffic is highest, which is the worst possible time to discover
@@ -122,14 +122,14 @@ a sizing mistake.
 
 **Do not leave requests and limits unset "to keep the YAML simple."**
 `BestEffort` pods (no requests, no limits) are evicted first under any node
-pressure and provide the scheduler no information to place them well — this
+pressure and provide the scheduler no information to place them well - this
 is appropriate only for genuinely disposable, low-priority batch work, never
 for anything a user-facing request depends on.
 
 **Do not set memory limits without first measuring actual peak usage under
 representative load.** A limit set from a guess, copied from another
 service's manifest, or left at whatever a tutorial suggested is a coin flip
-between "wastes capacity" and "OOMKills under real traffic" — neither of
+between "wastes capacity" and "OOMKills under real traffic" - neither of
 which a load test would have left to chance.
 
 ## Real-world usage
@@ -140,7 +140,7 @@ unacceptable; `Burstable` for services with a known baseline but genuine
 headroom needs (a request-handling API with occasional traffic spikes); and
 `BestEffort` reserved for background batch jobs where being evicted and
 rescheduled is an acceptable, even expected, outcome. Horizontal Pod
-Autoscaling and cluster autoscaling both key off these same requests —
+Autoscaling and cluster autoscaling both key off these same requests -
 scaling decisions are made against the requested, not actual, resource
 consumption, which is another reason an inaccurate request value propagates
 into an inaccurate autoscaling decision.
@@ -150,18 +150,18 @@ into an inaccurate autoscaling decision.
 **The pod that OOMKilled under load that passed every load test.** A memory
 limit set from local testing, where request volume and payload sizes were
 smaller than production traffic, holds fine until real traffic exceeds what
-was tested — the symptom is a `CrashLoopBackOff` that started exactly when
+was tested - the symptom is a `CrashLoopBackOff` that started exactly when
 traffic crossed a threshold nobody had explicitly tested for.
 
 **The cluster that "ran out of capacity" while nodes reported low actual
 usage.** Requests set far above real consumption reserve capacity the
-scheduler treats as committed — `kubectl describe node` shows the node is
+scheduler treats as committed - `kubectl describe node` shows the node is
 "full" by request accounting while `kubectl top` shows it's mostly idle by
 actual usage, and the fix is right-sizing requests downward, not adding more
 nodes.
 
 **The CPU-bound service that got slower after a deploy with no code
-change.** A CPU limit set too tight throttles the process under load — no
+change.** A CPU limit set too tight throttles the process under load - no
 crash, no restart, no error in the logs, just increased latency that
 correlates with traffic and is easy to misattribute to a code regression
 rather than a resource ceiling.
@@ -171,11 +171,11 @@ rather than a resource ceiling.
 **1. A pod has `requests.memory: 128Mi` and `limits.memory: 1Gi`. Under
 sustained load it uses 900Mi. Is this a problem, and what QoS class is it?**
 
-Not necessarily a problem on its own — it's within its limit, so it won't be
+Not necessarily a problem on its own - it's within its limit, so it won't be
 OOMKilled for this alone. It's `Burstable` QoS (requests set, limit higher),
 meaning under node memory pressure it's a candidate for eviction before any
 `Guaranteed` pod on the same node, even though it hasn't exceeded its own
-limit — worth flagging if this pod is latency-sensitive and eviction would be
+limit - worth flagging if this pod is latency-sensitive and eviction would be
 disruptive, since the large gap between request and actual usage is exactly
 what makes it exposed.
 
@@ -185,7 +185,7 @@ useful next step?**
 
 Compare the configured memory limit against actual usage under production-representative
 load (not staging load, which may not match production traffic
-shape or volume) — the OOM kill means the process genuinely exceeded its
+shape or volume) - the OOM kill means the process genuinely exceeded its
 cgroup memory limit, so the fix is either raising the limit to match real
 peak usage, or investigating whether the memory growth itself is unexpected
 (a leak) rather than assuming the limit was simply too conservative.
@@ -195,7 +195,7 @@ limits` (Guaranteed), the other has only limits set with no requests
 (BestEffort, since an unset request defaults to none). Under node memory
 pressure, which is evicted first, and why?**
 
-The BestEffort service — QoS eviction priority is BestEffort first, then
+The BestEffort service - QoS eviction priority is BestEffort first, then
 Burstable, then Guaranteed last. Setting requests (whether or not they equal
 limits) is what removes a pod from the BestEffort class; setting them equal
 to limits goes further and gives the pod the strongest eviction protection
@@ -222,8 +222,8 @@ Kubernetes offers.
 
 **"What's the difference between a resource request and a resource limit in
 Kubernetes?"** A request is what the scheduler uses to decide which node a
-pod can be placed on — a reserved minimum, not enforced at runtime. A limit
-is what the kubelet enforces via cgroups at runtime — CPU over the limit is
+pod can be placed on - a reserved minimum, not enforced at runtime. A limit
+is what the kubelet enforces via cgroups at runtime - CPU over the limit is
 throttled, memory over the limit gets the container killed. The caveat that
 shows production experience: setting requests equal to limits produces
 `Guaranteed` QoS, the class least likely to be evicted under node pressure,

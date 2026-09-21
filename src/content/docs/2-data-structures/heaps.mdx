@@ -26,7 +26,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 ## Intuition
 
 You have a stream of things and you repeatedly need **the smallest one so far**.
-Not all of them in order — just the smallest, over and over, while new things keep
+Not all of them in order - just the smallest, over and over, while new things keep
 arriving.
 
 Sorting the whole collection is overkill: you'd pay $O(n \log n)$ to learn the
@@ -47,7 +47,7 @@ only ever be at the root.
 
 ## Visual
 
-The second idea — and the one that catches people out — is that this tree is
+The second idea - and the one that catches people out - is that this tree is
 never actually built out of node objects and pointers. **A heap is a tree in your
 head and a flat array in memory.** Because the tree is always _complete_ (every
 level full except the last, which fills left to right), you can number the nodes
@@ -72,7 +72,7 @@ That "no pointers" property is not a micro-optimisation. It means a heap has zer
 per-element pointer overhead, and its elements sit contiguously in memory, so
 walking it is cache-friendly in a way a pointer-based tree never is. It is also
 why `heapq` in Python operates on an ordinary `list`, and why there is no `Heap`
-class to import — there is nothing to wrap.
+class to import - there is nothing to wrap.
 
 ## Mechanics
 
@@ -173,7 +173,7 @@ Note the shape of both operations: **append or remove at the end, then repair.**
 The end of the array is the only place you can add or remove an element while
 keeping the tree complete. Every heap operation is that same two-move pattern.
 
-In practice you use the standard library — but knowing what it is doing is what
+In practice you use the standard library - but knowing what it is doing is what
 lets you predict its behaviour:
 
 <Tabs syncKey="lang">
@@ -183,7 +183,7 @@ lets you predict its behaviour:
 import heapq
 
 heap = [9, 4, 7, 1, 8]
-heapq.heapify(heap)          # in place, O(n) — see the derivation below
+heapq.heapify(heap)          # in place, O(n) - see the derivation below
 heapq.heappush(heap, 3)
 heapq.heappop(heap)          # → 1
 heap[0]                      # peek: O(1), no mutation
@@ -198,13 +198,13 @@ heapq.heapify(max_heap)
 <TabItem label="TypeScript">
 
 ```ts
-// Node has no built-in heap — unlike Python, this is one you write or install.
+// Node has no built-in heap - unlike Python, this is one you write or install.
 // `@datastructures-js/priority-queue` is the usual choice; the implementation
 // above is about 25 lines if you would rather not add a dependency.
 
 // The critical difference from Python: JavaScript's Array#sort and comparison
 // operators coerce. `[10, 9] .sort()` gives [10, 9] because it compares strings.
-// A heap you write yourself with `<` on numbers has no such trap — but a heap
+// A heap you write yourself with `<` on numbers has no such trap - but a heap
 // storing mixed types silently does, because `'10' < 9` is false.
 ```
 
@@ -223,7 +223,7 @@ because each level $k$ holds $2^k$ nodes and the levels sum to $2^{h+1} - 1 \ge 
 
 Sift-up moves one level per iteration and does **one** comparison per level, so
 push costs at most $\lfloor \log_2 n \rfloor$ comparisons. Sift-down also moves
-one level per iteration but does **two** comparisons per level — it must find the
+one level per iteration but does **two** comparisons per level - it must find the
 smaller of two children before deciding. So pop costs about $2\log_2 n$.
 
 That factor of two is not academic. In a heap of a million elements, push does
@@ -242,7 +242,7 @@ The obvious way to heapify an array is to push each element in turn: $n$ pushes 
 $O(\log n)$ each, giving $O(n \log n)$. Floyd's method does better, and the
 argument is the nicest piece of analysis in elementary data structures.
 
-Start at the **last internal node** — index $\lfloor n/2 \rfloor - 1$ — and sift
+Start at the **last internal node** - index $\lfloor n/2 \rfloor - 1$ - and sift
 down, moving backwards to the root. The insight is that **the leaves are already
 valid heaps**, trivially, because they have no children to violate anything. And
 in a complete tree, _half the nodes are leaves._
@@ -270,7 +270,7 @@ weighted sum stays bounded no matter how tall the tree gets.
 
 You can check this yourself: press **build heap from 15 random values** in the
 widget above and read the comparison counter against the `n log₂n` figure beside
-it. The measured count lands well under it, every time — and the project's test
+it. The measured count lands well under it, every time - and the project's test
 suite asserts that bound so the animation can never quietly drift away from the
 proof.
 
@@ -278,7 +278,7 @@ proof.
   client:visible
   id="heaps-heapsort-bound"
   kind="complexity"
-  question="Build-heap is O(n). So what is heapsort's complexity — heapify the array, then pop n times?"
+  question="Build-heap is O(n). So what is heapsort's complexity - heapify the array, then pop n times?"
   options={[
     { label: 'O(n)' },
     { label: 'O(n log n)', correct: true },
@@ -293,7 +293,7 @@ proof.
       dominates the linear <code>n</code> from the build.
     </p>
     <p>
-      This is the general trap with a fast preprocessing step — the total is governed
+      This is the general trap with a fast preprocessing step - the total is governed
       by whichever term grows fastest, so speeding up a term that was never the
       bottleneck changes nothing asymptotically. Build-heap's O(n) matters when you
       heapify once and pop only a few times (the top-k case), which is precisely why{' '}
@@ -311,12 +311,12 @@ one is a mistake:
 the second-smallest element without removing the first. If you want to walk the
 data in order, sort it: one $O(n \log n)$ pass beats $n$ pops with worse constants
 and destroys nothing. A common anti-pattern is popping every element from a heap
-to "sort" it — that's heapsort with extra allocation, and in practice slower than
+to "sort" it - that's heapsort with extra allocation, and in practice slower than
 `sorted()` or `Array#sort`, which are heavily optimised and (in Python's case)
 exploit existing runs in the data.
 
 **You need to search for arbitrary values.** Finding an element that is not the
-minimum is $O(n)$ — a full scan, no better than an unsorted array, because the
+minimum is $O(n)$ - a full scan, no better than an unsorted array, because the
 invariant tells you nothing about where a given value sits. If lookups matter, you
 want a balanced BST or a hash table alongside.
 
@@ -328,7 +328,7 @@ million".
 
 **You need to delete or update an arbitrary element.** This is the big one, and it
 is the reason Dijkstra implementations are more subtle than they look. A bare heap
-has no way to find the element you want to change — it is $O(n)$ to locate, and
+has no way to find the element you want to change - it is $O(n)$ to locate, and
 `heapq` exposes no `decrease-key` at all. You need an index map from key to
 position, maintained through every swap, which is a genuinely different data
 structure. The common workaround is **lazy deletion**: push the updated entry as a
@@ -342,7 +342,7 @@ surprise rather than a correctness one.
 rather than a heap (it needs ordered traversal), but userspace job schedulers,
 task queues, and timer wheels overwhelmingly use heaps. Node's timer
 implementation keeps pending `setTimeout` callbacks in a min-heap keyed by expiry
-— which is why having thousands of timers is cheap to maintain but why a single
+- which is why having thousands of timers is cheap to maintain but why a single
 long-running synchronous callback delays all of them.
 
 **Dijkstra and A\*.** The frontier is a priority queue keyed by tentative
@@ -358,13 +358,13 @@ index provides the order.
 (Cassandra, RocksDB, LevelDB) all merge many sorted runs by keeping one heap entry
 per run.
 
-**Median maintenance.** Two heaps — a max-heap of the lower half, a min-heap of
-the upper — give a running median in $O(\log n)$ per element.
+**Median maintenance.** Two heaps - a max-heap of the lower half, a min-heap of
+the upper - give a running median in $O(\log n)$ per element.
 
 ## Failure modes
 
 **Mutating a key in place silently corrupts the heap.** This is the one that
-actually bites, because there is no error — just wrong answers, much later.
+actually bites, because there is no error - just wrong answers, much later.
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
@@ -398,7 +398,7 @@ pop(tasks); // → build, NOT test
 </Tabs>
 
 The heap's ordering was established at insertion time; nothing re-checks it. The
-symptom in production is not a crash but a **priority inversion** — a job that was
+symptom in production is not a crash but a **priority inversion** - a job that was
 escalated keeps running late, intermittently, in a way that does not reproduce
 locally because it depends on the array's exact shape. The fix is to treat heap
 entries as immutable: push a new entry and ignore the stale one when it surfaces.
@@ -422,7 +422,7 @@ heap rather than at your data. The fix is a monotonic tiebreaker:
 
 **An unbounded heap is a memory leak with good manners.** A heap fed by a stream
 faster than it is drained grows without limit, and unlike a leak from a forgotten
-listener, every byte in it is legitimately reachable — so it will not show up as a
+listener, every byte in it is legitimately reachable - so it will not show up as a
 leak in a heap dump, it shows up as steady growth to OOM. Any heap fed by an
 external source needs either a bound (drop or evict at size $k$) or backpressure.
 
@@ -431,7 +431,7 @@ JavaScript. The JavaScript version is worse: `undefined` propagates silently int
 arithmetic as `NaN`, and you discover the empty heap three functions later.
 
 **`heapq.heapify` mutates and returns `None`.** `heap = heapq.heapify(data)`
-leaves you with `None`. An easy mistake, and an immediate loud one — worth knowing
+leaves you with `None`. An easy mistake, and an immediate loud one - worth knowing
 only so you recognise it instantly.
 
 ## Practice problems
@@ -486,7 +486,7 @@ streamed points", only one of those is possible.
 
 ### 2. Merge k sorted lists
 
-Keep one heap entry per list — the list's current head — and repeatedly pop the
+Keep one heap entry per list - the list's current head - and repeatedly pop the
 global minimum, pushing that list's next element. $O(N \log k)$ for $N$ total
 elements, versus $O(N \log N)$ for concatenate-then-sort.
 
@@ -505,7 +505,7 @@ def merge_k(lists):
     return out
 ```
 
-The `i` in the tuple is not decoration — it is the tiebreaker from the failure
+The `i` in the tuple is not decoration - it is the tiebreaker from the failure
 mode above. Without it, two equal values force a comparison of the next tuple
 element and, for non-numeric payloads, a `TypeError`.
 
@@ -537,7 +537,7 @@ $O(1)$.
     </p>
     <p>
       So: push every element; whenever the heap exceeds k, pop the root, which
-      discards the smallest. Whatever survives is the top k. The rule generalises —{' '}
+      discards the smallest. Whatever survives is the top k. The rule generalises -{' '}
       <em>the heap points at the thing you throw away.</em>
     </p>
   </Fragment>
@@ -547,10 +547,10 @@ $O(1)$.
 
 **"What is a heap?"**
 
-> A complete binary tree where every parent is ordered against its children — for
+> A complete binary tree where every parent is ordered against its children - for
 > a min-heap, parent ≤ children. It's stored as a flat array rather than with
 > pointers, using index arithmetic: children of `i` live at `2i+1` and `2i+2`. The
-> invariant is deliberately weak — it says nothing about siblings — which is
+> invariant is deliberately weak - it says nothing about siblings - which is
 > exactly why it's cheap to restore after a change, and it's still strong enough
 > to put the minimum at index 0.
 
@@ -559,14 +559,14 @@ $O(1)$.
 > When I need repeated access to the extreme of a changing collection. Top-k over
 > a stream is the case I've used most: a bounded heap of size k gives O(n log k)
 > time in O(k) memory, so it works on data that won't fit in memory at all. The
-> other is any priority queue — a scheduler, or Dijkstra's frontier.
+> other is any priority queue - a scheduler, or Dijkstra's frontier.
 
 **The caveat that signals production experience:**
 
 > The thing I'd flag is that a heap has no efficient decrease-key. Once an element
 > is in there you can't find or update it in better than O(n), and `heapq` doesn't
-> expose one at all. So for Dijkstra you either maintain an index map alongside —
-> which is a real amount of bookkeeping through every swap — or you use lazy
+> expose one at all. So for Dijkstra you either maintain an index map alongside -
+> which is a real amount of bookkeeping through every swap - or you use lazy
 > deletion and push a duplicate entry, discarding stale ones as they surface.
 > Lazy deletion is usually the right call, but it means the heap can hold O(E)
 > entries instead of O(V), and that's a memory surprise rather than a correctness
@@ -575,7 +575,7 @@ $O(1)$.
 **If they push on complexity:**
 
 > Push is O(log n) with one comparison per level; pop is also O(log n) but with
-> two per level, since sift-down has to pick the smaller child first — so pop is
+> two per level, since sift-down has to pick the smaller child first - so pop is
 > roughly twice the work for the same asymptotic class. And building a heap from
 > an existing array is O(n), not O(n log n): you sift down from the last internal
 > node backwards, and because half the nodes are leaves that cost nothing, the sum

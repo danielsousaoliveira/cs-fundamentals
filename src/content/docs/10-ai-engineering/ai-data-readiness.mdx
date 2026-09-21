@@ -1,7 +1,7 @@
 ---
 title: AI data readiness
 description: >-
-  Assessing whether a corpus can support an AI feature at all — the audit to run
+  Assessing whether a corpus can support an AI feature at all - the audit to run
   before the project, and the findings that should stop it.
 sidebar:
   order: 19
@@ -45,7 +45,7 @@ Four properties, and a project needs all four:
 
 **Existence is the one that kills projects**, and it is the one nobody checks.
 "Answer support questions from our documentation" assumes the documentation
-answers them. Frequently it does not — the real answers live in Slack threads and
+answers them. Frequently it does not - the real answers live in Slack threads and
 senior engineers' heads, and the wiki describes an older version of the product.
 
 ## Mechanics
@@ -56,7 +56,7 @@ Run these in sequence and stop at the first fatal finding.
 
 **1. Does the answer exist?**
 
-Take 50 real user questions from support tickets or search logs — real ones, not
+Take 50 real user questions from support tickets or search logs - real ones, not
 imagined. For each, **find the answer in the corpus by hand.**
 
 This is a day of work and it is the whole audit in miniature. Record for each:
@@ -64,7 +64,7 @@ found / not found / found but outdated / found but contradicted.
 
 If fewer than 60% are cleanly findable by a human with unlimited time and search,
 **no retrieval system will do better.** That is not a tuning problem; it is a
-content problem, and it is the finding that should stop the project — or redirect
+content problem, and it is the finding that should stop the project - or redirect
 it to writing documentation, which is a legitimate and much cheaper outcome.
 
 **2. Is it current?**
@@ -149,7 +149,7 @@ Not a formality, and it is the finding that arrives latest and hurts most:
 
 ```mermaid
 flowchart TB
-  A["1 · Does the answer exist?<br/>50 questions, found by hand"] -->|"< 60%"| S[stop — content problem]
+  A["1 · Does the answer exist?<br/>50 questions, found by hand"] -->|"< 60%"| S[stop - content problem]
   A -->|"≥ 60%"| B["2 · Is it current?<br/>age + duplicate versions"]
   B -->|"heavy staleness"| C1[fix lifecycle first]
   B -->|ok| C["3 · Is it extractable?<br/>per source, per type"]
@@ -189,7 +189,7 @@ A common and expensive misconception is that more data is better. For retrieval,
 
 **Two to three days of engineering, plus a legal conversation started early.**
 Against the cost of a three-month build that cannot work, this is the highest
-return on effort available in an AI project — and the reason it gets skipped is
+return on effort available in an AI project - and the reason it gets skipped is
 that it produces no demo.
 
 ### The remediation is usually the real project
@@ -199,7 +199,7 @@ Audits typically conclude that the AI feature is downstream of unglamorous work:
 - Documenting what is currently tribal knowledge.
 - Deleting or archiving superseded content.
 - Fixing extraction for one important source.
-- Adding structure — headings, metadata, ownership — to existing documents.
+- Adding structure - headings, metadata, ownership - to existing documents.
 
 **This is a feature, not a disappointment.** That work has standalone value: a
 searchable, current, well-structured corpus improves human search, onboarding and
@@ -209,7 +209,7 @@ funded.
 <aside class="dated-figure">
 
 **Not verified from here.** The 60% threshold is a working heuristic, not a
-measured constant — the right cut depends on how much of the question volume the
+measured constant - the right cut depends on how much of the question volume the
 feature must handle. The point is to set a threshold in advance and hold to it,
 rather than to adopt this number.
 
@@ -220,9 +220,9 @@ rather than to adopt this number.
 Readiness is not a one-off. Corpora decay: documents age, ownership lapses,
 formats change. Budget for:
 
-- **Index freshness monitoring** — max age of an unindexed published document.
-- **Extraction failure rate per source** — a format change shows up here first.
-- **Periodic re-audit** — re-run the 50 questions quarterly. It is a day, and it
+- **Index freshness monitoring** - max age of an unindexed published document.
+- **Extraction failure rate per source** - a format change shows up here first.
+- **Periodic re-audit** - re-run the 50 questions quarterly. It is a day, and it
   catches decay before users do.
 
 ## When NOT to use it
@@ -244,15 +244,15 @@ be assessed. "Answer tier-1 support questions from the help centre" can.
 
 ## Real-world usage
 
-- **Pre-project gate** before funding an AI initiative — the two-day version,
+- **Pre-project gate** before funding an AI initiative - the two-day version,
   with a written go/no-go.
-- **Vendor evaluation** — the same audit tells you whether *any* vendor can
+- **Vendor evaluation** - the same audit tells you whether *any* vendor can
   succeed on your corpus, which reframes procurement conversations usefully.
-- **Data-contract definition** — the audit surfaces which sources need ownership,
+- **Data-contract definition** - the audit surfaces which sources need ownership,
   freshness SLAs and schema stability.
-- **Migration planning** — assessing whether a legacy document store can support
+- **Migration planning** - assessing whether a legacy document store can support
   retrieval before committing to move it.
-- **Compliance review** — establishing the lawful basis and deletion path before
+- **Compliance review** - establishing the lawful basis and deletion path before
   vectors exist, rather than after.
 - **Quarterly re-audit** as corpus decay monitoring.
 
@@ -275,7 +275,7 @@ documentation, and it is cheaper than the system that cannot answer without it.
 **Cause:** no content lifecycle. Nothing is ever deleted.
 
 **Fix:** `status` and `effective_to` metadata, filtered at query time. And
-delete rather than archive-in-place where you can — a filter is a control that a
+delete rather than archive-in-place where you can - a filter is a control that a
 code path can forget.
 
 ### One source silently contributes nothing
@@ -311,7 +311,7 @@ traceable link to its source row.
 **Symptom:** the audit was green; the feature underperforms.
 
 **Cause:** the audit measured the corpus and not the *questions*. Content
-existed, and it was written for a different audience — internal engineering notes
+existed, and it was written for a different audience - internal engineering notes
 answering customer questions.
 
 **Fix:** the 50 questions must be real user questions, from tickets or search
@@ -333,19 +333,19 @@ found but outdated, 14 found across multiple documents that partly contradict,
 Only 36% are cleanly answerable, which is well below any sensible threshold. But
 the breakdown matters more than the headline:
 
-- **9 outdated** — a *lifecycle* problem. The content exists; superseded versions
+- **9 outdated** - a *lifecycle* problem. The content exists; superseded versions
   were never removed. Cheap to fix and the fix has standalone value.
-- **14 contradicted** — the most dangerous category. Retrieval will return
+- **14 contradicted** - the most dangerous category. Retrieval will return
   conflicting documents and the model will confidently pick one. This is worse
   than not answering.
-- **9 not found** — a genuine content gap requiring someone to write things down.
+- **9 not found** - a genuine content gap requiring someone to write things down.
 
 **What I would propose instead of building:**
 
 1. **Six weeks of content work**, sized directly by the audit: retire the 9
    outdated, reconcile the 14 contradictions, write the 9 missing. That is a
-   defined, finite backlog — which is exactly what audits are for.
-2. **Add a lifecycle** — owner, `effective_to`, review date — so it does not
+   defined, finite backlog - which is exactly what audits are for.
+2. **Add a lifecycle** - owner, `effective_to`, review date - so it does not
    decay back.
 3. **Re-run the 50 questions.** If clean findability exceeds 80%, build.
 
@@ -354,7 +354,7 @@ onboarding and support better immediately, regardless of whether the AI feature
 ever ships. That framing usually gets it funded where "the AI project is blocked"
 does not.
 
-**The alternative worth considering:** ship a **search-only** feature now —
+**The alternative worth considering:** ship a **search-only** feature now -
 retrieval with citations and no generation. It is honest about the corpus's
 state, it is useful, and its usage logs tell you which gaps matter most.
 
@@ -368,7 +368,7 @@ images. What do you measure and what would you expect?
 <details>
 <summary>Solution</summary>
 
-**Measure per type, never in aggregate** — the aggregate is what hides the
+**Measure per type, never in aggregate** - the aggregate is what hides the
 failure.
 
 Per source and file type, report: empty-output rate, median word count, table
@@ -376,18 +376,18 @@ detection rate, and a manual spot-check of 20 documents each.
 
 **Expectations, and the actions each implies:**
 
-- **HTML (60%)** — should extract near-perfectly. The risk is not loss but
+- **HTML (60%)** - should extract near-perfectly. The risk is not loss but
   **boilerplate**: navigation, headers, footers and cookie banners on every page.
   Check whether the first 200 characters are identical across documents. If so,
-  strip them — repeated boilerplate makes every chunk look alike and ranking
+  strip them - repeated boilerplate makes every chunk look alike and ranking
   becomes arbitrary. Often the single highest-impact fix in a corpus like this.
-- **PDF (25%)** — the variable one. Text-layer PDFs extract well; multi-column
+- **PDF (25%)** - the variable one. Text-layer PDFs extract well; multi-column
   layouts interleave into nonsense; tables flatten into unusable prose. Expect
   the report to split PDFs into two very different populations.
-- **Word (10%)** — usually clean, but check tracked changes and comments, which
+- **Word (10%)** - usually clean, but check tracked changes and comments, which
   can be extracted as if they were body text and inject deleted content into your
   index.
-- **Scanned images (5%)** — **expect 100% loss**, extracting to empty strings.
+- **Scanned images (5%)** - **expect 100% loss**, extracting to empty strings.
   Two thousand documents contributing nothing, and invisible in a file count.
 
 **The decision that follows:** is that 5% important? If it is the contracts, OCR
@@ -413,19 +413,19 @@ that feels like it is not.
 
 **What must happen:**
 
-1. **Source rows** — delete the tickets.
-2. **Chunks** — delete every chunk derived from them. Requires a stored
+1. **Source rows** - delete the tickets.
+2. **Chunks** - delete every chunk derived from them. Requires a stored
    `chunk → source_document → customer` link. If chunk metadata records only
    `document_id` with no path back to a customer, you cannot find them.
-3. **Vectors** — delete alongside the chunks. Same operation if they share
+3. **Vectors** - delete alongside the chunks. Same operation if they share
    storage; a separate one if the vector database is external, and that is where
    it gets missed.
-4. **Caches** — exact and semantic caches may hold answers containing the data.
+4. **Caches** - exact and semantic caches may hold answers containing the data.
    Purge by tenant, or accept a TTL and document the window.
-5. **Logs** — this is the one that surprises teams. If you log the assembled
+5. **Logs** - this is the one that surprises teams. If you log the assembled
    prompt (which you should), those logs contain the customer's data and are in
    scope.
-6. **Evaluation sets** — if a real ticket became a test case, it is a copy.
+6. **Evaluation sets** - if a real ticket became a test case, it is a copy.
 
 **What breaks without planning:**
 
@@ -442,7 +442,7 @@ that feels like it is not.
 
 **The design rule:** treat the vector index and the prompt logs as holding the
 same data classification as the source, because they do. Embeddings are not
-anonymised — inversion reconstructs substantial parts of the source text.
+anonymised - inversion reconstructs substantial parts of the source text.
 
 **The test worth writing:** delete a synthetic customer, then assert their data
 is absent from source, chunks, vectors, caches and logs. Run it in CI. Discovering
@@ -465,12 +465,12 @@ the gap during a real request is the wrong time.
   <Fragment slot="explanation">
     <p>
       It establishes the ceiling. If a human with unlimited time and full search
-      cannot find the answer, no retrieval system will — so this one day of work
+      cannot find the answer, no retrieval system will - so this one day of work
       tells you whether the project is possible at all, before anyone builds
       anything.
     </p>
     <p>
-      The questions must be <strong>real</strong> — from tickets or search logs.
+      The questions must be <strong>real</strong> - from tickets or search logs.
       Imagined questions test the corpus against itself and pass audits that
       production then fails, because the content existed but was written for a
       different audience.
@@ -498,7 +498,7 @@ the gap during a real request is the wrong time.
 >
   <Fragment slot="explanation">
     <p>
-      A missing answer produces a refusal — visible, reportable, and correct
+      A missing answer produces a refusal - visible, reportable, and correct
       behaviour. A superseded answer produces a confident, well-cited, wrong
       answer, and nothing in the pipeline can tell the difference: the document
       was retrieved, it was real, and it was cited accurately.
@@ -513,7 +513,7 @@ the gap during a real request is the wrong time.
     <p>
       The distractors describe real but minor effects. Index size is cheap;
       embeddings are per-document and do not dilute one another; and recall
-      measurement is unaffected — you can still check whether the right chunk was
+      measurement is unaffected - you can still check whether the right chunk was
       returned. The problem is that the <em>wrong</em> chunk was also returned and
       looked identical.
     </p>
@@ -547,7 +547,7 @@ the gap during a real request is the wrong time.
 > because retrieval returns both and the model confidently picks one. Genuinely
 > missing content means someone has to write it down.
 >
-> That gives a finite, sized piece of work — and it has standalone value: a
+> That gives a finite, sized piece of work - and it has standalone value: a
 > current, well-structured corpus improves human search and onboarding whether or
 > not the AI feature ships. That framing usually gets it funded.
 >
@@ -560,7 +560,7 @@ the gap during a real request is the wrong time.
 > Three things. Permission, because legal review is the longest-lead item and
 > gets scheduled after the build rather than in week one.
 >
-> Extraction reported in aggregate — "92% extractable" can hide "0% of the
+> Extraction reported in aggregate - "92% extractable" can hide "0% of the
 > scanned contracts", and a whole source contributing nothing is invisible in a
 > document count.
 >
@@ -572,7 +572,7 @@ the gap during a real request is the wrong time.
 **The caveats worth voicing:**
 
 - The fifty questions must be real. Imagined ones test the corpus against itself.
-- Superseded content is worse than missing content — it answers confidently.
+- Superseded content is worse than missing content - it answers confidently.
 - Structure and hygiene beat volume; 500 current articles beat 50,000 stale ones.
 - Report extraction per source and per file type, never in aggregate.
 - Re-audit quarterly. Corpora decay, and it is a day.

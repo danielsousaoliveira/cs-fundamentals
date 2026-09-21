@@ -1,7 +1,7 @@
 ---
 title: Prompting
 description: >-
-  What actually moves the needle — structure, examples, and output contracts —
+  What actually moves the needle - structure, examples, and output contracts -
   and how to tell a prompt problem from a retrieval problem before spending a
   week on the wrong one.
 sidebar:
@@ -25,7 +25,7 @@ A prompt is not an instruction to an assistant. It is **a context that makes the
 output you want the most likely continuation.**
 
 That reframing explains why the techniques that work, work. Few-shot examples do
-not "teach" the model in any lasting sense — they establish a pattern that the
+not "teach" the model in any lasting sense - they establish a pattern that the
 next tokens continue. A worked example beats a described rule because
 demonstration constrains the continuation more tightly than description. Asking
 for JSON after showing three JSON responses is nearly free; asking for JSON after
@@ -50,7 +50,7 @@ retrieval was broken.
 ### Structure so the boundaries survive tokenisation
 
 The model sees one flat token sequence. Delimiters that clearly separate your
-instructions from supplied data help it tell them apart — and help you debug
+instructions from supplied data help it tell them apart - and help you debug
 what was actually sent.
 
 ```text
@@ -80,7 +80,7 @@ obvious ones. Three examples of clearly-billing tickets teach almost nothing.
 ### Structured output beats parsing prose
 
 Prose responses have to be parsed, and parsing is where reliability goes to die.
-Most providers support a schema directly — use it.
+Most providers support a schema directly - use it.
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
@@ -133,18 +133,18 @@ it goes first.
 
 Asking for intermediate steps genuinely improves multi-step reasoning, because
 the intermediate tokens become context the later tokens condition on. The model
-is not "thinking harder" — it is giving itself more relevant context.
+is not "thinking harder" - it is giving itself more relevant context.
 
 This means it helps exactly where the task decomposes into steps, and does
 nothing for recall or classification:
 
 | Task | Chain of thought |
 |---|---|
-| Multi-step arithmetic | Helps — though a calculator helps more |
+| Multi-step arithmetic | Helps - though a calculator helps more |
 | Logical deduction | Helps |
 | Comparing options against criteria | Helps |
 | Single-label classification | No effect, costs tokens |
-| Factual lookup | No effect — it cannot reason its way to a fact it lacks |
+| Factual lookup | No effect - it cannot reason its way to a fact it lacks |
 
 It costs output tokens, which are the expensive ones and the ones that drive
 latency. On a high-volume classifier, reasoning that does not change the answer
@@ -188,7 +188,7 @@ code matches, so the refusal gets treated as an answer.
 ### Prompt length is a per-request tax
 
 Every token in the prompt is paid on every call. A system prompt that grows to
-2,000 tokens across a few sprints — as they do, one edge case at a time — costs
+2,000 tokens across a few sprints - as they do, one edge case at a time - costs
 that on every request forever.
 
 Two things make this less painful than it sounds:
@@ -205,12 +205,12 @@ The curve almost always flattens by three.
 
 Chain-of-thought reasoning can easily triple output length, and output length
 sets latency. On an interactive path, "think step by step" is a real latency
-decision — worth it when it changes the answer, expensive when it does not.
+decision - worth it when it changes the answer, expensive when it does not.
 
 <aside class="dated-figure">
 
 **Not verified from here.** Whether a given model benefits from explicit
-chain-of-thought prompting varies by model and has changed substantially — some
+chain-of-thought prompting varies by model and has changed substantially - some
 current models reason internally and prompting for steps adds cost without
 benefit. Test on your own task rather than applying a rule of thumb from a paper
 or from this page.
@@ -221,7 +221,7 @@ or from this page.
 
 **When the problem is missing information.** No prompt recovers a fact that is
 not in the context or the weights. If the answer requires last week's deploy
-log, prompt engineering is the wrong project — retrieval is.
+log, prompt engineering is the wrong project - retrieval is.
 
 **When a schema would do it.** "Please return valid JSON" is a request the model
 may decline. A structured-output API is a constraint it cannot. Never solve with
@@ -235,7 +235,7 @@ worse overall. See
 
 **When you are on the fourth rewrite.** Diminishing returns arrive fast. If
 three serious attempts have not worked, the problem is almost certainly the
-task decomposition, the context, or the model — not the words.
+task decomposition, the context, or the model - not the words.
 
 **When a deterministic program is correct.** Extracting an ISO date, validating
 an email, summing a column. Prompting for these is slower, costlier, and less
@@ -243,25 +243,25 @@ reliable than the ten lines of code.
 
 ## Real-world usage
 
-- **Classification and routing** — few-shot with boundary cases, constrained
+- **Classification and routing** - few-shot with boundary cases, constrained
   enum output, low temperature. The workhorse.
-- **Extraction** — schema-constrained output with required source spans, so the
+- **Extraction** - schema-constrained output with required source spans, so the
   result is verifiable rather than merely well-formed.
-- **RAG answering** — instructions to use only the context, cite document ids,
+- **RAG answering** - instructions to use only the context, cite document ids,
   and emit an exact refusal string when the answer is absent.
-- **Code generation** — style and constraints in the system prompt, the relevant
+- **Code generation** - style and constraints in the system prompt, the relevant
   interfaces in context, tests as the verifier.
-- **Agent step selection** — clear tool descriptions matter far more than the
+- **Agent step selection** - clear tool descriptions matter far more than the
   surrounding prose; the model is choosing between schemas, so the schemas are
   the prompt.
-- **Evaluation rubrics** — an LLM judge needs a rubric with explicit criteria and
+- **Evaluation rubrics** - an LLM judge needs a rubric with explicit criteria and
   examples of each score, or it grades on fluency.
 
 ## Failure modes
 
 ### Format drift
 
-**Symptom:** JSON parsing succeeds for weeks, then fails — usually on unusual
+**Symptom:** JSON parsing succeeds for weeks, then fails - usually on unusual
 input, often wrapped in a markdown code fence or preceded by "Sure, here is the
 JSON:".
 
@@ -269,7 +269,7 @@ JSON:".
 guarantee. Unusual inputs push the continuation somewhere else.
 
 **Fix:** structured-output APIs. Failing that, validate and retry once with the
-validation error included — and count the retries, because a rising retry rate
+validation error included - and count the retries, because a rising retry rate
 is your early warning that something upstream changed.
 
 ### Instruction burial
@@ -277,7 +277,7 @@ is your early warning that something upstream changed.
 **Symptom:** an instruction added to the middle of a long system prompt is
 ignored.
 
-**Cause:** lost in the middle — attention is weakest there — compounded by having
+**Cause:** lost in the middle - attention is weakest there - compounded by having
 too many instructions competing.
 
 **Fix:** the critical constraints go at the beginning or the end. If the system
@@ -285,7 +285,7 @@ prompt has grown to twenty rules, that is the actual finding: split the task.
 
 ### Examples that teach the wrong thing
 
-**Symptom:** the model copies a superficial pattern from the examples — all
+**Symptom:** the model copies a superficial pattern from the examples - all
 outputs are the same length as the examples, or reuse their vocabulary.
 
 **Cause:** the examples were too similar to one another, so the pattern the model
@@ -315,7 +315,7 @@ behaviour.
 not an enforced one. There is no parameterised query for prompts.
 
 **Fix:** delimit data structurally, state that content inside the delimiters is
-data, and — critically — do not rely on that alone. See
+data, and - critically - do not rely on that alone. See
 [guardrails](/cs-fundamentals/10-ai-engineering/guardrails/).
 
 ### Overfitting to the last failure
@@ -347,7 +347,7 @@ gets applied as a keyword rule.
 **What should have happened, in order:**
 
 1. **Add the failing case to a regression set** before changing anything.
-2. **Measure the current baseline** on that set — otherwise "84%" is not
+2. **Measure the current baseline** on that set - otherwise "84%" is not
    comparable to anything.
 3. Fix it with an **example, not a rule.** Add the misrouted ticket as a few-shot
    example with the correct label. Examples constrain by demonstration and
@@ -390,7 +390,7 @@ Now normalisation is the runtime's job and drift is a validation error rather
 than dirty data.
 
 **`reasoning` is last, so it cannot inform the answer.** Fields are generated in
-order — the model wrote `amount` first and then wrote a justification for it. To
+order - the model wrote `amount` first and then wrote a justification for it. To
 make reasoning actually do work, it goes first:
 
 ```python
@@ -421,7 +421,7 @@ prompt four times over two weeks with no improvement. What would you do first?
 <summary>Solution</summary>
 
 Stop rewriting and find out whether this is a prompt problem at all. Vague
-hedging answers are the classic signature of **retrieval failure** — the model
+hedging answers are the classic signature of **retrieval failure** - the model
 is hedging because it genuinely was not given the answer, which is the correct
 behaviour.
 
@@ -430,7 +430,7 @@ behaviour.
 1. Build 30-50 questions with known correct source chunks.
 2. Measure **recall@k**: is the right chunk in what retrieval returned? Ignore
    generation entirely.
-3. If recall is poor — the likely outcome — the fix is chunking, embedding,
+3. If recall is poor - the likely outcome - the fix is chunking, embedding,
    hybrid search or reranking. No prompt reaches a document that was never
    retrieved.
 4. Only if recall is good, hand-feed the correct chunks and check whether the
@@ -439,7 +439,7 @@ behaviour.
 
 **The lesson, which is the most expensive one in this field:** "bad answer" has
 two causes with completely different fixes, and they are indistinguishable from
-the output. Two weeks were spent on the wrong half because nobody split them —
+the output. Two weeks were spent on the wrong half because nobody split them -
 and the split is an afternoon's work.
 
 </details>
@@ -450,7 +450,7 @@ and the split is an afternoon's work.
   kind="concept"
   question="A schema has fields in the order: answer, then reasoning. What is the effect of the reasoning field?"
   options={[
-    { label: 'Almost none on quality — it is generated after the answer, so it rationalises a decision already made', correct: true },
+    { label: 'Almost none on quality - it is generated after the answer, so it rationalises a decision already made', correct: true },
     { label: 'It improves accuracy, since the model must justify every answer it gives' },
     { label: 'It improves accuracy only when temperature is above 0' },
     { label: 'It has no effect either way, because field order in a schema is not preserved' },
@@ -459,7 +459,7 @@ and the split is an afternoon's work.
   <Fragment slot="explanation">
     <p>
       Tokens are generated in sequence, each conditioning on what came before. A
-      reasoning field written <em>after</em> the answer cannot influence it — the
+      reasoning field written <em>after</em> the answer cannot influence it - the
       answer tokens already exist. What you get is a post-hoc justification, and
       it will confidently justify wrong answers as readily as right ones.
     </p>
@@ -472,7 +472,7 @@ and the split is an afternoon's work.
     <p>
       The last option is the tempting distractor because JSON objects are
       unordered <em>as data</em>. But generation is sequential, so the order you
-      declare is the order the model writes — which makes field order a real
+      declare is the order the model writes - which makes field order a real
       design decision rather than a formatting one.
     </p>
   </Fragment>
@@ -484,7 +484,7 @@ and the split is an afternoon's work.
   kind="concept"
   question="A RAG assistant gives vague, hedging answers. What should you check before rewriting the prompt?"
   options={[
-    { label: 'Whether retrieval is returning the correct chunks at all — measure recall@k against known-correct sources', correct: true },
+    { label: 'Whether retrieval is returning the correct chunks at all - measure recall@k against known-correct sources', correct: true },
     { label: 'Whether temperature is too high, causing inconsistent phrasing' },
     { label: 'Whether the system prompt is long enough to cover the edge cases' },
     { label: 'Whether the model is large enough for the task' },
@@ -494,7 +494,7 @@ and the split is an afternoon's work.
     <p>
       Hedging is what a well-behaved model does when it was not given the
       answer. So the symptom points at retrieval first, and "bad answer" has two
-      causes — bad retrieval and bad generation — that are indistinguishable from
+      causes - bad retrieval and bad generation - that are indistinguishable from
       the output alone.
     </p>
     <p>
@@ -506,7 +506,7 @@ and the split is an afternoon's work.
     <p>
       The distractors are all real levers that do not produce this symptom.
       Temperature affects phrasing variety, not confidence. A longer system
-      prompt more often hurts — instructions get buried. And a larger model
+      prompt more often hurts - instructions get buried. And a larger model
       still cannot cite what it was never shown.
     </p>
   </Fragment>
@@ -518,7 +518,7 @@ and the split is an afternoon's work.
 
 > By trying not to do it for as long as possible, because it is usually the
 > lowest-leverage thing available. Most "bad prompt" problems are missing-context
-> problems — no wording recovers a fact that was never supplied — so I check
+> problems - no wording recovers a fact that was never supplied - so I check
 > what is actually in the context first.
 >
 > When it is genuinely a prompting problem, the order that works for me is:
@@ -528,24 +528,24 @@ and the split is an afternoon's work.
 
 **"How do you get reliable structured output?"**
 
-> Use the provider's structured-output API rather than asking in prose — a schema
+> Use the provider's structured-output API rather than asking in prose - a schema
 > is a constraint, a request is a tendency, and the tendency fails on exactly the
 > unusual inputs you care about.
 >
 > Two details I would mention. Use enums rather than strings wherever the value
 > set is closed; it makes the invalid states unrepresentable instead of leaving
 > you to normalise `USD` and `usd` and `$` downstream. And field order matters,
-> because generation is sequential — a reasoning field after the answer is a
+> because generation is sequential - a reasoning field after the answer is a
 > rationalisation, not reasoning. If you want it to do work, it goes first.
 
 **"When does chain-of-thought help?"**
 
-> When the task actually decomposes into steps — multi-step arithmetic, logical
+> When the task actually decomposes into steps - multi-step arithmetic, logical
 > deduction, weighing options against criteria. The mechanism is that the
 > intermediate tokens become context the later tokens condition on, so it helps
 > where later steps depend on earlier ones.
 >
-> It does nothing for classification or factual recall, and it is not free —
+> It does nothing for classification or factual recall, and it is not free -
 > output tokens are the expensive ones and they set latency. On a high-volume
 > classifier, reasoning that does not change the answer is pure cost. And I would
 > test it rather than assume: some current models reason internally and
@@ -559,5 +559,5 @@ and the split is an afternoon's work.
   otherwise each fix quietly breaks something else.
 - Give the model an exact refusal string, not "say you are unsure".
 - The instruction/data boundary is a learned convention, not an enforced one.
-- Diminishing returns arrive fast — by the fourth rewrite, the problem is the
+- Diminishing returns arrive fast - by the fourth rewrite, the problem is the
   decomposition or the context, not the words.

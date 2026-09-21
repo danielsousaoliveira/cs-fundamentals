@@ -2,7 +2,7 @@
 title: Binary Trees
 description: >-
   O(log n) lookup that silently becomes O(n) the moment your data arrives sorted
-  — and the four traversals that differ by one line each.
+  - and the four traversals that differ by one line each.
 sidebar:
   order: 5
 difficulty: core
@@ -24,7 +24,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 ## Intuition
 
-A sorted array gives you $O(\log n)$ search by binary search — but $O(n)$ insertion,
+A sorted array gives you $O(\log n)$ search by binary search - but $O(n)$ insertion,
 because everything after the insertion point has to shift. A linked list gives you
 $O(1)$ insertion but $O(n)$ search, because there is nothing to bisect.
 
@@ -34,14 +34,14 @@ comparison you would have made anyway:
 > Everything in the left subtree is smaller. Everything in the right subtree is
 > larger.
 
-Now searching is the same halving argument as binary search — at each node you
-discard one entire subtree — except that the "array" is made of pointers, so
+Now searching is the same halving argument as binary search - at each node you
+discard one entire subtree - except that the "array" is made of pointers, so
 inserting does not shift anything.
 
 That is the pitch. The catch, and the thing this page spends the most time on, is
 that **the halving only happens if the tree is balanced**, and a plain BST has no
 mechanism whatsoever to keep it that way. Feed it sorted data and it degenerates
-into a linked list with extra pointers — same code, same invariant, none of the
+into a linked list with extra pointers - same code, same invariant, none of the
 performance.
 
 ## Visual
@@ -51,7 +51,7 @@ only the moment a node is emitted changes.
 
 <TraversalStepper client:visible />
 
-Then tick **insert sorted values**. Same insertion code, same BST invariant — and
+Then tick **insert sorted values**. Same insertion code, same BST invariant - and
 a structure that is now a linked list. Every operation the tree existed to make
 fast is $O(n)$, and the recursion is `n` frames deep instead of $\log n$.
 
@@ -127,7 +127,7 @@ function height(node: Node | null): number {
 </Tabs>
 
 The `node.left = insert(node.left, value)` pattern is worth pausing on. It looks
-wasteful — reassigning a pointer that usually does not change — but it means the
+wasteful - reassigning a pointer that usually does not change - but it means the
 same function handles "insert into an empty subtree" and "insert deeper" without a
 separate parent-tracking branch. Returning the (possibly new) subtree root is the
 idiom that makes tree code short, and it is the same shape every balanced-tree
@@ -136,14 +136,14 @@ rotation uses.
 ### The four traversals
 
 All four are $O(n)$ and visit the same nodes over the same edges. What changes is
-*when* a node is emitted relative to its children — and each ordering exists
+*when* a node is emitted relative to its children - and each ordering exists
 because something needs exactly that guarantee.
 
 | Order | Emits | Gives you |
 |---|---|---|
 | **In-order** | left, **node**, right | Sorted output, for a BST |
-| **Pre-order** | **node**, left, right | Parent before children — serialising, copying |
-| **Post-order** | left, right, **node** | Children before parent — freeing, deleting, evaluating expressions |
+| **Pre-order** | **node**, left, right | Parent before children - serialising, copying |
+| **Post-order** | left, right, **node** | Children before parent - freeing, deleting, evaluating expressions |
 | **Level-order** | by depth | Shortest path in edges; printing by row |
 
 **In-order sorts because of the invariant, not by accident.** Everything smaller is
@@ -174,14 +174,14 @@ no cycles, so it needs no visited set.
   <Fragment slot="explanation">
     <p>
       <strong>Sorted order.</strong> That is not a coincidence about these
-      numbers — it follows directly from the invariant. In-order emits the whole
+      numbers - it follows directly from the invariant. In-order emits the whole
       left subtree (everything smaller) before the node, and the whole right
       subtree (everything larger) after it.
     </p>
     <p>
       The other options are pre-order (50 30 20 40 70), post-order (20 40 30 70
       50), and level-order (50 30 70 20 40). Notice level-order happens to match
-      the insertion sequence here — a coincidence of this particular tree, not a
+      the insertion sequence here - a coincidence of this particular tree, not a
       property to rely on.
     </p>
   </Fragment>
@@ -213,7 +213,7 @@ h \ge \log_2(n+1)
 $$
 
 So the *best possible* height is $\lceil \log_2(n+1) \rceil$, and a balanced tree
-achieves it. That is where $O(\log n)$ comes from — **it is a property of the
+achieves it. That is where $O(\log n)$ comes from - **it is a property of the
 height, and only a property of the operations when the height is logarithmic.**
 
 A **degenerate** tree has $h = n$. Inserting $1, 2, 3, \dots, n$ in order gives
@@ -237,14 +237,14 @@ they are what Java's `TreeMap`, C++'s `std::map`, and the Linux CFS scheduler
 actually use.
 
 **B-trees** widen the node instead of deepening the tree: hundreds of keys per node,
-sized to a disk page. Height 3–4 for millions of rows means 3–4 disk reads, and
+sized to a disk page. Height 3-4 for millions of rows means 3-4 disk reads, and
 this is what a database index is.
 
 ## When NOT to use it
 
 **When you do not need ordering.** If you only ever ask "is this key present" and
 "give me its value", a hash table gives $O(1)$ against the tree's $O(\log n)$. Use
-a tree when you need sorted iteration, range queries, or predecessor/successor —
+a tree when you need sorted iteration, range queries, or predecessor/successor -
 and use a hash table otherwise.
 
 **When you cannot control insertion order, and are not using a balanced variant.**
@@ -253,7 +253,7 @@ you `TreeMap`/`std::map`, that is a red-black tree and you are fine; if you wrot
 `class Node` yourself, you are not.
 
 **When the data lives on disk.** A binary tree's $\log_2 n$ is 20 levels for a
-million rows — 20 random disk seeks. A B-tree with 200 keys per node is $\log_{200}
+million rows - 20 random disk seeks. A B-tree with 200 keys per node is $\log_{200}
 n$, about 3 levels. Same asymptotic class, and the base of the logarithm is the
 entire difference between a fast index and an unusable one.
 
@@ -262,7 +262,7 @@ a degenerate tree of 10,000 nodes blows Python's default recursion limit. The
 iterative `search` above has no such problem, which is why it is written that way.
 
 **When you need the k-th element by position.** A plain BST cannot do it in
-$O(\log n)$ — it has no idea how many nodes are in each subtree. An
+$O(\log n)$ - it has no idea how many nodes are in each subtree. An
 *order-statistic tree* stores subtree sizes to support it, and that is a different
 data structure, not a small tweak.
 
@@ -280,7 +280,7 @@ CFS scheduler keeps runnable tasks in a red-black tree keyed by virtual runtime,
 so "next task to run" is the leftmost node.
 
 **Compilers and interpreters.** An abstract syntax tree is a tree, and evaluating
-it is a post-order traversal — operands before the operator, which is exactly the
+it is a post-order traversal - operands before the operator, which is exactly the
 "children before parent" guarantee.
 
 **Interval and range structures.** Segment trees and Fenwick trees, on the
@@ -298,11 +298,11 @@ fixes it for a one-off load; a balanced tree fixes it properly.
 **Recursion depth on a deep tree.** $O(h)$ stack frames. Python raises
 `RecursionError` past 1000; Node throws `RangeError: Maximum call stack size
 exceeded`. Both are triggered by *degenerate* trees, so this failure and the one
-above tend to arrive together — and the stack overflow usually arrives first,
+above tend to arrive together - and the stack overflow usually arrives first,
 which at least makes it loud.
 
 **Deleting a node with two children, done wrong.** The only genuinely fiddly BST
-operation. You must replace the node with its in-order predecessor or successor —
+operation. You must replace the node with its in-order predecessor or successor -
 not with either child, which breaks the invariant for an entire subtree:
 
 <Tabs syncKey="lang">
@@ -356,7 +356,7 @@ function remove(node: Node | null, value: number): Node | null {
 
 Getting this wrong corrupts the ordering silently: searches for values that are
 still in the tree start returning `None`, because the search takes the wrong branch
-at the broken node. The data is there and unreachable — the same failure shape as
+at the broken node. The data is there and unreachable - the same failure shape as
 [mutating a hash key](/cs-fundamentals/2-data-structures/hash-tables/).
 
 **Repeated deletion unbalancing the tree.** Even a tree that started balanced drifts
@@ -403,7 +403,7 @@ function isBst(node: Node | null, low = -Infinity, high = Infinity): boolean {
 </TabItem>
 </Tabs>
 
-The alternative — do an in-order traversal and check the output is sorted — is
+The alternative - do an in-order traversal and check the output is sorted - is
 equally correct and arguably clearer, and it uses the property from the Visual
 section directly.
 
@@ -411,7 +411,7 @@ section directly.
 
 Naively computing `height(left)` and `height(right)` at every node is $O(n^2)$: the
 heights get recomputed all the way down. Returning height *and* balance from one
-post-order pass makes it $O(n)$ — a good example of post-order being the right tool
+post-order pass makes it $O(n)$ - a good example of post-order being the right tool
 because it needs both children's answers before it can produce its own.
 
 ### 3. Lowest common ancestor in a BST
@@ -424,14 +424,14 @@ LCA. $O(h)$ time, $O(1)$ space, no recursion.
 
 **"What's the complexity of a BST lookup?"**
 
-> O(h), where h is the height — and that's O(log n) only if the tree is balanced.
+> O(h), where h is the height - and that's O(log n) only if the tree is balanced.
 > A plain BST has no balancing, so if the keys arrive in sorted order every node
 > has one child and it degenerates to O(n). That's why real implementations are
 > red-black or AVL trees.
 
 **"When would you use a tree over a hash table?"**
 
-> When I need ordering. Hash tables win on raw lookup — O(1) versus O(log n) — but
+> When I need ordering. Hash tables win on raw lookup - O(1) versus O(log n) - but
 > they can't answer range queries or give me sorted iteration, because hashing
 > deliberately destroys the ordering. Anything with a BETWEEN in it, or a "next
 > largest key", wants a tree.
@@ -439,8 +439,8 @@ LCA. $O(h)$ time, $O(1)$ space, no recursion.
 **The caveat that signals production experience:**
 
 > "The failure I'd actually watch for is that a plain BST's worst case is the most
-> likely input in practice. Records usually arrive sorted — by ID, by timestamp,
-> straight out of an indexed query — so you get the degenerate tree by default
+> likely input in practice. Records usually arrive sorted - by ID, by timestamp,
+> straight out of an indexed query - so you get the degenerate tree by default
 > rather than by bad luck. And it's a nasty one to catch, because tests with
 > shuffled fixtures are fast and production is linear, with nothing erroring. The
 > related detail is that on-disk it's the log *base* that matters, not the log:

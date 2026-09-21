@@ -25,7 +25,7 @@ import { VectorSpace } from '../../../components/viz/widgets/VectorSpace.tsx';
 An embedding is a **lossy compression of meaning into a fixed-length list of
 numbers**, built so that the geometry of the list means something.
 
-That last clause is the whole trick. Any function can turn text into numbers —
+That last clause is the whole trick. Any function can turn text into numbers -
 a hash does it, and its output is useless because similar inputs produce
 unrelated outputs. An embedding model is trained so the opposite holds: inputs
 that a human would call related land near each other, and the arrangement is
@@ -54,14 +54,14 @@ Direction carries the meaning. Magnitude carries almost nothing.
 A document that makes the same point at three times the length points in roughly
 the same direction with roughly three times the magnitude. If your similarity
 metric is sensitive to magnitude, it will report that the long document is less
-similar — not because it means something different, but because it is longer.
+similar - not because it means something different, but because it is longer.
 That is why text similarity is an **angle**.
 
 ## Mechanics
 
 ### Building the space by hand
 
-The widget below is running real arithmetic on the ten sentences it displays —
+The widget below is running real arithmetic on the ten sentences it displays -
 tokenise, weight, project, compare. Nothing is hand-placed to make the picture
 tidy.
 
@@ -76,7 +76,7 @@ Two experiments worth doing before reading on:
    the second sentence is long. Cosine is right, and this is why.
 2. Select **"the interest rate on the loan went up"** and **"rising rates make
    borrowing more expensive"**. Two ways of saying one thing. The similarity is
-   `0.000` — a perfect right angle. Hold onto that; it is the entire reason
+   `0.000` - a perfect right angle. Hold onto that; it is the entire reason
    learned embeddings exist, and it comes back under [failure
    modes](#failure-modes).
 
@@ -95,8 +95,8 @@ factor, every document in English is maximally similar to every other because
 they all contain *the*.
 
 **This is not a neural embedding, and the difference is the point.** TF-IDF is
-an honest vector space with a specific, visible weakness — it has no dimension in
-which two synonyms overlap — and that weakness is exactly the gap a learned model
+an honest vector space with a specific, visible weakness - it has no dimension in
+which two synonyms overlap - and that weakness is exactly the gap a learned model
 fills. Everything the widget demonstrates about *geometry* transfers directly to
 a real embedding model: same cosine, same normalisation, same lossy 2-D
 projection. Only the way the coordinates are chosen differs.
@@ -142,7 +142,7 @@ function cosine(a: number[], b: number[]): number {
 </TabItem>
 </Tabs>
 
-That clamp is a real bug this page's own widget hit — the range test caught
+That clamp is a real bug this page's own widget hit - the range test caught
 `1.0000000000000002` on the very corpus displayed above. Any code path that
 converts similarity to an angle will find it eventually.
 
@@ -163,7 +163,7 @@ def normalize(v: list[float]) -> list[float]:
     m = math.sqrt(dot(v, v))
     return v if m == 0 else [x / m for x in v]
 
-# Store normalised. Now similarity is one multiply-accumulate per dimension —
+# Store normalised. Now similarity is one multiply-accumulate per dimension -
 # no square roots at query time, on any vector, ever again.
 stored = [normalize(embed(doc)) for doc in documents]
 ```
@@ -187,7 +187,7 @@ This is why vector databases ask which metric you want at **index creation
 time** rather than query time, and why `cosine` and `inner product` are listed
 as separate options that give identical results on normalised data. Picking
 `inner product` on un-normalised vectors, however, silently ranks long documents
-first — a bug that looks like a relevance problem and is actually a
+first - a bug that looks like a relevance problem and is actually a
 configuration one.
 
 ### Calling a real model
@@ -208,7 +208,7 @@ response = client.embeddings.create(
 
 a, b = (item.embedding for item in response.data)
 print(len(a))          # 1536 dimensions
-print(cosine(a, b))    # high — a learned model sees the paraphrase
+print(cosine(a, b))    # high - a learned model sees the paraphrase
 ```
 
 </TabItem>
@@ -236,20 +236,20 @@ console.log(cosine(a, b));
 </Tabs>
 
 Batch the input array. One request with 100 strings costs the same tokens as 100
-requests with one string, and saves 99 round trips — on a backfill of a million
+requests with one string, and saves 99 round trips - on a backfill of a million
 documents that is the difference between an afternoon and a week.
 
 ### Where embeddings sit in a retrieval system
 
 ```mermaid
 flowchart LR
-  subgraph Ingest["Ingest — offline, once per document"]
+  subgraph Ingest["Ingest - offline, once per document"]
     D[Document] --> C[Chunk]
     C --> E1[Embed]
     E1 --> S[(Vector index)]
   end
 
-  subgraph Query["Query — online, per request"]
+  subgraph Query["Query - online, per request"]
     Q[User query] --> E2[Embed]
     E2 --> S
     S --> K[Top-k by cosine]
@@ -260,7 +260,7 @@ flowchart LR
 
 The asymmetry is the thing to notice. Ingest is a batch job you can retry;
 query is in the user's latency budget. **Both arrows into the index must use
-the same model** — mixing models puts the query in a different space from the
+the same model** - mixing models puts the query in a different space from the
 documents, and the result is not an error, it is quietly random ranking.
 
 ## Cost & limits
@@ -284,7 +284,7 @@ $$
 The graph-index multiplier is approximate and depends on the `m` parameter; the
 raw column is exact. **The practical consequence is a cliff, not a curve**: an
 HNSW index must be resident in RAM to hit its advertised latency, so the moment
-your vectors exceed the box's memory, p99 does not degrade by 20% — it degrades
+your vectors exceed the box's memory, p99 does not degrade by 20% - it degrades
 by two orders of magnitude as the index starts hitting disk. One million
 documents at 1536 dimensions needs a memory-optimised instance, not a default
 one.
@@ -303,7 +303,7 @@ Two levers, both with a real price:
 ### Embedding is cheap; forgetting to cache is not
 
 Embedding is priced per token, and it is one of the cheapest things an AI system
-does — roughly two orders of magnitude below generation for the same text. The
+does - roughly two orders of magnitude below generation for the same text. The
 cost that actually bites is **re-embedding**: a document that is re-embedded on
 every deploy, or a query embedded twice because two services each call the API,
 turns a rounding error into a line item.
@@ -326,9 +326,9 @@ silently-corrupted index into a clean cache miss.
 
 Query-time work splits in two, and only one half is yours to optimise:
 
-- **The embedding call** — a network round trip, typically tens of
+- **The embedding call** - a network round trip, typically tens of
   milliseconds, and it is on the critical path of every single search.
-- **The index lookup** — sub-millisecond for an in-memory HNSW index over a
+- **The index lookup** - sub-millisecond for an in-memory HNSW index over a
   million vectors, because approximate nearest-neighbour search is
   $O(\log n)$-ish rather than the $O(n)$ of comparing against everything.
 
@@ -336,7 +336,7 @@ That second bound is the entire reason vector databases exist, and it is a
 straight application of what
 [Big-O](/cs-fundamentals/1-complexity/big-o/) is for. Exact
 search over a million 1536-dimensional vectors is 1.5 billion multiply-adds per
-query. ANN gives that up — it will sometimes miss a true neighbour — in exchange
+query. ANN gives that up - it will sometimes miss a true neighbour - in exchange
 for a better complexity class. **Recall is the price, and it is a dial you set,
 not a property you discover.**
 
@@ -345,7 +345,7 @@ not a property you discover.**
 **When the user is searching for an identifier.** Order numbers, SKUs, error
 codes, file paths, function names. A user typing `ERR_CONN_REFUSED` wants that
 exact string, and an embedding will happily return documents about other
-connection errors — semantically adjacent, operationally useless. Keyword search
+connection errors - semantically adjacent, operationally useless. Keyword search
 is not a legacy technology; it is the correct tool for exact tokens. Use both
 and fuse the results.
 
@@ -358,7 +358,7 @@ search 400 FAQ entries.
 **When the distinctions that matter are ones embeddings compress away.**
 Negation is the notorious case: "the patient has a fever" and "the patient does
 not have a fever" are near-identical to most embedding models, because they
-share almost all their content. Numbers behave similarly — "over 65" and "under
+share almost all their content. Numbers behave similarly - "over 65" and "under
 65" embed close together. In a clinical, legal, or financial filter, that is not
 a relevance problem, it is a correctness one. Filter structurally, then rank
 semantically.
@@ -371,7 +371,7 @@ cosine of 0.81 is not an answer.
 
 - **Retrieval-augmented generation.** The dominant use: embed the corpus, embed
   the question, retrieve the top-k chunks, put them in the prompt. Retrieval
-  quality sets the ceiling on answer quality — the model cannot cite what it was
+  quality sets the ceiling on answer quality - the model cannot cite what it was
   never shown.
 - **Semantic caching for LLM calls.** Before calling an expensive model, check
   whether a semantically-equivalent question was answered recently. Same idea as
@@ -393,7 +393,7 @@ cosine of 0.81 is not an answer.
 ### The index and the query drift into different spaces
 
 **Symptom:** relevance collapses to noise, all at once, with no error anywhere.
-Similarity scores still look plausible — 0.7, 0.8 — because two random vectors in
+Similarity scores still look plausible - 0.7, 0.8 - because two random vectors in
 high dimensions are never *actually* orthogonal.
 
 **Cause:** the documents were embedded with one model and the queries with
@@ -406,12 +406,12 @@ backfill and a cutover, not a config change.
 
 ### Cosine similarity has no absolute meaning
 
-**Symptom:** a threshold tuned on one corpus — "accept anything above 0.75" —
+**Symptom:** a threshold tuned on one corpus - "accept anything above 0.75" -
 returns everything on another, or nothing.
 
 **Cause:** embedding spaces are **anisotropic**. Vectors are not spread evenly
 over the sphere; they occupy a narrow cone, so *unrelated* text often scores
-0.6–0.8. The absolute number is a property of the model, not of relevance.
+0.6-0.8. The absolute number is a property of the model, not of relevance.
 
 **Fix:** thresholds must be calibrated per model and per corpus, against a
 labelled sample. Better still, avoid absolute thresholds: take top-k and let a
@@ -427,8 +427,8 @@ and every individual component tests fine.
 is so large that the answer's signal is diluted across a page of unrelated text.
 Both are chunking bugs that look exactly like embedding bugs.
 
-**Fix:** evaluate retrieval on its own — a set of questions with known
-source chunks, measuring recall@k — before ever looking at generated answers. A
+**Fix:** evaluate retrieval on its own - a set of questions with known
+source chunks, measuring recall@k - before ever looking at generated answers. A
 bad answer from good retrieval and a bad answer from bad retrieval need entirely
 different fixes.
 
@@ -438,7 +438,7 @@ different fixes.
 share meaning.
 
 **Cause:** this is the failure the widget demonstrates exactly. It is total in
-TF-IDF and merely partial — but present — in learned models, especially for
+TF-IDF and merely partial - but present - in learned models, especially for
 domain jargon the model never saw in training. Your internal product names are
 not in anyone's pretraining corpus.
 
@@ -466,7 +466,7 @@ not. Inversion attacks can reconstruct substantial parts of the source text from
 its embedding, and near-duplicate detection reveals membership.
 
 **Fix:** treat the vector store as holding the same data classification as the
-source text. Same retention policy, same access controls, same deletion path —
+source text. Same retention policy, same access controls, same deletion path -
 including deleting the vector when the row is deleted.
 
 ## Practice problems
@@ -488,7 +488,7 @@ roughly with the corpus. At 2,000 documents perhaps three chunks exceeded 0.78
 and all three were relevant. At 400,000, six hundred exceed it, and the great
 majority are the anisotropy baseline rather than genuine matches. The threshold
 was doing the job of "return few results" while appearing to do the job of
-"return relevant results" — those two coincided at small scale and diverge at
+"return relevant results" - those two coincided at small scale and diverge at
 large.
 
 **Fix:** switch from an absolute cut to top-k plus a reranker. Take the top 50
@@ -512,8 +512,8 @@ healthy index.
 <details>
 <summary>Solution</summary>
 
-The backfill and the cutover were not atomic, so the index holds a mix — some
-vectors from the old model, some from the new — or the query path was deployed
+The backfill and the cutover were not atomic, so the index holds a mix - some
+vectors from the old model, some from the new - or the query path was deployed
 before the backfill finished.
 
 Note the shape of it: a dimension change from 1536 to 3072 *would* be caught,
@@ -543,7 +543,7 @@ Users search a technical knowledge base with two very different kinds of query:
 <details>
 <summary>Solution</summary>
 
-Do not try to detect which kind of query it is — the classifier will be wrong,
+Do not try to detect which kind of query it is - the classifier will be wrong,
 and its errors will be invisible. Run both retrievers on every query and fuse.
 
 1. Full-text search (Postgres `tsvector`, or BM25) → top 50.
@@ -553,7 +553,7 @@ and its errors will be invisible. Run both retrievers on every query and fuse.
 4. Rerank the fused top ~30 with a cross-encoder.
 
 RRF is the right fusion here specifically because it consumes **ranks, not
-scores**, so it does not require the BM25 and cosine scales to be comparable —
+scores**, so it does not require the BM25 and cosine scales to be comparable -
 which they are not, and no amount of normalisation makes them so.
 
 The exact-token query still wins on the keyword side even when the embedding is
@@ -584,7 +584,7 @@ will retune it forever.
       direction. Cosine divides magnitude out, so it sees two documents pointing
       the same way and reports high similarity. Euclidean distance measures the
       gap between the endpoints, and a three-times-longer vector has a distant
-      endpoint even in an identical direction — so it can easily rank the
+      endpoint even in an identical direction - so it can easily rank the
       unrelated short pair as closer.
     </p>
     <p>
@@ -596,7 +596,7 @@ will retune it forever.
     </p>
     <p>
       The last option is the tempting one. Some APIs do return normalised
-      vectors — but that is a property of a particular provider, not a
+      vectors - but that is a property of a particular provider, not a
       guarantee, and if it were universally true the choice between "cosine" and
       "inner product" in every vector database would be meaningless. The rule:
       normalise on write yourself, and then the distinction stops mattering
@@ -611,7 +611,7 @@ will retune it forever.
   kind="concept"
   question="Your retrieval returns unrelated chunks at cosine 0.72. What does that most likely indicate?"
   options={[
-    { label: 'Nothing is wrong with the scores — embedding spaces are anisotropic and 0.72 can be the unrelated baseline', correct: true },
+    { label: 'Nothing is wrong with the scores - embedding spaces are anisotropic and 0.72 can be the unrelated baseline', correct: true },
     { label: 'The vectors were not normalised before storage' },
     { label: 'The index is corrupt and needs rebuilding' },
     { label: 'The chunks are too large, diluting the signal' },
@@ -621,7 +621,7 @@ will retune it forever.
     <p>
       Embedding vectors do not spread evenly over the sphere. They cluster into
       a narrow cone, which means the similarity between two <em>unrelated</em>{' '}
-      pieces of text is commonly 0.6–0.8 rather than the 0 that intuition
+      pieces of text is commonly 0.6-0.8 rather than the 0 that intuition
       suggests. A raw score of 0.72 therefore carries almost no information on
       its own; what matters is where it sits relative to the other candidates
       for the same query.
@@ -651,7 +651,7 @@ will retune it forever.
 > how to do fast.
 >
 > The property I actually rely on is that direction carries meaning and
-> magnitude mostly does not — which is why similarity is cosine, an angle, not
+> magnitude mostly does not - which is why similarity is cosine, an angle, not
 > Euclidean distance. A document that says the same thing at twice the length
 > points the same way with twice the magnitude, and I do not want my search to
 > call that a difference in meaning.
@@ -660,7 +660,7 @@ will retune it forever.
 
 > Cosine for text, essentially always, because document length should not affect
 > relevance. In practice I normalise every vector on write, and then cosine and
-> inner product are the same operation — so the metric choice stops being a
+> inner product are the same operation - so the metric choice stops being a
 > decision and the query gets slightly cheaper, no square roots at read time.
 >
 > The caveat worth voicing: cosine scores have no absolute meaning. Embedding
@@ -673,7 +673,7 @@ will retune it forever.
 > Split it before touching anything, because "wrong answer" has two completely
 > different causes with completely different fixes. First measure retrieval
 > alone: a set of questions with known correct chunks, and recall@k. If the
-> right chunk is never retrieved, the generation prompt is irrelevant — the
+> right chunk is never retrieved, the generation prompt is irrelevant - the
 > model cannot cite what it was not shown.
 >
 > If retrieval is fine and answers are still wrong, then it is prompting,
@@ -681,7 +681,7 @@ will retune it forever.
 > spend weeks tuning prompts against a retrieval bug.
 >
 > The specific thing I check first is whether the documents and the queries were
-> embedded with the same model version. That failure is silent — both sides are
+> embedded with the same model version. That failure is silent - both sides are
 > the same shape, the scores look plausible, and the ranking is noise.
 
 **The caveats worth voicing:**
@@ -690,7 +690,7 @@ will retune it forever.
 - Store the model version with every vector and reject mismatches at query time.
 - Re-embedding a corpus is a migration with a backfill and a cutover, not a
   config change.
-- Hybrid beats pure vector search on almost every real corpus — identifiers and
+- Hybrid beats pure vector search on almost every real corpus - identifiers and
   jargon are exactly what embeddings are worst at.
 - Evaluate retrieval separately from generation, or you will debug the wrong
   half.

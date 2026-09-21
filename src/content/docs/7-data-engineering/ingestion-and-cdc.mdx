@@ -26,7 +26,7 @@ has three broad strategies, and they trade latency against cost and
 complexity in a fairly direct line: a full batch reload (simplest, highest
 latency, cheapest to build), an incremental batch pull filtered by a
 timestamp column (moderate complexity, moderate latency), and **change data
-capture** — reading the source database's transaction log directly to
+capture** - reading the source database's transaction log directly to
 capture every insert, update, and delete as it happens (most complex to
 operate, lowest latency, and the only one of the three that doesn't miss
 anything).
@@ -50,23 +50,23 @@ This looks complete and has two specific gaps that no polling frequency
 closes:
 
 - **Deletes are invisible.** A `DELETE FROM orders WHERE id = 42` leaves no
-  row for the next poll to find with an `updated_at` in range — the row is
+  row for the next poll to find with an `updated_at` in range - the row is
   simply gone, and nothing in this query can distinguish "this id never
   existed" from "this id existed and was deleted between polls."
 - **Intermediate updates are collapsed.** If a row is updated twice between
-  polls — status goes `pending` → `processing` → `complete` — the poll only
+  polls - status goes `pending` → `processing` → `complete` - the poll only
   ever sees the final state. A downstream system tracking state transitions
   (how long did each order spend in `processing`?) has no way to reconstruct
   what happened, because the intermediate state was never captured anywhere.
 
 Polling more frequently narrows the window in which multiple updates can be
-collapsed but never closes it, and doesn't help with deletes at all —
+collapsed but never closes it, and doesn't help with deletes at all -
 these are structural properties of "look at current state periodically,"
 not a tuning problem.
 
 ### CDC: reading the transaction log instead of polling the table
 
-Every row change to a database — Postgres included — is recorded in a
+Every row change to a database - Postgres included - is recorded in a
 **write-ahead log** (WAL) before it's applied, as part of how the database
 guarantees durability. CDC tools (Debezium is the most common open-source
 one) read that log directly, rather than querying the table, and turn each
@@ -78,7 +78,7 @@ log entry into an explicit event:
 {"op": "d", "before": {"id": 42, "status": "complete"}, "ts_ms": 1690000090000}
 ```
 
-Every state transition is captured as its own event — including the
+Every state transition is captured as its own event - including the
 delete, including both intermediate states a timestamp poll would have
 collapsed into one. This is the structural fix: CDC doesn't sample state at
 intervals, it captures every state *change*, because it's reading the same
@@ -87,26 +87,26 @@ log the database itself uses to guarantee it never loses a committed write.
 ### The trade CDC makes
 
 Reading the WAL requires the CDC connector to have a durable position in
-the log (an offset, a log sequence number) and to be running continuously —
+the log (an offset, a log sequence number) and to be running continuously -
 if the connector falls behind or goes down for longer than the database
 retains WAL segments, it can permanently lose the ability to catch up from
 where it left off and needs a full resync instead. This operational
 requirement (a connector that must stay caught up, or trigger an alert
 before it falls out of retention) is the real cost CDC trades for its
-completeness — a batch poll that misses a run just runs a bit later with a
+completeness - a batch poll that misses a run just runs a bit later with a
 wider window; a CDC connector that falls behind for too long can lose data
 permanently.
 
 ## Cost & limits
 
 **CDC infrastructure (Debezium plus Kafka, or a managed equivalent) is
-genuinely more operationally complex than a scheduled batch query** — it's
+genuinely more operationally complex than a scheduled batch query** - it's
 a long-running streaming system with its own failure modes (connector lag,
 log retention limits, schema evolution on the source triggering downstream
 schema changes) rather than a job that runs, finishes, and reports
 success or failure discretely.
 
-**Batch polling's cost scales with poll frequency and table size** — a
+**Batch polling's cost scales with poll frequency and table size** - a
 `WHERE updated_at > :last_poll` query still has to find and read every
 changed row each time it runs, and a very high poll frequency on a large,
 frequently-updated table starts to resemble the load profile of CDC without
@@ -118,39 +118,39 @@ becomes the better trade rather than a more aggressive polling schedule.
 **Do not adopt CDC for a source table that changes rarely, where downstream
 consumers tolerate hours of latency.** A slowly-changing reference table
 (a list of countries, a product catalog updated weekly) doesn't need
-log-level capture — a daily or hourly batch pull is simpler to build,
+log-level capture - a daily or hourly batch pull is simpler to build,
 simpler to operate, and loses nothing meaningful for that use case.
 
 **Do not use timestamp-based polling for a source where deletes matter to
 downstream consumers, or where every intermediate state matters (an audit
 trail, a state-machine transition history).** These are exactly the
-structural gaps CDC exists to close — polling harder doesn't fix them, only
+structural gaps CDC exists to close - polling harder doesn't fix them, only
 capturing the log does.
 
 **Do not enable CDC on a source database without confirming the operational
 team can support a continuously-running connector and monitor its lag.** A
 CDC connector that silently falls behind and eventually exceeds the
 source's log retention window fails in a way that's worse than a missed
-batch job — it can require a full resync of the downstream target, which is
+batch job - it can require a full resync of the downstream target, which is
 exactly the outage CDC was adopted to avoid causing.
 
 ## Real-world usage
 
 CDC is standard for keeping a search index, a cache, or a read-optimized
-replica in sync with a primary transactional database in near-real-time —
+replica in sync with a primary transactional database in near-real-time -
 the primary database stays the source of truth, and every downstream
 consumer of its changes subscribes to the same change stream rather than
 each running its own polling query against the primary, which would
 multiply load on the system least able to spare it. It's also the standard
 mechanism for populating an event-driven architecture from an existing
-database that wasn't originally built to emit events — CDC retrofits an
+database that wasn't originally built to emit events - CDC retrofits an
 event stream onto a system that only speaks "current state."
 
 ## Failure modes
 
 **The downstream system that "lost" deletes for months, unnoticed.** A
 timestamp-poll-based sync that never accounted for deletes accumulates
-stale rows in the downstream target indefinitely — a customer deleted in
+stale rows in the downstream target indefinitely - a customer deleted in
 the source system six months ago still shows up in a downstream report or
 search index today, and nothing about the sync job's success/failure status
 reveals this, because from the poll's perspective, nothing went wrong.
@@ -158,7 +158,7 @@ reveals this, because from the poll's perspective, nothing went wrong.
 **The CDC connector that fell behind and triggered a full resync during
 business hours.** A connector that falls too far behind the source
 database's log retention loses its position and can no longer incrementally
-catch up — the recovery is a full resync of the downstream target, which
+catch up - the recovery is a full resync of the downstream target, which
 on a large table can take hours and puts significant read load on the
 source database exactly while it's also serving normal traffic, unless
 carefully scheduled and throttled.
@@ -167,7 +167,7 @@ carefully scheduled and throttled.
 timestamp-poll-based pipeline collapsing multiple updates between polls
 into one final state means an analysis asking "how long did orders spend
 in the `processing` state last quarter" simply cannot be answered from that
-pipeline's captured history — the data needed to answer it was never
+pipeline's captured history - the data needed to answer it was never
 captured in the first place, and there's no way to recover it retroactively.
 
 ## Practice problems
@@ -176,7 +176,7 @@ captured in the first place, and there's no way to recover it retroactively.
 > :last_poll` every 15 minutes. A stakeholder asks why some customers who
 were deleted last month still appear in the report. What's the root cause?**
 
-Timestamp-based polling structurally cannot see deletes — a `DELETE` leaves
+Timestamp-based polling structurally cannot see deletes - a `DELETE` leaves
 no row with an `updated_at` for the poll to find, so the reporting table
 never learns the row is gone. Fix requires either switching to CDC (which
 captures delete events explicitly) or adding a separate mechanism (a
@@ -189,7 +189,7 @@ What's the consequence, and what would you check before restarting the
 connector?**
 
 The connector has likely fallen out of the retention window and can no
-longer resume from its last position — the required log segments have been
+longer resume from its last position - the required log segments have been
 recycled. Check the connector's last committed offset against the current
 WAL retention boundary; if it's outside, plan for a full resync rather than
 attempting to resume, since resuming from a position the database no longer
@@ -201,7 +201,7 @@ pipeline polls the orders table hourly for changed rows. Why is this
 insufficient, and what would fix it?**
 
 An hourly poll only captures the status a row happened to be in at each
-poll time — if an order transitions through all three statuses within one
+poll time - if an order transitions through all three statuses within one
 hour, the poll only sees the final state, and the time spent in each
 intermediate status is lost. CDC captures every state transition as its own
 event with a timestamp, which is exactly the data needed to compute
@@ -231,7 +231,7 @@ ingestion (especially timestamp-based incremental polling) samples the
 source's current state at intervals; CDC reads the source database's
 transaction log directly, capturing every insert, update, and delete as an
 explicit event. The caveat that shows real understanding: this isn't just a
-latency difference — polling has structural blind spots (deletes,
+latency difference - polling has structural blind spots (deletes,
 collapsed intermediate states) that no polling frequency fixes, while CDC
 closes them by construction because it's reading the same log the database
 uses to guarantee durability.
@@ -239,9 +239,9 @@ uses to guarantee durability.
 **"When would you use CDC instead of a simpler batch sync?"** When
 downstream consumers need near-real-time freshness, need to know about
 deletes, or need every intermediate state change rather than just the
-current state — an audit trail, a search index kept in sync, a
+current state - an audit trail, a search index kept in sync, a
 cache-invalidation stream. The caveat: CDC is a real operational
-commitment — a continuously-running connector that can permanently lose
+commitment - a continuously-running connector that can permanently lose
 its position if it falls too far behind the source's log retention, which
 is a different (and in some ways worse) failure mode than a batch job that
 simply runs late.

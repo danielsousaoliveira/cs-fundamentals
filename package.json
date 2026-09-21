@@ -3,6 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "An in-depth, visual introduction to computer science: every complexity bound derived, every structure shown running, and every failure mode named.",
+  "homepage": "https://danielsousaoliveira.github.io/cs-fundamentals/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielsousaoliveira/cs-fundamentals.git"
+  },
+  "bugs": {
+    "url": "https://github.com/danielsousaoliveira/cs-fundamentals/issues"
+  },
+  "author": "Daniel Oliveira",
+  "license": "MIT",
+  "keywords": [
+    "computer-science",
+    "data-structures",
+    "algorithms",
+    "system-design",
+    "distributed-systems",
+    "databases",
+    "data-engineering",
+    "ai-engineering",
+    "software-architecture",
+    "learning-resources"
+  ],
   "packageManager": "pnpm@11.17.0",
   "scripts": {
     "dev": "astro dev",

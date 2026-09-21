@@ -190,7 +190,9 @@ test('the site has a favicon, crawler policy, llms.txt and structured data', asy
   expect(ldJson, 'application/ld+json script should be present').toBeTruthy();
   const structuredData = JSON.parse(ldJson!);
   expect(structuredData['@context']).toBe('https://schema.org');
-  expect(structuredData['@type']).toEqual(expect.arrayContaining(['WebSite']));
+  expect(structuredData['@type']).toEqual(
+    expect.arrayContaining(['WebSite', 'LearningResource']),
+  );
 });
 
 test('math renders as KaTeX rather than raw dollar signs', async ({ page }) => {

@@ -30,12 +30,22 @@ Each topic maps to material the site treats in depth, not everything it mentions
 `ai-engineering`, `rag`, `llm`, `web-development`, `software-architecture`,
 `production-engineering`, `incident-response`, `learning-resources`
 
+Replaces the full topic set rather than adding to whatever is already there, so
+rerunning it after editing the list above always matches the document:
+
 ```sh
-gh repo edit danielsousaoliveira/cs-fundamentals \
-  --add-topic computer-science,data-structures,algorithms,system-design,distributed-systems \
-  --add-topic databases,sql,query-optimization,vector-database,data-engineering \
-  --add-topic cloud-infrastructure,kubernetes,ai-engineering,rag,llm \
-  --add-topic web-development,software-architecture,production-engineering,incident-response,learning-resources
+gh api repos/danielsousaoliveira/cs-fundamentals/topics \
+  --method PUT \
+  --field 'names[]=computer-science' --field 'names[]=data-structures' \
+  --field 'names[]=algorithms' --field 'names[]=system-design' \
+  --field 'names[]=distributed-systems' --field 'names[]=databases' \
+  --field 'names[]=sql' --field 'names[]=query-optimization' \
+  --field 'names[]=vector-database' --field 'names[]=data-engineering' \
+  --field 'names[]=cloud-infrastructure' --field 'names[]=kubernetes' \
+  --field 'names[]=ai-engineering' --field 'names[]=rag' \
+  --field 'names[]=llm' --field 'names[]=web-development' \
+  --field 'names[]=software-architecture' --field 'names[]=production-engineering' \
+  --field 'names[]=incident-response' --field 'names[]=learning-resources'
 ```
 
 ## Social preview image

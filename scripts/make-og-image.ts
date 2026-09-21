@@ -50,9 +50,7 @@ const svg = `
         font-weight="700" fill="${COLORS.text}">CS Fundamentals</text>
 
   <text x="90" y="330" font-family="Helvetica, Arial, sans-serif" font-size="34"
-        fill="${COLORS.dim}">Data structures, algorithms and systems —</text>
-  <text x="90" y="380" font-family="Helvetica, Arial, sans-serif" font-size="34"
-        fill="${COLORS.dim}">derived, visualised, and honest about the trade-offs.</text>
+        fill="${COLORS.dim}">Data structures, algorithms and systems</text>
 
   <!-- A row of array cells: the site's own visual vocabulary, in miniature. -->
   ${[0, 1, 2, 3, 4, 5, 6, 7]

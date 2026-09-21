@@ -438,7 +438,7 @@ current:                    45 + 3 + 1,400          = 1,448ms
   terms. Issue both concurrently; a sequential implementation wastes 15ms for no
   reason.
 - **Reranking is ~8% of the budget** and it improves what reaches the context,
-  which is the highest-leverage thing available.
+  which is the highest-impact thing available.
 
 **What I would measure before shipping:**
 
@@ -560,7 +560,7 @@ cuts generation input tokens, which claws back both cost and some latency.
 > Almost always in RAG, and the reason is the ratio. Reranking 30 candidates is
 > around 100ms against a generation step of one to four seconds - under 10% of
 > the budget - and it improves what actually reaches the context, which is the
-> highest-leverage thing available.
+> highest-impact thing available.
 >
 > The precondition I would check first is recall@50. A reranker can only reorder
 > what it was given, so if the correct document is not in the candidate set the

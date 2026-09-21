@@ -399,5 +399,5 @@ combination described in Real-world usage above.
   instead of being stuck at whatever `uvicorn`'s own default happens to be.
 - I check for synchronous calls inside async routes the same way I'd check
   Node for a synchronous `fs` call in a request handler - it's the single
-  highest-leverage thing to search for when ASGI p99 looks wrong, because the
+  highest-value thing to search for when ASGI p99 looks wrong, because the
   fix is usually one function call away, not an architecture change.

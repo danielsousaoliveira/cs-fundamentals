@@ -57,7 +57,7 @@ appears next to the compute cost that generated the response.
 
 The lever that actually moves this: **S3-to-CloudFront transfer is free**,
 and CDN-cached responses mean most repeat requests never reach the origin at
-all - fronting a service with a CDN is frequently the single highest-leverage
+all - fronting a service with a CDN is frequently the single highest-impact
 egress optimization available, more effective than trying to shrink payload
 sizes by a few percent.
 
@@ -160,7 +160,7 @@ a fraction of that.
 ## Practice problems
 
 **1. A service's monthly AWS bill shows $400 in compute and $1,200 in data
-transfer out. What's the highest-leverage next step, and why?**
+transfer out. What's the highest-impact next step, and why?**
 
 Investigate fronting the service with a CDN (CloudFront) before optimizing
 compute - egress is the dominant cost here by 3x, and S3-to-CloudFront

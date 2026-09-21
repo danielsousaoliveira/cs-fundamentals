@@ -153,6 +153,48 @@ test('the Open Graph image is absolute, base-aware and actually served', async (
   expect(await page.locator('meta[name="twitter:card"]').count()).toBe(1);
 });
 
+test('the site has a favicon, crawler policy, llms.txt and structured data', async ({
+  page,
+  request,
+}) => {
+  await page.goto('2-data-structures/heaps/');
+
+  // Starlight injects this from the default `/favicon.svg` path; if the file
+  // is ever deleted, the link tag survives but 404s.
+  const iconHref = await page
+    .locator('link[rel="icon"], link[rel="shortcut icon"]')
+    .getAttribute('href');
+  expect(iconHref).toBeTruthy();
+  const iconResponse = await page.request.get(iconHref!);
+  expect(iconResponse.status()).toBe(200);
+  expect(iconResponse.headers()['content-type']).toContain('svg');
+
+  // robots.txt lives at the site root under the base path (this is a project
+  // page, not a domain root), and must point at the sitemap's real deployed
+  // address rather than the domain root.
+  const robots = await request.get('robots.txt');
+  expect(robots.status()).toBe(200);
+  const robotsBody = await robots.text();
+  expect(robotsBody).toMatch(
+    /Sitemap:\s*https?:\/\/\S+\/cs-fundamentals\/sitemap-index\.xml/,
+  );
+
+  // llms.txt: the machine-readable summary tools look for.
+  const llms = await request.get('llms.txt');
+  expect(llms.status()).toBe(200);
+  expect(await llms.text()).toContain('CS Fundamentals');
+
+  // Structured data: declares what kind of resource the site is, and must
+  // stay valid JSON that names a real schema.org type.
+  const ldJson = await page.locator('script[type="application/ld+json"]').textContent();
+  expect(ldJson, 'application/ld+json script should be present').toBeTruthy();
+  const structuredData = JSON.parse(ldJson!);
+  expect(structuredData['@context']).toBe('https://schema.org');
+  expect(structuredData['@type']).toEqual(
+    expect.arrayContaining(['WebSite', 'LearningResource']),
+  );
+});
+
 test('math renders as KaTeX rather than raw dollar signs', async ({ page }) => {
   await page.goto('4-paradigms/divide-and-conquer/');
 

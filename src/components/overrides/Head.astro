@@ -21,6 +21,26 @@ import Default from '@astrojs/starlight/components/Head.astro';
  */
 const ogImage = new URL(`${import.meta.env.BASE_URL}og.png`, Astro.site ?? Astro.url)
   .href;
+
+/**
+ * Tells a crawler what kind of resource this is: a reference site for
+ * learning computer science, not just an arbitrary link. Describes the site
+ * as a whole rather than any per-page fact, so it stays true as pages are
+ * added — no page count baked in here.
+ */
+const siteUrl = new URL(import.meta.env.BASE_URL, Astro.site ?? Astro.url).href;
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': ['WebSite', 'LearningResource'],
+  name: 'CS Fundamentals',
+  url: siteUrl,
+  description:
+    'An in-depth, visual introduction to computer science — every claim ' +
+    'derived, every structure shown working, and every failure mode named.',
+  about: 'Computer Science',
+  learningResourceType: 'reference',
+  inLanguage: 'en',
+};
 ---
 
 <Default><slot /></Default>
@@ -35,3 +55,9 @@ const ogImage = new URL(`${import.meta.env.BASE_URL}og.png`, Astro.site ?? Astro
     duplicate the tag. Only the image needs supplying. */
 }
 <meta name="twitter:image" content={ogImage} />
+
+<script
+  type="application/ld+json"
+  is:inline
+  set:html={JSON.stringify(structuredData)}
+/>

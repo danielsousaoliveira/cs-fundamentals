@@ -1,0 +1,26 @@
+---
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+/**
+ * Every page's traffic is measured with Cloudflare Web Analytics (see
+ * `Head.astro`). Readers need somewhere to find out what that means, so this
+ * links to it from every page rather than leaving it undiscoverable.
+ */
+const privacyHref = `${import.meta.env.BASE_URL}privacy/`;
+---
+
+<Default><slot /></Default>
+
+<p class="privacy-link"><a href={privacyHref}>Privacy</a></p>
+
+<style>
+  .privacy-link {
+    margin-top: 0.75rem;
+    font-size: var(--sl-text-xs);
+    text-align: center;
+    color: var(--sl-color-gray-3);
+  }
+  .privacy-link a {
+    color: inherit;
+  }
+</style>

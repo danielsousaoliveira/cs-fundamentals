@@ -2,7 +2,7 @@
 title: Data quality frameworks
 description: >-
   Great Expectations, dbt tests, and data contracts solve the same underlying
-  problem at different points in the pipeline — what breaks when quality
+  problem at different points in the pipeline - what breaks when quality
   checks run after the damage is already downstream.
 sidebar:
   order: 7
@@ -24,8 +24,8 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 [Data profiling](/cs-fundamentals/7-data-engineering/data-profiling/) is a
 one-time investigation: what does this data look like, right now. A data
-quality framework turns the same questions — null rate, cardinality, range,
-referential integrity — into **assertions that run automatically, every
+quality framework turns the same questions - null rate, cardinality, range,
+referential integrity - into **assertions that run automatically, every
 time**, and fail loudly the moment reality stops matching them.
 
 The reason this needs to be a distinct discipline rather than "just write a
@@ -33,8 +33,8 @@ test" is *where* the assertion runs matters as much as what it checks. A
 check that runs after a bad load has already reached a downstream table has
 already let the damage propagate; the same check running before the load
 commits prevents it. Every framework here is really answering the same
-question — "where in the pipeline does the check fire, and what happens when
-it fails" — differently.
+question - "where in the pipeline does the check fire, and what happens when
+it fails" - differently.
 
 ## Mechanics
 
@@ -60,7 +60,7 @@ models:
 ```
 
 Each test compiles to a SQL query that returns zero rows on success and one
-row per violation on failure — `unique` and `not_null` are self-explanatory;
+row per violation on failure - `unique` and `not_null` are self-explanatory;
 `relationships` checks referential integrity exactly like the [orphaned
 foreign key check](/cs-fundamentals/7-data-engineering/data-profiling/) from
 the profiling page, but as a standing assertion instead of a one-time query;
@@ -69,7 +69,7 @@ appears, rather than silently flowing through every downstream aggregate
 grouped by status.
 
 These run as part of `dbt build` or `dbt test`, colocated with the model
-that produces the data — the person who changes the transformation logic is
+that produces the data - the person who changes the transformation logic is
 the person most likely to see the test fail, immediately, in the same run.
 
 ### Data contracts: failing before the query runs, not after
@@ -88,11 +88,11 @@ models:
 ```
 
 A dbt data test runs *after* a model builds and checks the result. A data
-contract is enforced *at compile time* — dbt checks the model's actual
+contract is enforced *at compile time* - dbt checks the model's actual
 output schema against the declared contract before running, and refuses to
 build if they disagree. This catches a broken upstream schema change (a
 column renamed, a type changed from integer to text) before a single row is
-written to the target table, rather than after — the difference between
+written to the target table, rather than after - the difference between
 "the pipeline failed to build" and "the pipeline built successfully and
 quietly produced garbage that a test caught an hour later, after other jobs
 had already read from it."
@@ -111,15 +111,15 @@ validator.expect_column_distinct_values_to_be_in_set(
 
 The distinguishing idea in Great Expectations is that an "expectation" is
 both a validation rule and a self-documenting statement about what the data
-should look like — the same object that fails a pipeline run on violation
+should look like - the same object that fails a pipeline run on violation
 also generates a human-readable data quality report. It's commonly used
 independent of dbt, at ingestion time or on raw data before any
-transformation happens — checking the data as it arrives, rather than
+transformation happens - checking the data as it arrives, rather than
 checking a transformation's output.
 
 ### Where each check should actually run
 
-The meaningful design decision isn't "which tool" — it's **at which stage
+The meaningful design decision isn't "which tool" - it's **at which stage
 does a given check run**, because that determines the blast radius of a
 failure:
 
@@ -131,19 +131,19 @@ failure:
 
 A check that only runs post-build has already let bad data land in a table
 that other jobs, dashboards, or models may read from before the test
-suite finishes running — the check still catches the problem, just after
+suite finishes running - the check still catches the problem, just after
 some of the damage may already be visible to a consumer.
 
 ## Cost & limits
 
 **Every test adds pipeline run time**, and a large dbt project can
 accumulate hundreds of tests whose cumulative execution time becomes a real
-part of the pipeline's total duration — this is a genuine trade against
+part of the pipeline's total duration - this is a genuine trade against
 faster iteration, not a free safety net, and it's common to run a fast
 subset of tests (uniqueness, not-null on primary keys) on every run and a
 fuller suite on a schedule.
 
-**Data contracts are strict by construction** — a contract enforces an exact
+**Data contracts are strict by construction** - a contract enforces an exact
 schema match, so an intentional schema change (adding a column) requires
 updating the contract in the same change, or the build fails. This is the
 point (catching *unintentional* drift), but it means contracts add
@@ -154,7 +154,7 @@ a cost worth accepting deliberately rather than discovering by surprise.
 
 **Do not add a data contract to a model still under active, frequent
 schema iteration.** Contracts are strongest once a model's schema has
-stabilized and unplanned drift is the main risk being guarded against —
+stabilized and unplanned drift is the main risk being guarded against -
 applied too early, they mostly just add friction to expected, frequent
 changes.
 
@@ -162,14 +162,14 @@ changes.
 consume before the test suite completes.** If a downstream dashboard or
 model reads from a table the moment it's built, rather than after the full
 test suite passes, a post-build-only testing strategy has a real window
-where bad data is visible before it's caught — for that data, an
+where bad data is visible before it's caught - for that data, an
 ingestion-time check or a contract catches the problem earlier.
 
 **Do not write an `accepted_values` test with a list you expect to change
 frequently without a plan for maintaining it.** A status enum that
 legitimately gains new values periodically needs either a broader
 maintenance process for the test itself, or a different kind of check
-(logging new values for review, rather than hard-failing on them) —
+(logging new values for review, rather than hard-failing on them) -
 otherwise the test becomes a recurring, expected failure that erodes trust
 in test failures generally.
 
@@ -177,11 +177,11 @@ in test failures generally.
 
 Modern dbt-based analytics engineering teams run `data_tests` as a required
 step in CI before merging any model change, catching regressions before
-they reach production — a broken `not_null` test on a primary key blocks
+they reach production - a broken `not_null` test on a primary key blocks
 the pull request rather than blocking a 3am pipeline run days later.
 Ingestion-time validation (Great Expectations or similar) is more common at
 the boundary where external, less-trusted data enters an organization's
-systems — a vendor feed, a partner API, a user upload — where the incoming
+systems - a vendor feed, a partner API, a user upload - where the incoming
 data's shape can't be guaranteed by anything the organization controls.
 
 ## Failure modes
@@ -189,14 +189,14 @@ data's shape can't be guaranteed by anything the organization controls.
 **The dashboard that showed bad numbers for six hours because the only
 check was post-build.** A pipeline architecture where tests run after the
 data lands and other jobs read immediately has a real gap during which bad
-data is live and visible — symptom: a data quality incident where the test
+data is live and visible - symptom: a data quality incident where the test
 suite "worked" (it eventually caught the problem) and a stakeholder still
 saw wrong numbers before it did.
 
 **The contract that blocks a legitimate deploy nobody remembered to
 update.** A schema contract left unexpectedly in place after an intentional
 change (a new column added to the model but not the contract) fails the
-build for a reason that looks like a bug rather than a maintenance gap —
+build for a reason that looks like a bug rather than a maintenance gap -
 symptom: a build failure that requires reading the contract's diff against
 the model's actual output to understand, rather than being obvious from the
 error alone if the two aren't reviewed together.
@@ -204,7 +204,7 @@ error alone if the two aren't reviewed together.
 **The test suite so slow that it gets skipped under deadline pressure.**
 Hundreds of dbt tests accumulated without pruning or tiering (fast tests
 every run, slow tests nightly) can make the full suite slow enough that
-teams start skipping it under time pressure — the framework's value
+teams start skipping it under time pressure - the framework's value
 degrades to whatever fraction of it people actually run when it's
 inconvenient not to.
 
@@ -216,7 +216,7 @@ whether bad data already reached other consumers?**
 
 Post-build (a `data_tests` assertion), meaning the model already built and
 the null values already landed in the target table before the test ran and
-failed — any job or dashboard reading from that table before the test suite
+failed - any job or dashboard reading from that table before the test suite
 completed could have already seen the bad data. A contract or
 ingestion-time check would have caught it earlier.
 
@@ -224,7 +224,7 @@ ingestion-time check would have caught it earlier.
 orders table. Their dbt `accepted_values` test on `status` starts failing.
 Is this a data quality bug?**
 
-No — it's the test working as designed, catching an intentional schema
+No - it's the test working as designed, catching an intentional schema
 change that the test itself hasn't been updated to expect. The fix is
 updating the `accepted_values` list alongside the change that introduces
 the new status, in the same pull request.
@@ -263,7 +263,7 @@ for external data before it enters the warehouse, schema contracts at build
 time to catch structural drift before a transformation runs, and
 post-build tests (uniqueness, not-null, referential integrity, accepted
 values) as a final safety net. The caveat: which stage a check runs at
-determines how much damage happens before it's caught — a post-build-only
+determines how much damage happens before it's caught - a post-build-only
 strategy still catches problems, just after some downstream consumers may
 have already read the bad data.
 
@@ -272,6 +272,6 @@ is a SQL assertion that runs after a model builds and checks its output
 data; a contract is a schema declaration enforced at compile time, before
 the model runs, checking structure rather than content. The caveat that
 shows real use: contracts add real friction to legitimate schema
-changes — they need to be updated in the same change that intentionally
+changes - they need to be updated in the same change that intentionally
 alters a model's output shape, or the build fails for a reason that looks
 like a bug rather than a missed update.

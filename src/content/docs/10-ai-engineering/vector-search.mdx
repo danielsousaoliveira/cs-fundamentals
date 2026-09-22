@@ -1,7 +1,7 @@
 ---
 title: Vector search
 description: >-
-  Approximate nearest neighbour search — what HNSW actually trades away, why
+  Approximate nearest neighbour search - what HNSW actually trades away, why
   recall is a dial rather than a property, and the memory cliff that turns a fast
   index into a slow one.
 sidebar:
@@ -24,7 +24,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 Finding the nearest vector to a query is trivially easy and completely
 impractical: compare against every stored vector and keep the best. That is
-$O(n \cdot d)$ — for a million 1536-dimensional vectors, about **1.5 billion
+$O(n \cdot d)$ - for a million 1536-dimensional vectors, about **1.5 billion
 multiply-adds per query.**
 
 Approximate nearest neighbour search buys a better complexity class, and it pays
@@ -32,8 +32,8 @@ for it in a currency that is unusual in this book: **correctness**. An ANN index
 will sometimes miss a true nearest neighbour. Not because it is buggy, but
 because that is the deal.
 
-This is the same trade the rest of this site makes visible elsewhere — see
-[Big-O](/cs-fundamentals/1-complexity/big-o/) — with one difference worth
+This is the same trade the rest of this site makes visible elsewhere - see
+[Big-O](/cs-fundamentals/1-complexity/big-o/) - with one difference worth
 sitting with. Usually we trade memory for time, or preprocessing for query
 speed, and the answer stays right. Here the answer is sometimes wrong, and
 **how often is a parameter you set.**
@@ -52,7 +52,7 @@ your success.
 
 **The subtle one:** in high dimensions, the classic space-partitioning
 structures stop working. A k-d tree over 1536 dimensions has to examine nearly
-every branch, because distances concentrate — in high-dimensional space, the
+every branch, because distances concentrate - in high-dimensional space, the
 ratio between the nearest and farthest point shrinks toward 1, so partitioning
 prunes almost nothing. Exact indexing does not have a clever answer here. That
 is why the field went approximate.
@@ -66,13 +66,13 @@ a navigable graph with express lanes:
 
 ```mermaid
 flowchart TB
-  subgraph L2["layer 2 — few nodes, long hops"]
+  subgraph L2["layer 2 - few nodes, long hops"]
     A2((A)) --- D2((D))
   end
-  subgraph L1["layer 1 — more nodes"]
+  subgraph L1["layer 1 - more nodes"]
     A1((A)) --- C1((C)) --- D1((D)) --- F1((F))
   end
-  subgraph L0["layer 0 — every vector"]
+  subgraph L0["layer 0 - every vector"]
     A0((A)) --- B0((B)) --- C0((C)) --- D0((D)) --- E0((E)) --- F0((F)) --- G0((G))
   end
   A2 -.descend.-> A1
@@ -105,7 +105,7 @@ arrive.
 ### IVF, the alternative
 
 Inverted File indexes cluster the vectors, then search only the nearest few
-clusters. `nprobe` sets how many clusters to examine — the same recall/latency
+clusters. `nprobe` sets how many clusters to examine - the same recall/latency
 dial under a different name.
 
 | | HNSW | IVF |
@@ -113,7 +113,7 @@ dial under a different name.
 | Query speed | faster | fast, tunable |
 | Memory | higher | lower |
 | Build time | slower | faster |
-| Incremental inserts | good | degrades — needs periodic retraining |
+| Incremental inserts | good | degrades - needs periodic retraining |
 | Best for | most workloads | very large corpora, memory-constrained |
 
 The line that catches people is **incremental inserts**. IVF's clusters are
@@ -121,7 +121,7 @@ trained on the data present when the index was built. Add a million vectors
 about a new topic and the clusters no longer describe the data, so recall decays
 silently until someone retrains. HNSW handles insertion far more gracefully.
 
-### Measuring recall — the step everyone skips
+### Measuring recall - the step everyone skips
 
 Recall@k is measurable, cheaply, on a sample. There is no excuse for not knowing
 it.
@@ -136,7 +136,7 @@ def measure_recall(index, vectors, queries, k=10) -> float:
     """Compare the ANN index against brute force on a sample.
 
     Brute force over the WHOLE corpus for a few hundred queries is affordable
-    even when it is unaffordable per request — which is the point. You are
+    even when it is unaffordable per request - which is the point. You are
     buying ground truth once, offline, to calibrate a dial you then use forever.
     """
     hits = 0
@@ -176,7 +176,7 @@ async function measureRecall(index: Index, all: Vector[], queries: Vector[], k =
 </Tabs>
 
 Run it with 200 sampled queries, sweep `ef_search`, and plot recall against p99
-latency. **That curve is the actual engineering artefact** — it turns "is search
+latency. **That curve is the actual engineering artefact** - it turns "is search
 good enough" from an argument into a decision with two numbers on it.
 
 ### Filtering is where it gets hard
@@ -185,13 +185,13 @@ Real queries are rarely pure similarity. "Documents like this, from this tenant,
 created this year" mixes vector search with predicates, and there are three
 strategies with very different failure modes:
 
-- **Pre-filter** — restrict to matching rows, then search within them. Correct,
+- **Pre-filter** - restrict to matching rows, then search within them. Correct,
   and it can be slow: the graph's connectivity assumes the whole dataset, so a
   restrictive filter makes the walk traverse mostly-excluded nodes.
-- **Post-filter** — search, then drop non-matching results. Fast, and **it
+- **Post-filter** - search, then drop non-matching results. Fast, and **it
   silently returns too few results.** Ask for 10, filter to a tenant holding 1%
-  of the corpus, and you may get zero — with no error.
-- **Filtered search** — the filter is applied during traversal. What good
+  of the corpus, and you may get zero - with no error.
+- **Filtered search** - the filter is applied during traversal. What good
   engines do, and what you should prefer.
 
 **Post-filtering is a common and quiet correctness bug.** If your tenant
@@ -219,7 +219,7 @@ For 1536 dimensions at `m = 16`:
 
 **This is a cliff, not a curve.** Below the memory limit, queries are
 sub-millisecond. Above it, the index pages to disk and p99 degrades by two or
-three orders of magnitude — a graph walk has terrible locality, so nearly every
+three orders of magnitude - a graph walk has terrible locality, so nearly every
 hop is a fault.
 
 The operational tell is distinctive and worth recognising: **p50 stays fine
@@ -231,7 +231,7 @@ ones do not.
 | Technique | Reduction | Recall cost |
 |---|---|---|
 | `float32` → `int8` | 4× | small, usually acceptable |
-| Binary quantisation | 32× | large — needs a rescoring pass |
+| Binary quantisation | 32× | large - needs a rescoring pass |
 | Dimension reduction (1536→512) | 3× | corpus-dependent, measure it |
 | Product quantisation | 8-16× | moderate, tunable |
 
@@ -254,7 +254,7 @@ your corpus.
 ### Query cost
 
 Sub-millisecond for an in-memory HNSW index over a million vectors is realistic.
-Which means **the vector search is almost never your bottleneck** — the embedding
+Which means **the vector search is almost never your bottleneck** - the embedding
 call for the query is a network round trip of tens of milliseconds, and the
 generation that follows is seconds.
 
@@ -283,22 +283,22 @@ separate vector database is a second datastore to operate, and that is a
 significant cost to take on before you need it.
 
 **When the filter is highly selective.** If most queries restrict to a tiny
-subset, filtered scan over that subset may beat vector search over everything —
+subset, filtered scan over that subset may beat vector search over everything -
 and it is exact.
 
 ## Real-world usage
 
-- **RAG retrieval** — the dominant use. Modest corpora, k of 5-50, recall at 0.9+
+- **RAG retrieval** - the dominant use. Modest corpora, k of 5-50, recall at 0.9+
   is generally plenty since a reranker fixes the ordering afterwards.
-- **Semantic caching** — check whether a similar question was answered recently.
+- **Semantic caching** - check whether a similar question was answered recently.
   Here recall matters less and **precision matters enormously**: a false positive
   serves a wrong cached answer.
-- **Recommendation** — item and user embeddings in one space, nearest-neighbour
+- **Recommendation** - item and user embeddings in one space, nearest-neighbour
   lookup as the recommendation.
-- **Deduplication** — find near-identical documents at ingest. Usually run at
+- **Deduplication** - find near-identical documents at ingest. Usually run at
   high recall, because a missed duplicate is a permanent data-quality problem.
-- **Image and multimodal search** — same machinery, different encoder.
-- **Anomaly detection** — distance to the nearest neighbours as an outlier score.
+- **Image and multimodal search** - same machinery, different encoder.
+- **Anomaly detection** - distance to the nearest neighbours as an outlier score.
 
 ## Failure modes
 
@@ -323,7 +323,7 @@ error.
 those failing the predicate.
 
 **Fix:** use an engine with filtered traversal. If you must post-filter,
-over-fetch — retrieve `k × (1 / selectivity)` — and treat "fewer than k after
+over-fetch - retrieve `k × (1 / selectivity)` - and treat "fewer than k after
 filtering" as a condition to detect and handle, not to ignore.
 
 ### Recall decays silently after inserts
@@ -334,7 +334,7 @@ filtering" as a condition to detect and handle, not to ignore.
 data does not fit them. With HNSW, heavy deletion leaves tombstones that degrade
 connectivity.
 
-**Fix:** re-measure recall on a schedule — it is the only way to see this.
+**Fix:** re-measure recall on a schedule - it is the only way to see this.
 Rebuild or retrain periodically. Put recall on a dashboard next to latency.
 
 ### The distance metric does not match how vectors were stored
@@ -342,7 +342,7 @@ Rebuild or retrain periodically. Put recall on a dashboard next to latency.
 **Symptom:** results are plausible but subtly wrong; long documents dominate.
 
 **Cause:** vectors were stored un-normalised and the index is configured for
-inner product, which then rewards magnitude — i.e. length.
+inner product, which then rewards magnitude - i.e. length.
 
 **Fix:** normalise on write and use cosine or inner product interchangeably.
 Assert the norm at insert time rather than trusting the pipeline.
@@ -379,22 +379,22 @@ The index no longer fits in memory.
 
 The p50/p99 split is the diagnostic signature. Roughly half the index is
 resident, so the median query is served from RAM while the unlucky tail faults
-to disk — and a graph walk has terrible locality, so a faulting query faults
+to disk - and a graph walk has terrible locality, so a faulting query faults
 repeatedly.
 
 **Fix, in increasing order of effort:**
 
-1. **More RAM** — a 64 GB instance. Immediate, and the honest answer if the
+1. **More RAM** - a 64 GB instance. Immediate, and the honest answer if the
    corpus keeps growing.
-2. **`int8` quantisation** — 4× reduction takes it to ~7.5 GB, comfortably
+2. **`int8` quantisation** - 4× reduction takes it to ~7.5 GB, comfortably
    resident, at a small recall cost you should measure rather than assume.
-3. **Quantised search plus exact rescoring** — retrieve 100 candidates from the
+3. **Quantised search plus exact rescoring** - retrieve 100 candidates from the
    compressed index, rescore with full-precision vectors from disk. Nearly all
    the recall, most of the memory saving.
 4. **Shard** if growth continues, accepting the operational cost.
 
 **What to do regardless:** alert on index size against available RAM, at 70%.
-This failure has no gradual phase — you are fine until you are not, and by then
+This failure has no gradual phase - you are fine until you are not, and by then
 it is a production incident.
 
 </details>
@@ -413,7 +413,7 @@ is.
 
 The engine retrieves the global top 10 across all tenants, then discards
 non-matching rows. For a tenant holding 0.5% of the corpus, the expected number
-of survivors from a global top 10 is 0.05 — so usually **zero results, returned
+of survivors from a global top 10 is 0.05 - so usually **zero results, returned
 as a successful empty response.**
 
 **Fix, in order of preference:**
@@ -422,7 +422,7 @@ as a successful empty response.**
    the graph walk. This is correct and it is what you want.
 2. **Per-tenant namespaces or collections.** Each tenant gets its own index, so
    the filter is structural rather than a predicate. Also the cleanest isolation
-   story — worth it independently of this bug.
+   story - worth it independently of this bug.
 3. **Over-fetch** as a stopgap: retrieve `k / selectivity`, so 10 results for a
    0.5% tenant means fetching 2,000. Works, and it is expensive and fragile.
 
@@ -444,16 +444,16 @@ Three workloads. Pick an approach and justify it.
 <details>
 <summary>Solution</summary>
 
-**(a) 8,000 documents — no index at all.**
+**(a) 8,000 documents - no index at all.**
 
 A brute-force matrix multiply over 8,000 × 1536 floats is a few milliseconds in
 NumPy, exactly correct, and needs 50 MB. At 50 queries/day that is not a
 performance problem in any sense. You avoid an index, a rebuild path, a
 parameter set, and the recall question entirely. **The crossover for "needs an
-ANN index" is much higher than people assume** — and this workload also wanted
+ANN index" is much higher than people assume** - and this workload also wanted
 exactness, which ANN cannot promise.
 
-**(b) 40 million at 5,000 QPS — IVF or IVF-PQ, sharded.**
+**(b) 40 million at 5,000 QPS - IVF or IVF-PQ, sharded.**
 
 Raw storage is 245 GB, so a single-node in-memory HNSW is out. This is the
 regime IVF was designed for: lower memory, and `nprobe` as an explicit
@@ -464,15 +464,15 @@ by an attribute that most queries filter on, so a query touches one shard.
 The trap: this workload is *not* continuously updated, so IVF's retraining
 weakness does not bite. Check that assumption before committing.
 
-**(c) 2 million, continuously updated — HNSW.**
+**(c) 2 million, continuously updated - HNSW.**
 
 12 GB of vectors plus ~3 GB of graph fits comfortably in a 32 GB instance, and
 50 QPS is nothing. The deciding factor is **continuous updates**: IVF's clusters
 would drift as new articles arrive and recall would decay silently until
 someone retrained. HNSW handles incremental insertion well.
 
-The thing to watch is deletions — tombstones degrade graph connectivity over
-time — so schedule a periodic rebuild and, more importantly, **measure recall on
+The thing to watch is deletions - tombstones degrade graph connectivity over
+time - so schedule a periodic rebuild and, more importantly, **measure recall on
 a schedule** so drift is visible rather than inferred from complaints.
 
 </details>
@@ -483,17 +483,17 @@ a schedule** so drift is visible rather than inferred from complaints.
   kind="concept"
   question="What does an approximate nearest neighbour index trade away, compared to exhaustive search?"
   options={[
-    { label: 'Guaranteed correctness — it can miss true nearest neighbours, at a rate you control with a parameter', correct: true },
-    { label: 'Memory — it is slower per query but uses far less RAM than storing all vectors' },
+    { label: 'Guaranteed correctness - it can miss true nearest neighbours, at a rate you control with a parameter', correct: true },
+    { label: 'Memory - it is slower per query but uses far less RAM than storing all vectors' },
     { label: 'Nothing, provided the index is built with enough edges per node' },
-    { label: 'Update speed — queries are exact but inserts become expensive' },
+    { label: 'Update speed - queries are exact but inserts become expensive' },
   ]}
 >
   <Fragment slot="explanation">
     <p>
       This is the unusual trade in the family. Most indexes buy query speed with
       memory or preprocessing and keep the answer exact. ANN buys a better
-      complexity class by <em>sometimes returning the wrong answer</em> —
+      complexity class by <em>sometimes returning the wrong answer</em> -
       greedy graph traversal can settle in a local minimum and never visit the
       true nearest neighbour.
     </p>
@@ -501,7 +501,7 @@ a schedule** so drift is visible rather than inferred from complaints.
       The important consequence is that recall is a <strong>dial</strong>, not a
       property you discover. <code>ef_search</code> in HNSW and{' '}
       <code>nprobe</code> in IVF both trade query latency for recall, and{' '}
-      <code>ef_search</code> can be changed without rebuilding — which makes it
+      <code>ef_search</code> can be changed without rebuilding - which makes it
       the first thing to reach for when relevance complaints arrive.
     </p>
     <p>
@@ -528,7 +528,7 @@ a schedule** so drift is visible rather than inferred from complaints.
     <p>
       Post-filtering retrieves the global top k and then discards rows failing
       the predicate. For a tenant holding 0.5% of the corpus, the expected number
-      of survivors from a global top 10 is about 0.05 — so usually zero, returned
+      of survivors from a global top 10 is about 0.05 - so usually zero, returned
       as a perfectly successful empty response.
     </p>
     <p>
@@ -537,7 +537,7 @@ a schedule** so drift is visible rather than inferred from complaints.
       unaffected, and the small ones assume the product is simply not very good.
     </p>
     <p>
-      There is no data leak — the filter does run — so this is a relevance and
+      There is no data leak - the filter does run - so this is a relevance and
       correctness bug rather than a security one. The fixes are filtered
       traversal during the graph walk, or per-tenant namespaces so isolation is
       structural. And regardless of fix: log when a filtered result set comes
@@ -550,13 +550,13 @@ a schedule** so drift is visible rather than inferred from complaints.
 
 **"Why not just compare against every vector?"**
 
-> Because it is $O(n \cdot d)$ — a million 1536-dimensional vectors is about 1.5
+> Because it is $O(n \cdot d)$ - a million 1536-dimensional vectors is about 1.5
 > billion multiply-adds per query. And the classic exact structures do not rescue
 > you: a k-d tree over 1536 dimensions prunes almost nothing, because distances
 > concentrate in high dimensions.
 >
 > So the field went approximate. HNSW gives roughly logarithmic hops instead of
-> linear comparisons, and what it pays with is correctness — it will sometimes
+> linear comparisons, and what it pays with is correctness - it will sometimes
 > miss a true neighbour.
 >
 > The caveat I would add is that brute force is right more often than people
@@ -567,7 +567,7 @@ a schedule** so drift is visible rather than inferred from complaints.
 **"How do you know your vector search is good enough?"**
 
 > Measure recall against brute force. Sample a couple of hundred queries, compute
-> exact top-k offline — expensive per request, trivial as a one-off — and compare
+> exact top-k offline - expensive per request, trivial as a one-off - and compare
 > with what the index returns.
 >
 > Then sweep `ef_search` and plot recall against p99 latency. That curve is the
@@ -584,7 +584,7 @@ a schedule** so drift is visible rather than inferred from complaints.
 > its latency; once it does not fit, graph traversal has terrible locality so
 > almost every hop faults.
 >
-> The signature is distinctive — p50 stays fine and p99 explodes — because most
+> The signature is distinctive - p50 stays fine and p99 explodes - because most
 > queries stay in the resident portion and the unlucky ones do not. I would alert
 > on index size against available RAM at around 70%, because after the cliff you
 > are already in an incident.
@@ -597,7 +597,7 @@ a schedule** so drift is visible rather than inferred from complaints.
 - Post-filtering is a silent correctness bug in multi-tenant systems; prefer
   filtered traversal or per-tenant namespaces.
 - Store the embedding model and version with every vector and reject mismatches.
-- The vector search is rarely the bottleneck — the query embedding round trip
+- The vector search is rarely the bottleneck - the query embedding round trip
   usually costs far more.
 - Normalise on write; then cosine and inner product are the same operation.
 - Recall is chosen, not discovered. A team that has not measured it has accepted

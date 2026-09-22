@@ -1,5 +1,5 @@
 ---
-title: Python for data — pandas, vectorisation, and polars
+title: Python for data - pandas, vectorisation, and polars
 description: >-
   A measured 50x gap between a Python loop and a vectorised pandas operation,
   the SettingWithCopyWarning that means your edit silently didn't happen, and
@@ -21,11 +21,11 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 ## Intuition
 
-A pandas `DataFrame` column is backed by a NumPy array — contiguous memory,
-uniform type — and NumPy's arithmetic on that array runs as compiled C
+A pandas `DataFrame` column is backed by a NumPy array - contiguous memory,
+uniform type - and NumPy's arithmetic on that array runs as compiled C
 looping over contiguous memory, not as Python bytecode looping over Python
 objects. **Vectorisation is writing the operation once, over the whole
-column, and letting that compiled loop do the iterating** — rather than
+column, and letting that compiled loop do the iterating** - rather than
 writing your own Python `for` loop that iterates row by row, boxing and
 unboxing a Python object at every step.
 
@@ -38,7 +38,7 @@ vectorised (col * const):  0.27 ms
 speedup:                     50x
 ```
 
-And that's the *good* Python loop — a plain arithmetic loop with no pandas
+And that's the *good* Python loop - a plain arithmetic loop with no pandas
 object overhead per iteration. The version people actually reach for first,
 `iterrows()`, is dramatically worse.
 
@@ -56,7 +56,7 @@ total = (df['amount_cents'] * 1.2).sum()
 ```
 
 Measured on this project's real corpus: `iterrows()` over 2,000 rows took
-22.7 ms — 11.3 microseconds per row — which extrapolates to roughly **2.3
+22.7 ms - 11.3 microseconds per row - which extrapolates to roughly **2.3
 seconds for 200,000 rows**, against 0.27 milliseconds vectorised. That's
 close to a 10,000x gap, not a rounding difference, and it comes entirely
 from `iterrows()` constructing a full pandas `Series` object (with its own
@@ -87,11 +87,11 @@ from a DataFrame. Try using .loc[row_indexer,col_indexer] = value instead
 
 And checking `df` afterward: **the original values are still there. The
 assignment did not modify `df`.** `df[df['status'] == 'a']` may return a
-view or a copy of the original data — pandas doesn't guarantee which, and
-in this case it returned a copy — so `sub['amount'] = 0` modified a
+view or a copy of the original data - pandas doesn't guarantee which, and
+in this case it returned a copy - so `sub['amount'] = 0` modified a
 throwaway copy that's discarded the moment `sub` goes out of scope, while
 `df` itself is untouched. This is a warning, not an error, and the code
-"runs successfully" — the only sign anything went wrong is a warning
+"runs successfully" - the only sign anything went wrong is a warning
 message easy to miss in a busy log, and a result that's silently unchanged
 from what you expected.
 
@@ -114,7 +114,7 @@ df = df.with_columns((pl.col('amount_cents') * 1.2).alias('adjusted'))
 ```
 
 polars is built on Apache Arrow and a Rust execution engine with a **lazy,
-query-optimising API** — operations build a query plan that's optimised and
+query-optimising API** - operations build a query plan that's optimised and
 executed as a whole, closer to how a SQL engine plans a query than to
 pandas' eager, statement-by-statement execution. Two consequences that
 matter for the failures above: polars has no row-by-row iteration idiom
@@ -127,19 +127,19 @@ against, rather than warning about it after the fact.
 ## Cost & limits
 
 **Vectorisation requires the operation to be expressible in terms NumPy or
-polars can execute natively** — arithmetic, comparisons, and a large
+polars can execute natively** - arithmetic, comparisons, and a large
 library of built-in string/date/aggregate operations vectorise directly.
 Genuinely row-dependent custom logic (a calculation whose result for row N
 depends on a complex conditional involving several unrelated columns in a
 way no built-in function expresses) sometimes has no clean vectorised form
 and may need `.apply()` or, for very hot code paths, a compiled
-alternative (NumPy's own C-level operations, or a Numba-jitted function) —
+alternative (NumPy's own C-level operations, or a Numba-jitted function) -
 vectorisation is the default to reach for, not a universal solution to
 every transformation.
 
 **polars' lazy evaluation model is a different mental model than pandas'
 eager one**, and porting existing pandas code isn't a drop-in
-rename — expressions, method chaining, and when computation actually
+rename - expressions, method chaining, and when computation actually
 happens all differ enough that adopting polars is a real (if usually
 worthwhile) migration, not a find-and-replace.
 
@@ -148,8 +148,8 @@ worthwhile) migration, not a find-and-replace.
 **Do not reach for `.apply()` or a Python loop before checking whether the
 operation has a direct vectorised equivalent.** Most common transformations
 (arithmetic, string operations, date parsing, conditional logic via
-`np.where` or `.mask()`) already have one — checking is nearly free, and the
-gap between finding it and not is exactly the 50x–10,000x range measured
+`np.where` or `.mask()`) already have one - checking is nearly free, and the
+gap between finding it and not is exactly the 50x-10,000x range measured
 above.
 
 **Do not migrate an existing, working pandas pipeline to polars purely for
@@ -160,14 +160,14 @@ speed that wasn't the constraint in the first place.
 
 **Do not assume `df[mask]['column'] = value` failing silently is a rare
 edge case.** It's one of the most common real bugs in pandas code precisely
-because the syntax looks natural and the code runs without an error — treat
+because the syntax looks natural and the code runs without an error - treat
 any chained assignment as suspect and prefer `.loc[]` by default rather than
 by exception.
 
 ## Real-world usage
 
 Feature engineering for machine learning and any large-scale ETL
-transformation step routinely hits the vectorisation gap directly — a
+transformation step routinely hits the vectorisation gap directly - a
 transformation written as a Python loop over millions of rows during
 prototyping (where it's fast enough on a small sample to seem fine) becomes
 the pipeline's dominant cost once it runs against full production volume,
@@ -182,21 +182,21 @@ execution has become a measured bottleneck.
 transformation using `iterrows()` or `.apply()` tested against a small
 sample (where the per-row overhead is invisible in absolute terms) hits
 production data volume and the same per-row overhead, now multiplied by a
-much larger row count, dominates the pipeline's total runtime — symptom: a
+much larger row count, dominates the pipeline's total runtime - symptom: a
 step that was fast in every test environment and is unexpectedly the
 slowest part of the pipeline in production, with no code change between
 the two.
 
 **The transformation that silently didn't happen.** A `SettingWithCopyWarning`
 easy to miss in a noisy log means a downstream step operates on data that
-was never actually modified as intended — the pipeline reports success,
+was never actually modified as intended - the pipeline reports success,
 because from pandas' perspective nothing errored, and the bug surfaces only
 when someone notices the "cleaned" data still contains the values it was
 supposed to have replaced.
 
 **The memory blowup from an unnecessary full copy.** Chained indexing
 (`df[mask]['col']`) can trigger an implicit copy of a large slice that a
-single `.loc[]` call wouldn't have needed — on a large enough DataFrame,
+single `.loc[]` call wouldn't have needed - on a large enough DataFrame,
 this shows up as unexpected memory pressure or an out-of-memory failure
 that's hard to trace back to a specific line without profiling, because the
 copy is implicit rather than an explicit `.copy()` call anyone would think
@@ -214,9 +214,9 @@ Check whether `transform` can be rewritten as a vectorised expression
 (operating on the whole column/DataFrame at once) rather than a per-row
 function. Based on the measured `iterrows()` overhead (roughly 11
 microseconds per row, extrapolating linearly), a genuinely vectorised
-equivalent would plausibly bring 45 minutes down to well under a minute —
+equivalent would plausibly bring 45 minutes down to well under a minute -
 the exact factor depends on the operation, but the order of magnitude
-matches the 50x–10,000x range measured above.
+matches the 50x-10,000x range measured above.
 
 **2. `df[df['amount'] > 1000]['flag'] = True` produces a
 `SettingWithCopyWarning` and doesn't modify `df`. Rewrite it correctly.**
@@ -229,7 +229,7 @@ df.loc[df['amount'] > 1000, 'flag'] = True
 polars. What would you check before recommending the migration?**
 
 Profile the pipeline first to confirm pandas computation is actually the
-bottleneck (versus I/O, a database write, or network calls) — if it is,
+bottleneck (versus I/O, a database write, or network calls) - if it is,
 check specifically whether the slow parts are already vectorised pandas
 operations (which polars might only modestly improve) or row-wise loops/
 `.apply()` calls (where either fixing the vectorisation within pandas, or
@@ -260,7 +260,7 @@ is backed by a contiguous NumPy array, and vectorised operations delegate
 to NumPy's compiled loops over that memory directly, avoiding Python's
 per-iteration interpreter overhead entirely. The caveat that shows real
 measurement rather than received wisdom: the gap isn't uniform across
-approaches — a plain Python loop measured around 50x slower than
+approaches - a plain Python loop measured around 50x slower than
 vectorised, while `.iterrows()` specifically (which additionally
 constructs a pandas Series object per row) measured closer to 10,000x
 slower, because it's paying both the interpreter overhead and real object
@@ -268,11 +268,11 @@ construction cost on every row.
 
 **"What's SettingWithCopyWarning, and why is it dangerous rather than just
 annoying?"** pandas doesn't always guarantee whether indexing returns a
-view or a copy of the underlying data — a chained assignment
+view or a copy of the underlying data - a chained assignment
 (`df[mask]['col'] = value`) can silently modify a throwaway copy rather
 than the original DataFrame, with no error, just a warning that's easy to
 miss. The caveat: the code "works" in the sense that it runs without
-crashing, which is exactly what makes it dangerous — the failure is a
+crashing, which is exactly what makes it dangerous - the failure is a
 transformation that silently didn't happen, discovered only when
 downstream data doesn't match what should have been changed. `.loc[]` with
 explicit row and column indexers avoids the ambiguity entirely.

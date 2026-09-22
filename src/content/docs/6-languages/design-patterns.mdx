@@ -2,7 +2,7 @@
 title: Design Patterns
 description: >-
   A pattern is a name for a recurring shape, and its value is mostly
-  communication — the five worth writing from memory, the one that needs a
+  communication - the five worth writing from memory, the one that needs a
   caveat, and the anti-patterns worth naming.
 sidebar:
   order: 6
@@ -30,13 +30,13 @@ That framing has two consequences worth taking seriously.
 
 **A pattern applied where the shape is not present is pure ceremony.** A factory
 with one product, an interface with one implementation, an observer with one
-observer — each adds a hop for a flexibility nobody asked for. The pattern did not
+observer - each adds a hop for a flexibility nobody asked for. The pattern did not
 make it better; it made it longer.
 
 **You have already been using most of them.** Express middleware is Chain of
 Responsibility. `EventEmitter` is Observer. An array `sort` comparator is Strategy.
 A module-level database pool is a Singleton, whether or not anyone wrote the word.
-Learning patterns is mostly learning the names for things you do already — which is
+Learning patterns is mostly learning the names for things you do already - which is
 exactly why the value is communication.
 
 The useful skill is recognition: seeing a growing `switch` and thinking "that wants
@@ -55,7 +55,7 @@ and thinking "that wants an Adapter".
 | **Adapter** | Make an incompatible interface fit yours | Wrapping a third-party SDK |
 | **Decorator** | Add behaviour without changing the object | Middleware, a caching wrapper |
 | **Observer / Pub-Sub** | One-to-many notification | `EventEmitter`, message queues, webhooks |
-| **Singleton** | One shared instance | Connection pool, config — *with a caveat* |
+| **Singleton** | One shared instance | Connection pool, config - *with a caveat* |
 | **Facade** | Simple interface over a complex subsystem | One service orchestrating three clients |
 | **Builder** | Step-by-step construction | Query builders, test-data builders |
 | **Chain of Responsibility** | Pass a request along handlers until one handles it | The Express middleware chain |
@@ -64,7 +64,7 @@ and thinking "that wants an Adapter".
 
 ### The five worth writing from memory
 
-**Strategy** — one interface, many interchangeable implementations, chosen at
+**Strategy** - one interface, many interchangeable implementations, chosen at
 runtime.
 
 ```ts
@@ -86,9 +86,9 @@ class Checkout {
 ```
 
 *When to reach for it:* whenever branching on a type or mode keeps growing. That is
-the same trigger as Open/Closed — **Strategy is how you implement Open/Closed.**
+the same trigger as Open/Closed - **Strategy is how you implement Open/Closed.**
 
-**Repository** — a domain-shaped interface over storage. The key discipline is that
+**Repository** - a domain-shaped interface over storage. The key discipline is that
 the interface speaks the *domain's* language, not the database's.
 
 ```ts
@@ -100,10 +100,10 @@ interface AppointmentRepository {
 
 Note `findConflicting`, **not `query(filter)`**. A repository that exposes a
 generic query object has leaked the database into the domain and bought you
-nothing — and that is the most common way people implement this pattern and get
+nothing - and that is the most common way people implement this pattern and get
 none of the benefit.
 
-**Adapter** — wrap someone else's interface in yours.
+**Adapter** - wrap someone else's interface in yours.
 
 ```ts
 // Their SDK: sgMail.send({ to, subject, html })
@@ -119,11 +119,11 @@ class SendGridMailer implements Mailer {
 ```
 
 Two payoffs. The vendor's shape stops spreading through your codebase, so switching
-provider is one file. And your tests fake `Mailer` — a two-line object — instead of
+provider is one file. And your tests fake `Mailer` - a two-line object - instead of
 mocking an entire SDK. **"Every third-party SDK gets an adapter" is a defensible
 blanket rule.**
 
-**Decorator** — same interface, added behaviour, by wrapping.
+**Decorator** - same interface, added behaviour, by wrapping.
 
 ```ts
 class CachedDoctorRepo implements DoctorRepository {
@@ -143,7 +143,7 @@ class CachedDoctorRepo implements DoctorRepository {
 }
 ```
 
-The caller cannot tell the difference, which is the whole point — caching was added
+The caller cannot tell the difference, which is the whole point - caching was added
 with **zero changes** to the interface or to any consumer. The same shape gives you
 retry, logging, metrics and circuit breaking, **and they compose**:
 
@@ -154,7 +154,7 @@ new Logged(new Retrying(new Cached(new MongoRepo())));
 That composability is the strongest argument for the pattern, and it is what people
 miss when they think of it as "a wrapper class".
 
-**Observer / Pub-Sub** — one-to-many notification, producer unaware of consumers.
+**Observer / Pub-Sub** - one-to-many notification, producer unaware of consumers.
 
 ```js
 service.on('appointment.confirmed', (a) => metrics.increment('confirmed'));
@@ -179,7 +179,7 @@ export const db = new Pool({
 ```
 
 In Node, ES modules are cached after first evaluation, so a module-level instance
-*is* a singleton. It is legitimate for a connection pool or parsed config — you
+*is* a singleton. It is legitimate for a connection pool or parsed config - you
 genuinely want one pool, not one per request.
 
 > It hurts testability and hides global state. A module that imports it has an
@@ -206,7 +206,7 @@ where $p$ is the probability the change happens, $n$ how many times, and $R$ the
 number of future reads. Two things fall out.
 
 **$R$ is large and $n$ is usually small.** Code is read far more often than it
-changes, so $r$ — a small per-read cost — is multiplied by a big number, while $s$
+changes, so $r$ - a small per-read cost - is multiplied by a big number, while $s$
 is multiplied by a small one. That asymmetry is why premature abstraction loses
 even when the abstraction is "correct".
 
@@ -240,7 +240,7 @@ the third case. One implementation is a guess about the future, two is a
 coincidence, three is a pattern.
 
 **Do not use Singleton for mutable state.** A connection pool is fine because it is
-effectively immutable — you use it, you do not reconfigure it. A module-level object
+effectively immutable - you use it, you do not reconfigure it. A module-level object
 whose fields are mutated from anywhere is untestable, order-dependent, and invisible
 in every signature that relies on it.
 
@@ -266,7 +266,7 @@ decoupling tool, not a delivery guarantee.
 
 **Do not use a Factory where a constructor works.** `UserFactory.create(name)`
 returning `new User(name)` is a constructor with extra steps. A factory earns its
-place when creation involves a *decision* — picking an implementation, reading
+place when creation involves a *decision* - picking an implementation, reading
 config, or assembling several collaborators.
 
 **Do not abstract a third-party SDK into an interface with the SDK's own shape.**
@@ -285,7 +285,7 @@ app.use(rateLimit());
 app.use(authenticate);
 ```
 
-The ordering is semantic, not cosmetic — authentication after rate limiting means
+The ordering is semantic, not cosmetic - authentication after rate limiting means
 unauthenticated floods are cheap to reject, and the reverse means they are not.
 This is the same ordering question as decorator composition.
 
@@ -293,12 +293,12 @@ This is the same ordering question as decorator composition.
 interface, dozens of implementations, selected by name at runtime.
 
 **The Node standard library is full of these.** `EventEmitter` is Observer.
-`stream.pipe` is a form of Decorator — each stream wraps the previous and adds a
+`stream.pipe` is a form of Decorator - each stream wraps the previous and adds a
 transformation. `AbortController` is Observer applied to cancellation.
 
 **React hooks replaced an inheritance-shaped pattern with a compositional one.**
 Higher-order components were Decorator applied to components, and they hit exactly
-the composition-depth problem above — five HOCs meant a stack trace of five
+the composition-depth problem above - five HOCs meant a stack trace of five
 wrappers and a props flow nobody could follow. Hooks are the same capability
 expressed as plain function composition, with no wrapper layers at all.
 
@@ -348,8 +348,8 @@ absorbing it. A domain-shaped interface would have contained it.
 
 **Symptom: an event fires, a listener throws, and the request succeeds anyway with
 half the work done.** In-process Observer with no durability and no error handling.
-`EventEmitter` swallows nothing — an `error` event with no listener actually
-crashes the process — but a throwing listener in a synchronous `emit` propagates
+`EventEmitter` swallows nothing - an `error` event with no listener actually
+crashes the process - but a throwing listener in a synchronous `emit` propagates
 into the emitter's caller, which is rarely what anyone intended.
 
 **Symptom: an interface has one implementation and is named after it.**
@@ -365,19 +365,19 @@ ceremony.
 **Anti-patterns worth naming, with definitions**, because being able to name them is
 half of arguing against them:
 
-- **God object** — one class that knows and does everything; every change touches
+- **God object** - one class that knows and does everything; every change touches
   it.
-- **Anemic domain model** — entities are bags of public fields with no behaviour,
+- **Anemic domain model** - entities are bags of public fields with no behaviour,
   and all the rules live in services. Everything type-checks and nothing enforces an
   invariant, so the same rule gets re-implemented in three services and one of them
   gets it wrong. The fix is behaviour on the entity: `appointment.cancel(actor)`
   rather than `service.setStatus(a, 'CANCELLED')`.
-- **Service locator** — as above.
-- **Premature abstraction** — an interface with one implementation, a plugin system
+- **Service locator** - as above.
+- **Premature abstraction** - an interface with one implementation, a plugin system
   with one plugin, a config option nobody sets.
-- **Singleton-as-global-state** — mutable state on a module-level object, mutated
+- **Singleton-as-global-state** - mutable state on a module-level object, mutated
   from anywhere.
-- **Primitive obsession** — every id is a `string`, so nothing stops you passing a
+- **Primitive obsession** - every id is a `string`, so nothing stops you passing a
   `doctorId` where a `patientId` belongs.
   [Branded types](/cs-fundamentals/6-languages/typescript/) are the fix.
 
@@ -424,7 +424,7 @@ Three things improved beyond the obvious extensibility:
 **Each channel is independently testable** without the others in scope.
 
 **The `User` coupling is now visible.** In the original, `notify` needed to know
-about `email`, `phone`, `deviceToken` and `slackId` — a growing dependency on the
+about `email`, `phone`, `deviceToken` and `slackId` - a growing dependency on the
 user's shape, hidden inside a branch. Each channel now owns its own field access.
 
 **The unknown-channel case is handled.** The original silently did nothing for a
@@ -466,15 +466,15 @@ const users = new MeasuredUsers(new CachedUsers(new RetryingUsers(new PgUsers())
 wrong produces misleading data rather than an error:
 
 - **Metrics outermost** measures what the *caller* experiences, including cache
-  hits — which is what you want on a latency dashboard. Put metrics innermost and
+  hits - which is what you want on a latency dashboard. Put metrics innermost and
   you measure only database calls, so your p99 looks terrible while users are being
   served from cache in a millisecond.
 - **Cache outside retry** means a cache hit skips the retry logic entirely, which
-  is correct — there is nothing to retry.
+  is correct - there is nothing to retry.
 - **Retry inside cache** means a successful retry populates the cache, so the next
   caller does not pay for the flakiness.
 
-Reverse cache and retry — `Retrying(Cached(...))` — and you retry the cache lookup
+Reverse cache and retry - `Retrying(Cached(...))` - and you retry the cache lookup
 itself, which is nearly always pointless and can hammer Redis during a database
 outage.
 
@@ -503,12 +503,12 @@ class ConfigService {
 <details>
 <summary>Solution</summary>
 
-The problem is not that it is a singleton — it is that it is a singleton with
+The problem is not that it is a singleton - it is that it is a singleton with
 **mutable state**.
 
 **Tests leak into each other.** One test calls `set('FEATURE_X', 'on')`, and every
 subsequent test in the process sees it. The failure appears in a *different* test,
-which passes when run alone — the hardest kind of failure to diagnose, and it is
+which passes when run alone - the hardest kind of failure to diagnose, and it is
 order-dependent, so it appears and disappears as tests are added.
 
 **The dependency is invisible.** A class calling `ConfigService.getInstance()`
@@ -536,7 +536,7 @@ class OrderService {
 ```
 
 The general rule this illustrates: **a singleton is acceptable when it is
-effectively immutable** — a connection pool, parsed config, a logger. The moment it
+effectively immutable** - a connection pool, parsed config, a logger. The moment it
 holds state anyone can mutate, it is global state, and every problem global state
 has ever had applies.
 
@@ -548,7 +548,7 @@ has ever had applies.
   kind="concept"
   question="A repository interface exposes `find(filter: MongoFilter): Promise<T[]>`. What has this bought?"
   options={[
-    { label: 'Almost nothing — the database has leaked into the domain', correct: true },
+    { label: 'Almost nothing - the database has leaked into the domain', correct: true },
     { label: 'Full decoupling, since consumers no longer import the driver' },
     { label: 'Testability, because the filter can be asserted on in a mock' },
     { label: 'Flexibility, since any query can be expressed without new methods' },
@@ -557,7 +557,7 @@ has ever had applies.
   <Fragment slot="explanation">
     <p>
       Almost nothing. Every consumer now constructs Mongo query objects, so Mongo's
-      query language is spread through the business logic — the exact coupling the
+      query language is spread through the business logic - the exact coupling the
       repository existed to prevent. Swapping to Postgres means rewriting every
       call site, which is the situation you were trying to avoid.
     </p>
@@ -567,8 +567,8 @@ has ever had applies.
       ever has to think about what the domain actually needs.
     </p>
     <p>
-      A repository's interface should speak the domain's language —{' '}
-      <code>findConflicting(doctorId, range)</code> — so the query lives in one
+      A repository's interface should speak the domain's language -{' '}
+      <code>findConflicting(doctorId, range)</code> - so the query lives in one
       place, its intent is named, and the storage engine is genuinely replaceable.
     </p>
   </Fragment>
@@ -581,7 +581,7 @@ has ever had applies.
   question="You wrap a repository as Measured(Cached(Retrying(Postgres))). Your latency dashboard now shows p99 of 0.4 ms. What changed if you reorder to Cached(Measured(Retrying(Postgres)))?"
   options={[
     { label: 'The metric stops counting cache hits, so p99 jumps to database latency', correct: true },
-    { label: 'Nothing — decorators are commutative' },
+    { label: 'Nothing - decorators are commutative' },
     { label: 'Cache hits are counted twice, halving the reported p99' },
     { label: 'Retries stop being measured, so p99 falls further' },
   ]}
@@ -590,7 +590,7 @@ has ever had applies.
     <p>
       Moving the metrics decorator <em>inside</em> the cache means it only sees
       calls that missed. Cache hits never reach it, so the dashboard reports the
-      latency of the slow path exclusively — and p99 jumps to database latency even
+      latency of the slow path exclusively - and p99 jumps to database latency even
       though users are being served in well under a millisecond.
     </p>
     <p>
@@ -617,7 +617,7 @@ with a "what I avoid" beats a list:
 > Decorator. Strategy whenever I have branching on a type that keeps growing.
 > Repository to keep the database out of business logic and make the unit tests
 > fast. Adapter around every third-party SDK so it is mockable and replaceable. And
-> Decorator, because that is what middleware already is — cross-cutting behaviour by
+> Decorator, because that is what middleware already is - cross-cutting behaviour by
 > wrapping rather than by editing.
 >
 > The ones I am wary of are Singleton, for the testability reason, and anything that
@@ -627,7 +627,7 @@ with a "what I avoid" beats a list:
 
 > Mostly communication. A pattern is a name for a shape that keeps recurring, and
 > saying "this is a Strategy" in review saves a paragraph. Applied where the shape
-> is not there, it is just ceremony — so the trigger is recognising the shape, not
+> is not there, it is just ceremony - so the trigger is recognising the shape, not
 > deciding to use a pattern.
 
 **"When would you use a Singleton?"** And always volunteer the caveat:
@@ -636,7 +636,7 @@ with a "what I avoid" beats a list:
 > you get it for free, because ES modules are cached after first evaluation, so a
 > module-level instance *is* a singleton.
 >
-> The caveat is that it hurts testability and hides global state — a module that
+> The caveat is that it hurts testability and hides global state - a module that
 > imports it has an invisible dependency you cannot substitute, and tests leak state
 > into each other through it. So I would rather register one instance in a container:
 > one shared object, still injectable.
@@ -649,7 +649,7 @@ premature abstraction, singleton-as-global-state, and primitive obsession.
 
 - A repository that exposes the database's query language has leaked the database
   into the domain and bought nothing.
-- Decorators compose, and the ordering is semantic — metrics outside the cache
+- Decorators compose, and the ordering is semantic - metrics outside the cache
   measures what users feel; inside it measures only the misses.
 - In-process events are a decoupling tool, not a durability tool. If losing one
   matters, it needs a broker or an outbox.

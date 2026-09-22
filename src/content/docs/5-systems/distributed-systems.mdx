@@ -21,14 +21,14 @@ sources:
 
 A distributed system is any system where a machine has to find out what
 another machine did over a network that can lose messages, delay them, or cut
-out entirely — and cannot tell those three apart from the outside. That last
+out entirely - and cannot tell those three apart from the outside. That last
 clause is the entire subject. A single-process program never faces it: a
 function call either returns or the process is dead, and you know which.
 
 The famous [fallacies of distributed
 computing](https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing)
 are really one fallacy repeated eight ways: *the network behaves like local
-memory*. It doesn't — latency is not zero, bandwidth is not infinite, the
+memory*. It doesn't - latency is not zero, bandwidth is not infinite, the
 network is not reliable, and topology changes under you. Every distributed
 systems technique on this site is a response to one of those facts refusing
 to go away.
@@ -41,7 +41,7 @@ from where you're standing:
 2. The request arrived, was processed, and the response was lost.
 3. The request is still being processed.
 
-A local function call can never produce case 2 — it either ran or it didn't,
+A local function call can never produce case 2 - it either ran or it didn't,
 never both-and-you-can't-tell. A remote call can, and the entire discipline
 of building distributed systems is designing so that not knowing which of the
 three happened doesn't corrupt anything.
@@ -51,7 +51,7 @@ three happened doesn't corrupt anything.
 ### The partition is not a hypothetical
 
 A network partition means some machines can't reach others, temporarily or
-not. It happens more than intuition suggests — a bad deploy, a router
+not. It happens more than intuition suggests - a bad deploy, a router
 misconfiguration, a saturated link, a cloud provider's cross-AZ network
 having a bad five minutes. When it happens, [Databases](/cs-fundamentals/5-systems/databases/)'s
 CAP framing stops being theoretical: a node on the wrong side of the partition
@@ -71,7 +71,7 @@ flowchart LR
 
 Node 3 gets a write. It can accept it and diverge from Side A (choosing
 **availability**), or refuse until the partition heals (choosing
-**consistency**). There is no third option that gets both — that's the
+**consistency**). There is no third option that gets both - that's the
 theorem, not a design failure. What the theorem does *not* tell you is which
 choice is right; that depends entirely on what the write means, which is why
 [the system design process](/cs-fundamentals/5-systems/system-design-process/)
@@ -82,12 +82,12 @@ makes this a per-operation decision, not a system-wide label.
 Given that a response can be lost, every remote call has to pick a delivery
 guarantee, and the honest options are two, not three:
 
-- **At-most-once** — send once, don't retry. Simple, but a lost *request*
+- **At-most-once** - send once, don't retry. Simple, but a lost *request*
   means the effect never happens; a lost *response* means the effect
   happened but the caller has no way to know it did.
-- **At-least-once** — retry until acknowledged. Simple, but a lost
+- **At-least-once** - retry until acknowledged. Simple, but a lost
   *response* (not the request) causes the same effect to run twice.
-- **"Exactly-once"** — marketed by some messaging systems, achieved in
+- **"Exactly-once"** - marketed by some messaging systems, achieved in
   practice by at-least-once delivery plus an **idempotent** receiver, never
   by the network layer alone. There is no way to make the network itself
   exactly-once when messages can be delayed and retried; the guarantee has to
@@ -109,7 +109,7 @@ async function chargeCard(idempotencyKey: string, amount: number) {
   }
 
   // The gateway call itself must be passed the same idempotency key, so
-  // that a retry after a crash here — before the row below is written —
+  // that a retry after a crash here - before the row below is written -
   // lands on the gateway's own dedup rather than charging twice.
   const charge = await paymentGateway.charge(amount, idempotencyKey);
   await db.charges.update({ key: idempotencyKey }, { status: 'done', ...charge });
@@ -120,7 +120,7 @@ async function chargeCard(idempotencyKey: string, amount: number) {
 Two things make this safe where the naive read-then-write version isn't.
 First, the row is reserved with a database-enforced unique constraint before
 any external call happens, so two concurrent retries can't both pass a
-check and both charge the card — one wins the insert, the other reads its
+check and both charge the card - one wins the insert, the other reads its
 result, which is only complete once the winner finishes; a caller that reads
 back a `pending` row needs to poll or wait rather than treat it as done, and
 a winner that crashes before finishing leaves a `pending` row that needs its
@@ -128,12 +128,12 @@ own timeout-and-recovery sweep, not an indefinite wait. Second, the gateway
 call itself carries the idempotency key, so if
 the process crashes *after* the gateway charges the card but *before* the
 local row is marked done, a subsequent retry still hits the gateway's own
-idempotency guarantee instead of creating a second charge — the local record
+idempotency guarantee instead of creating a second charge - the local record
 alone can't cover that gap, because a retry with no stored result looks
 identical to a request that never ran.
 
 The idempotency key is what turns "retry blindly" into a safe default, but
-only when it's enforced with a real constraint end to end — key check plus
+only when it's enforced with a real constraint end to end - key check plus
 key insert as one atomic step, and the same key passed through to any
 downstream call that isn't itself transactional with the local write. Most
 production incidents attributed to "the network is flaky" are actually a
@@ -142,7 +142,7 @@ reaching the external call.
 
 ### Timeouts don't mean failure
 
-A timeout means *no answer arrived in time* — it says nothing about whether
+A timeout means *no answer arrived in time* - it says nothing about whether
 the remote side finished the work. Treating a timeout as "it didn't happen"
 is how double-charges and duplicate emails get built into a system on
 purpose. The correct response to a timeout on a non-idempotent call is to
@@ -152,16 +152,16 @@ check the outcome before retrying, not to assume either answer.
 
 Wall clocks on different machines disagree, sometimes by seconds. When you
 need to know "did A happen before B," you can't trust timestamps across
-machines — you need a **logical clock**. A Lamport clock is the minimal
+machines - you need a **logical clock**. A Lamport clock is the minimal
 version: each node keeps a counter, increments it on every event, and
 attaches it to every message; the receiver sets its own counter to
 `max(local, received) + 1`. It gives a **partial order that respects
-causality** — if A caused B, A's clock value is smaller than B's — without
+causality** - if A caused B, A's clock value is smaller than B's - without
 needing synchronized wall-clock time anywhere. It does not, on its own, give
 a total order: two genuinely concurrent events (neither caused the other)
 can end up with the same or an arbitrarily-ordered clock value. Getting a
 total order out of it requires an explicit, deterministic tie-breaker on top
-— commonly the node ID appended to the counter — which is what turns "smaller
+- commonly the node ID appended to the counter - which is what turns "smaller
 clock value" into a total order without claiming a causal relationship that
 isn't actually there.
 
@@ -170,8 +170,8 @@ isn't actually there.
 The "derive it" discipline here is about honestly stating what a call can
 and can't guarantee, not a Big-O bound:
 
-- A synchronous call across a network adds real, non-zero latency — usually
-  0.5–100 ms depending on whether it's same-datacenter or cross-region — and
+- A synchronous call across a network adds real, non-zero latency - usually
+  0.5-100 ms depending on whether it's same-datacenter or cross-region - and
   that latency is a tail, not a constant, so the number to design around is
   p99, not the average.
 - Retrying with no backoff turns one slow dependency into a self-inflicted
@@ -180,9 +180,9 @@ and can't guarantee, not a Big-O bound:
   an optimization, it's what keeps a partial outage from becoming a total
   one.
 - A system with M services, each with 99.9% availability, calling each other
-  serially has combined availability of `0.999^M` — five sequential calls at
+  serially has combined availability of `0.999^M` - five sequential calls at
   99.9% each is 99.5% overall. The unavailability, which is what an SLA
-  actually budgets, goes from 0.1% for one hop to about 0.5% for five — roughly
+  actually budgets, goes from 0.1% for one hop to about 0.5% for five - roughly
   5x worse, not 10x, but still enough to blow a tight availability target
   with a chain most people wouldn't think twice about. This is the
   arithmetic that justifies caching and async processing over long
@@ -192,8 +192,8 @@ and can't guarantee, not a Big-O bound:
 
 - **A single process can do the whole job.** If one machine's memory and CPU
   cover the actual load, distributing the work only adds the failure modes
-  on this page for no benefit. Distribute when you must — for scale beyond
-  one machine, or for availability across a failure domain — not by default.
+  on this page for no benefit. Distribute when you must - for scale beyond
+  one machine, or for availability across a failure domain - not by default.
 - **Strong consistency is genuinely required and the system can afford to be
   unavailable during a partition.** Don't reach for eventual consistency and
   a cleverness layer to paper over a case where refusing the write is the
@@ -206,7 +206,7 @@ and can't guarantee, not a Big-O bound:
 ## Real-world usage
 
 Every service-to-service call in a microservice architecture is a
-distributed-systems problem, whether or not anyone frames it that way — the
+distributed-systems problem, whether or not anyone frames it that way - the
 HTTP client library's retry policy, the idempotency key on a payment
 endpoint, the circuit breaker around a flaky downstream call. Message brokers
 (see [Message Brokers](/cs-fundamentals/5-systems/message-brokers/)) exist
@@ -214,7 +214,7 @@ specifically to convert synchronous distributed calls, with their
 availability multiplication problem, into asynchronous ones that degrade more
 gracefully. [Resilience patterns](/cs-fundamentals/13-architecture/resilience-patterns/)
 covers the other half: what to put around the calls that have to stay
-synchronous — retries, circuit breakers, timeouts, bulkheads.
+synchronous - retries, circuit breakers, timeouts, bulkheads.
 
 ## Failure modes
 
@@ -222,13 +222,13 @@ synchronous — retries, circuit breakers, timeouts, bulkheads.
 timeout on the first attempt.** The classic timeout-retry bug: the first
 charge succeeded, the response was lost, the client retried without an
 idempotency key, and the second charge ran independently. Fix: idempotency
-keys on every retried, side-effecting call — not just payments.
+keys on every retried, side-effecting call - not just payments.
 
 **Symptom: a downstream service's brief slowdown takes down every service
 that calls it, twenty minutes later, with no obvious connection in the
 logs.** Retry storms. A slow dependency causes callers to retry, which adds
 load to the already-slow dependency, which makes it slower, which causes more
-retries — cascading failure. Exponential backoff with jitter, a circuit
+retries - cascading failure. Exponential backoff with jitter, a circuit
 breaker that stops calling a dependency that's clearly down, and bulkheads
 that cap how many resources one dependency can consume are the standard
 defenses.
@@ -236,14 +236,14 @@ defenses.
 **Symptom: two replicas of the "same" record disagree, and neither log shows
 an error.** A partition happened, both sides accepted writes (an
 availability-favoring choice), and nobody reconciled them on healing. This is
-not a bug in the individual nodes — it's the direct, expected consequence of
+not a bug in the individual nodes - it's the direct, expected consequence of
 choosing AP for that operation. The fix is a defined reconciliation strategy
 (last-write-wins, a CRDT, or a manual merge queue), decided *before* the
 partition, not during the incident.
 
 **Symptom: a request "succeeded" according to the client, but the downstream
 system shows nothing happened.** A message was accepted by a broker or
-gateway and then lost before being processed — acknowledged too early.
+gateway and then lost before being processed - acknowledged too early.
 Acknowledge only after the effect is durable, not after it's merely received.
 
 ## Practice problems
@@ -257,7 +257,7 @@ retry so the client can safely resend.**
 
 The client generates an idempotency key (a UUID) before the first attempt and
 sends it on every retry of that logical operation. The server checks for an
-existing order with that key before creating a new one — same pattern as the
+existing order with that key before creating a new one - same pattern as the
 `chargeCard` example above. This converts "I don't know if it ran" into "it's
 safe to ask again," which is the only correct response to an ambiguous
 timeout; guessing either way (assume it ran, or assume it didn't) is wrong
@@ -272,10 +272,10 @@ any service's own reliability?**
 <details>
 <summary>Solution</summary>
 
-`0.999^3 ≈ 99.7%` — worse than any single service. Breaking the synchronous
-chain — having A call B and C in parallel instead of serially where the logic
+`0.999^3 ≈ 99.7%` - worse than any single service. Breaking the synchronous
+chain - having A call B and C in parallel instead of serially where the logic
 allows it, or making C's work asynchronous via a queue so A and B don't wait
-on it — removes hops from the *serial* chain without changing any service's
+on it - removes hops from the *serial* chain without changing any service's
 individual reliability. Parallel calls bound the total latency by the
 slowest one instead of the sum, and removing a hop from the serial chain
 removes its `0.999` factor from the product entirely.
@@ -286,9 +286,9 @@ removes its `0.999` factor from the product entirely.
 **"What is a distributed system, really?"**
 
 > Any system where one node has to learn what another node did through a
-> network that can lose, delay, or duplicate messages — and where you can't
-> tell those cases apart from the caller's side. Everything else — CAP,
-> idempotency, retries, logical clocks — is a consequence of designing around
+> network that can lose, delay, or duplicate messages - and where you can't
+> tell those cases apart from the caller's side. Everything else - CAP,
+> idempotency, retries, logical clocks - is a consequence of designing around
 > that one fact.
 
 **"How do you handle a timeout on a payment call?"**
@@ -299,7 +299,7 @@ removes its `0.999` factor from the product entirely.
 > no-op server-side rather than a second charge.
 
 **The caveat worth voicing:** most distributed-systems bugs I've actually
-debugged weren't exotic consensus failures — they were a missing idempotency
+debugged weren't exotic consensus failures - they were a missing idempotency
 key or a retry with no backoff. The theory (CAP, logical clocks) explains why
 the system *can* misbehave; the incidents are almost always the boring
 version of that.

@@ -2,7 +2,7 @@
 title: Concurrency and Parallelism
 description: >-
   The difference between doing many things at once and doing many things at the
-  same instant — and the three ways to get the second one in a single-threaded
+  same instant - and the three ways to get the second one in a single-threaded
   runtime.
 sidebar:
   order: 2
@@ -24,9 +24,9 @@ These two words get used interchangeably and they are not the same thing. The
 distinction is worth getting exactly right, because almost every wrong
 architectural decision in this area comes from conflating them.
 
-- **Concurrency** — several tasks *in progress* over the same period, interleaved.
+- **Concurrency** - several tasks *in progress* over the same period, interleaved.
   Task A starts, waits for something, B runs, A resumes. One thread is enough.
-- **Parallelism** — several tasks executing at literally the same instant. This
+- **Parallelism** - several tasks executing at literally the same instant. This
   requires more than one core, and no amount of clever scheduling substitutes for
   it.
 
@@ -35,7 +35,7 @@ between them while things simmer, is **concurrent**. Three chefs cooking three
 dishes are **parallel**.
 
 Notice what the analogy predicts. If the three dishes are mostly simmering, the
-single chef finishes at nearly the same time as the three chefs — the waiting
+single chef finishes at nearly the same time as the three chefs - the waiting
 overlapped, and the extra chefs were idle. But if every dish needs thirty minutes
 of continuous chopping, one chef takes ninety minutes and no amount of moving
 between stations helps at all.
@@ -47,8 +47,8 @@ That is the whole decision procedure:
 > bottleneck is computing, you need another core, and getting one costs you the
 > shared address space.
 
-Which is why Node suits a typical web service — mostly waiting on databases and
-HTTP calls — and suits video encoding badly.
+Which is why Node suits a typical web service - mostly waiting on databases and
+HTTP calls - and suits video encoding badly.
 
 ## Mechanics
 
@@ -99,7 +99,7 @@ worker.on('exit', (code) => {
 ```
 
 ```ts
-// heavy.js — a whole separate V8 isolate. No shared globals, no shared module
+// heavy.js - a whole separate V8 isolate. No shared globals, no shared module
 // state, no access to anything the main thread has in memory.
 import { parentPort, workerData } from 'node:worker_threads';
 
@@ -135,13 +135,13 @@ computing.
 Three things about workers that are easy to get wrong:
 
 **Workers are not free.** Spawning one costs a few milliseconds and a fresh V8
-isolate — several megabytes, since it is an entire new JavaScript heap and code
+isolate - several megabytes, since it is an entire new JavaScript heap and code
 cache. Spawning per request replaces a CPU problem with a spawn-storm problem, and
 it does so under exactly the load you were trying to optimise for. Use a pool;
 `piscina` is the standard one.
 
 **Message passing is a copy.** Messages go through the structured clone
-algorithm — the same mechanism as `postMessage` in browsers. It handles objects,
+algorithm - the same mechanism as `postMessage` in browsers. It handles objects,
 `Map`, `Set`, `Date` and typed arrays, but **not functions, class prototypes or
 closures**, so a class instance arrives as a plain object with no methods. And it
 is $O(\text{size})$: sending a 200 MB array copies 200 MB, which can easily cost
@@ -150,7 +150,7 @@ more than the computation you were offloading. Two escape hatches:
 ```ts
 worker.postMessage(buf, [buf]);              // transferList: MOVES the ArrayBuffer,
                                              // zero copy. The sender's reference
-                                             // becomes unusable — that is the point.
+                                             // becomes unusable - that is the point.
 
 const shared = new SharedArrayBuffer(1024);  // genuinely shared memory, no copy
 ```
@@ -180,7 +180,7 @@ if (cluster.isPrimary) {
 This is the right tool on a virtual machine you manage yourself. **In a container
 platform it is usually the wrong one**: run one process per container and let
 Kubernetes or Cloud Run do the multiplication. They already own health checking,
-restarts, and autoscaling — and a `cluster` primary that silently restarts dead
+restarts, and autoscaling - and a `cluster` primary that silently restarts dead
 workers hides exactly the signal the platform needs to see. You end up with a
 container that reports healthy while it crash-loops internally.
 
@@ -206,7 +206,7 @@ limit no amount of hardware removes:
 
 A job that is 90% parallelisable cannot go more than 10× faster, ever. If you
 measure a 3× speedup on 8 workers and are disappointed, the table says you should
-not be — you should go and find the serial 10%.
+not be - you should go and find the serial 10%.
 
 **And the serial part includes the transfer.** For worker threads, the real model
 is closer to:
@@ -218,7 +218,7 @@ $$
 The factor of 2 is because the data is copied out and the result copied back.
 Structured clone runs on the order of a gigabyte per second, so a 100 MB payload
 costs roughly 200 ms in copying alone. **Offloading is only worth it when
-compute time substantially exceeds transfer time** — which for most "make this
+compute time substantially exceeds transfer time** - which for most "make this
 endpoint faster" instincts it does not.
 
 ## When NOT to use it
@@ -233,7 +233,7 @@ Transfer the `ArrayBuffer` instead of copying it, or do not offload at all.
 **When one shared mutable structure is unavoidable.** Workers have no shared
 address space by default. If the algorithm genuinely needs shared mutable state,
 you are into `SharedArrayBuffer` and `Atomics`, which reintroduces every hard
-problem — torn reads, memory ordering, deadlock — that single-threaded JavaScript
+problem - torn reads, memory ordering, deadlock - that single-threaded JavaScript
 spared you. Consider a different runtime instead of rebuilding threading
 primitives in a language that has deliberately avoided them.
 
@@ -242,7 +242,7 @@ containers, scale containers.
 
 **When you have not measured.** Adding concurrency to a system whose bottleneck is
 a missing database index makes the system more complex, harder to debug, and no
-faster. This ordering is not pedantry — parallelising a slow query means running
+faster. This ordering is not pedantry - parallelising a slow query means running
 the slow query on more cores.
 
 ## Real-world usage
@@ -252,13 +252,13 @@ mysterious symptom into a one-line fix. libuv keeps a four-thread pool for
 filesystem work, DNS lookups via `dns.lookup`, and `crypto` and `zlib`. Network
 I/O bypasses the pool entirely and uses kernel readiness notification. So a
 service can hold tens of thousands of sockets while only four `fs.readFile` calls
-proceed at once — and heavy filesystem work under load produces latency that does
+proceed at once - and heavy filesystem work under load produces latency that does
 not correlate with CPU, because requests are queueing for those four threads.
 `UV_THREADPOOL_SIZE` raises it, to a maximum of 1024.
 
 **Browsers use the same worker model** for the same reason: `Web Worker` with
-`postMessage` and structured clone. It is why heavy client-side work — parsing a
-large file, running a diff, compiling a shader — belongs off the main thread, and
+`postMessage` and structured clone. It is why heavy client-side work - parsing a
+large file, running a diff, compiling a shader - belongs off the main thread, and
 why moving it there requires the same serialisation thinking.
 
 **Database connection pools are the concurrency limit that actually binds.** Your
@@ -277,7 +277,7 @@ changes once the GIL and multiple worker processes enter the picture.
 
 **Symptom: added workers, and throughput went down.** Either the payload copy
 dominates the computation, or you are spawning per request. Measure the time from
-`postMessage` to `message` and compare it against running the function inline —
+`postMessage` to `message` and compare it against running the function inline -
 if inline wins, delete the worker.
 
 **Symptom: a worker throws and the request hangs forever.** No `error` handler was
@@ -288,7 +288,7 @@ waiting.
 
 **Symptom: memory grows with every request, and heap snapshots look fine.** Worker
 isolates are separate heaps, so a leak inside one is invisible to a main-thread
-snapshot. Workers that are created and never terminated are the usual cause —
+snapshot. Workers that are created and never terminated are the usual cause -
 `worker.terminate()` is not automatic.
 
 **Symptom: the container reports healthy while users see errors.** A `cluster`
@@ -299,7 +299,7 @@ primary, which is fine; the workers are the ones dying.
 The race at an `await` boundary. Worth restating precisely, because the half-truth
 "JavaScript is single-threaded so there are no races" is actively harmful:
 
-> Within one turn there are no data races — JavaScript is run-to-completion, so
+> Within one turn there are no data races - JavaScript is run-to-completion, so
 > `total += x` cannot be torn. But every `await` is a yield, and another handler
 > can run in that gap and change state you already read.
 
@@ -321,7 +321,7 @@ UPDATE seats SET taken = true WHERE id = $1 AND taken = false;
 ```
 
 **Symptom: everything freezes, in a worker.** `Atomics.wait` blocks the calling
-thread. That is legitimate in a worker and forbidden on the main thread — Node
+thread. That is legitimate in a worker and forbidden on the main thread - Node
 throws rather than let you freeze the loop. If a worker hangs with no CPU use,
 suspect a `wait` with no matching `notify`.
 
@@ -340,7 +340,7 @@ suspect a `wait` with no matching `notify`.
 
 1. **Yes.** Pure CPU, and image buffers can be *transferred* rather than copied.
 2. **No.** I/O-bound; the loop is already free. Bound the concurrency instead.
-3. **No, but not for the usual reason** — use `crypto.createHash` in its async or
+3. **No, but not for the usual reason** - use `crypto.createHash` in its async or
    streaming form, which already runs on the libuv pool. A worker would duplicate
    machinery Node has, and cost you a 2 GB copy on the way.
 4. **Maybe.** It is genuinely CPU-bound, but the output is a large string and the
@@ -385,7 +385,7 @@ app.post('/resize', async (req, res, next) => {
 
 Two bugs fixed, not one. The pool is the visible fix; the missing `error` handler
 is the one that would have shown up as requests hanging forever rather than as
-slowness. Note also that the pool gives you backpressure for free — with a
+slowness. Note also that the pool gives you backpressure for free - with a
 per-request worker, 500 concurrent uploads means 500 isolates and an OOM.
 
 </details>
@@ -425,7 +425,7 @@ for the latency of the request doing the work.
   <Fragment slot="explanation">
     <p>
       Slightly slower, for nothing. The event loop was <em>already</em> free
-      during those 800 ms — that is what non-blocking I/O means. Adding a worker
+      during those 800 ms - that is what non-blocking I/O means. Adding a worker
       introduces spawn cost, message serialisation, and an extra hop, and none of
       it removes any waiting.
     </p>
@@ -447,7 +447,7 @@ for the latency of the request doing the work.
     { label: '5×', correct: true },
     { label: '8×' },
     { label: '80×' },
-    { label: 'Unbounded — more cores always help' },
+    { label: 'Unbounded - more cores always help' },
   ]}
 >
   <Fragment slot="explanation">
@@ -457,7 +457,7 @@ for the latency of the request doing the work.
     </p>
     <p>
       The serial 20% is the whole story. Even with a thousand cores the parallel
-      part collapses to nearly zero time and the serial part is untouched — so
+      part collapses to nearly zero time and the serial part is untouched - so
       the job takes 20% of its original time and not a moment less.
     </p>
     <p>
@@ -471,10 +471,10 @@ for the latency of the request doing the work.
 ## Interview answers
 
 **"Is Node single-threaded?"** The question is a trap for the unwary in both
-directions — "yes" and "no" are both wrong on their own.
+directions - "yes" and "no" are both wrong on their own.
 
 > Node runs *your JavaScript* on one thread, but the process is not
-> single-threaded. libuv keeps a thread pool — four by default — that handles
+> single-threaded. libuv keeps a thread pool - four by default - that handles
 > filesystem operations, DNS lookups, and `crypto` and `zlib` work. And network
 > I/O does not use threads at all; it uses the kernel's readiness notification,
 > `epoll` or `kqueue`, which is why one process handles tens of thousands of
@@ -490,14 +490,14 @@ and the second only if you ask.
 
 **"How would you handle a CPU-heavy endpoint?"**
 
-> First I would confirm it *is* CPU-heavy, by watching event loop lag — if lag is
+> First I would confirm it *is* CPU-heavy, by watching event loop lag - if lag is
 > flat while requests are slow, the problem is downstream and workers would make
 > it worse.
 >
 > If it is genuinely CPU, a worker pool, not a worker per request: `piscina`,
 > sized to available parallelism. I would check the payload size first, because
 > messages are structured-cloned and a large copy can cost more than the
-> computation — transferring an `ArrayBuffer` avoids that.
+> computation - transferring an `ArrayBuffer` avoids that.
 >
 > And I would size the pool against what the platform gives me. In a container
 > with a 1-core limit, four workers just adds context switching.
@@ -505,7 +505,7 @@ and the second only if you ask.
 **The caveats worth voicing:**
 
 - The bound on any of this is Amdahl's law, and it bites earlier than people
-  expect — 90% parallelisable caps you at 10×.
+  expect - 90% parallelisable caps you at 10×.
 - Single-threaded does not mean race-free. Races happen at `await` boundaries,
   and the fix is a database constraint rather than a lock, because a lock inside
   one process stops working the moment you run two.

@@ -35,7 +35,7 @@ Two facts about embedding search, both uncomfortable:
 Each has a fix, and they are different fixes.
 
 **Hybrid search** handles the first: run keyword search alongside vector search
-and fuse. Their failure cases are pleasingly uncorrelated — keyword search nails
+and fuse. Their failure cases are pleasingly uncorrelated - keyword search nails
 identifiers and misses paraphrases, embeddings do the reverse.
 
 **Reranking** handles the second: take the top ~30 candidates and score each one
@@ -65,13 +65,13 @@ system that cannot afford to run its best algorithm on everything.
 |---|---|---|
 | Input | query and doc **separately** | query and doc **together** |
 | Output | two vectors, compared later | one relevance score |
-| Precompute | yes — index once | **no — nothing can be cached** |
+| Precompute | yes - index once | **no - nothing can be cached** |
 | Cost per query | one embedding + ANN search | one forward pass **per document** |
 | Ordering quality | moderate | high |
 
 The decisive row is precompute. A bi-encoder embeds each document once, at index
 time, and a query then compares against millions of stored vectors cheaply. A
-cross-encoder must run the model on every (query, document) pair — there is
+cross-encoder must run the model on every (query, document) pair - there is
 nothing to store, because the score does not exist until both halves are
 present.
 
@@ -82,7 +82,7 @@ a second stage: **30 forward passes is affordable, 30 million is not.**
 
 The problem with combining BM25 and cosine scores is that they are not on the
 same scale, not on the same distribution, and not stable across queries.
-Normalising them is a trap — min-max normalisation makes the top result of every
+Normalising them is a trap - min-max normalisation makes the top result of every
 list score 1.0 regardless of whether it was any good.
 
 RRF sidesteps this by using **ranks, not scores**:
@@ -100,7 +100,7 @@ def rrf(rankings: list[list[str]], k: int = 60) -> list[tuple[str, float]]:
 
     `k` damps the influence of the top positions. At k=60 the difference between
     rank 1 and rank 2 is small (1/61 vs 1/62), so a document has to rank well in
-    SEVERAL lists to win — which is the behaviour you want. At k=0 the top hit of
+    SEVERAL lists to win - which is the behaviour you want. At k=0 the top hit of
     any single list dominates, and fusion stops being fusion.
     """
     scores: dict[str, float] = {}
@@ -133,7 +133,7 @@ Three properties that make it the right default:
 - **Scale-free.** No normalisation, no per-ranker weight to tune, nothing that
   drifts when the corpus changes.
 - **Robust.** A document ranked 3rd in both lists beats one ranked 1st in a
-  single list — which is usually correct, because agreement between independent
+  single list - which is usually correct, because agreement between independent
   rankers is real evidence.
 - **One parameter**, and 60 works. Compare with weighted score fusion, which
   needs an $\alpha$ you will retune forever as score distributions shift.
@@ -158,7 +158,7 @@ sharply.
 ```python
 def hybrid_search(query: str, k: int = 5) -> list[Chunk]:
     # Both retrievers run on every query. Do NOT try to classify the query and
-    # route it — the classifier will be wrong, and its errors are invisible.
+    # route it - the classifier will be wrong, and its errors are invisible.
     # Running both costs one extra cheap search.
     dense = [c.id for c in vector_store.search(embed(query), k=50)]
     sparse = [c.id for c in bm25_index.search(query, k=50)]
@@ -195,7 +195,7 @@ async function hybridSearch(query: string, k = 5): Promise<Chunk[]> {
 The comment about routing is load-bearing. The intuitive design is a classifier
 that decides "this looks like an identifier, use keyword search". It performs
 worse than running both, because a misrouted query fails completely and silently,
-while fusion degrades gracefully — the ranker that had nothing useful to say
+while fusion degrades gracefully - the ranker that had nothing useful to say
 simply contributes low ranks.
 
 ## Cost & limits
@@ -212,7 +212,7 @@ simply contributes low ranks.
 
 The reranker is the only stage that scales linearly with what you feed it, which
 makes the candidate count the parameter that matters. Doubling from 30 to 60
-doubles reranking latency for a usually-small quality gain — measure the MRR
+doubles reranking latency for a usually-small quality gain - measure the MRR
 curve rather than guessing.
 
 ### Is reranking worth its latency?
@@ -228,7 +228,7 @@ reranking only the top 10, or only when the top scores are close together.
 ### Running BM25 alongside
 
 If you already run Postgres, `tsvector` gives you this with no new
-infrastructure — an index and a query, in the database that already holds your
+infrastructure - an index and a query, in the database that already holds your
 documents. That is the cheapest possible path to hybrid search, and it is
 frequently overlooked in favour of adding a second search cluster.
 
@@ -245,7 +245,7 @@ not change.
 
 **When recall is the problem, not ordering.** Reranking can only reorder what
 retrieval returned. If the right chunk is not in the top 50, a reranker cannot
-conjure it — and teams reach for reranking when their real problem is chunking
+conjure it - and teams reach for reranking when their real problem is chunking
 or embedding. Measure recall@50 first: if it is low, reranking is the wrong
 project.
 
@@ -264,18 +264,18 @@ own ordering.
 
 ## Real-world usage
 
-- **Documentation and support search** — hybrid is close to mandatory. Error
+- **Documentation and support search** - hybrid is close to mandatory. Error
   codes, API names and version numbers are exactly where pure vector search
   disappoints.
-- **E-commerce** — brand names and SKUs are lexical; "waterproof jacket for
+- **E-commerce** - brand names and SKUs are lexical; "waterproof jacket for
   hiking" is semantic. Both, always.
-- **Code search** — function names and symbols demand exact matching; "how do I
+- **Code search** - function names and symbols demand exact matching; "how do I
   authenticate a request" needs semantics.
-- **Legal research** — case citations are identifiers; the legal question is
+- **Legal research** - case citations are identifiers; the legal question is
   semantic.
-- **RAG generally** — over-fetch 30-50, rerank to 5. The most common single
+- **RAG generally** - over-fetch 30-50, rerank to 5. The most common single
   quality improvement available to an existing RAG system.
-- **Multi-source retrieval** — RRF is also how you fuse results from several
+- **Multi-source retrieval** - RRF is also how you fuse results from several
   corpora whose scores were never comparable in the first place.
 
 ## Failure modes
@@ -296,7 +296,7 @@ good the reranker is. Fix retrieval.
 after a corpus change.
 
 **Cause:** the two score distributions shifted independently. Normalisation does
-not stabilise them — it just hides the shift.
+not stabilise them - it just hides the shift.
 
 **Fix:** RRF. Ranks are stable under distribution changes in a way scores are
 not.
@@ -319,7 +319,7 @@ absolutely.
 than the text that matched.
 
 **Fix:** rerank the same text the user's answer will come from. And strip
-boilerplate — a cross-encoder is not immune to every document looking alike.
+boilerplate - a cross-encoder is not immune to every document looking alike.
 
 ### Latency doubled after tuning candidates upward
 
@@ -327,7 +327,7 @@ boilerplate — a cross-encoder is not immune to every document looking alike.
 
 **Cause:** the reranker is linear in candidates, unlike every stage before it.
 
-**Fix:** plot MRR against candidate count. It flattens, usually well before 50 —
+**Fix:** plot MRR against candidate count. It flattens, usually well before 50 -
 past the flattening point you are buying latency and nothing else.
 
 ## Practice problems
@@ -343,7 +343,7 @@ documenting that specific code. Semantic questions work well.
 
 The failure is structural, not a tuning issue. `ERR_CONN_REFUSED` almost
 certainly tokenises into fragments, and its *meaning* to the embedding model is
-"something about connections and errors" — which is exactly the wrong
+"something about connections and errors" - which is exactly the wrong
 generalisation. The user wants that literal string.
 
 **Fix: add BM25 and fuse with RRF.**
@@ -360,7 +360,7 @@ results = rrf([ids(dense), ids(sparse)])
 ```
 
 **Why not detect identifiers and route to BM25:** the classifier will be wrong on
-cases nobody anticipated — a product name that looks like a word, a version
+cases nobody anticipated - a product name that looks like a word, a version
 string, a mixed query like "ERR_CONN_REFUSED when deploying". A misroute fails
 completely and silently. Running both costs one cheap extra search and degrades
 gracefully.
@@ -393,24 +393,24 @@ $\text{RRF}(d) = \sum 1/(60 + \text{rank})$, absent documents contribute nothing
 | A | 1 → 1/61 | 3 → 1/63 | 0.01639 + 0.01587 = **0.03226** |
 | C | 3 → 1/63 | 1 → 1/61 | 0.01587 + 0.01639 = **0.03226** |
 | B | 2 → 1/62 | 5 → 1/65 | 0.01613 + 0.01538 = **0.03151** |
-| D | 4 → 1/64 | — | 0.01563 |
-| F | — | 2 → 1/62 | 0.01613 |
-| E | 5 → 1/65 | — | 0.01538 |
-| G | — | 4 → 1/64 | 0.01563 |
+| D | 4 → 1/64 | - | 0.01563 |
+| F | - | 2 → 1/62 | 0.01613 |
+| E | 5 → 1/65 | - | 0.01538 |
+| G | - | 4 → 1/64 | 0.01563 |
 
 **A and C tie at the top**, and that is the behaviour you want. Each was first in
 one ranker and third in the other, so they have equally strong support from two
 independent signals. B follows closely, appearing in both.
 
-**The important comparison is B against F.** F was ranked 2nd by BM25 — higher
-than B's 5th — yet B scores above it, because B appears in *both* lists. RRF is
+**The important comparison is B against F.** F was ranked 2nd by BM25 - higher
+than B's 5th - yet B scores above it, because B appears in *both* lists. RRF is
 rewarding agreement over any single ranker's confidence, and that is the whole
 point: two independent methods agreeing is stronger evidence than one method
 being sure.
 
 **Why k=60 matters here:** the gap between 1/61 and 1/62 is tiny, so no single
 top-1 placement dominates. At k=0, A would score 1.0 + 0.333 = 1.333 and C would
-score 0.333 + 1.0 — still tied, but F at 0.5 would leap above B at 0.7... and
+score 0.333 + 1.0 - still tied, but F at 0.5 would leap above B at 0.7... and
 generally the top hit of any one list would dominate. The damping is what makes
 fusion actually fuse.
 
@@ -438,19 +438,19 @@ current:                    45 + 3 + 1,400          = 1,448ms
   terms. Issue both concurrently; a sequential implementation wastes 15ms for no
   reason.
 - **Reranking is ~8% of the budget** and it improves what reaches the context,
-  which is the highest-leverage thing available.
+  which is the highest-impact thing available.
 
 **What I would measure before shipping:**
 
 1. **recall@50 of the fused candidate set.** If this is not high, reranking has
    nothing to work with and the 120ms is wasted. This is the go/no-go number.
-2. **MRR against candidate count** — 10, 20, 30, 50. It flattens; find where.
+2. **MRR against candidate count** - 10, 20, 30, 50. It flattens; find where.
    Past the flattening point you are buying latency and nothing else.
 3. **p99, not p95.** Reranker latency has a worse tail than the arithmetic above
    suggests, especially on a hosted endpoint.
 
 **The lever I would keep in reserve:** with reranking in place, `k` to the
-generator can usually *drop* — five reranked chunks beat ten unranked ones. That
+generator can usually *drop* - five reranked chunks beat ten unranked ones. That
 cuts generation input tokens, which claws back both cost and some latency.
 
 </details>
@@ -472,7 +472,7 @@ cuts generation input tokens, which claws back both cost and some latency.
       A BM25 score is unbounded and corpus-dependent; a cosine similarity sits in
       a narrow band whose baseline depends on the embedding model. There is no
       principled conversion between them, and min-max normalisation actively
-      misleads — it forces the top hit of every list to 1.0 whether or not it was
+      misleads - it forces the top hit of every list to 1.0 whether or not it was
       any good.
     </p>
     <p>
@@ -483,7 +483,7 @@ cuts generation input tokens, which claws back both cost and some latency.
     <p>
       The <code>k</code> constant (typically 60) damps the top positions so a
       document must rank well in <em>several</em> lists to win. That is why a
-      document at rank 3 in both can beat one at rank 1 in only one — agreement
+      document at rank 3 in both can beat one at rank 1 in only one - agreement
       between independent retrievers is stronger evidence than one retriever's
       confidence.
     </p>
@@ -496,7 +496,7 @@ cuts generation input tokens, which claws back both cost and some latency.
   kind="concept"
   question="You add a cross-encoder reranker and MRR does not improve. What is the most likely cause?"
   options={[
-    { label: 'The correct document is not in the candidate set — reranking reorders, it cannot retrieve', correct: true },
+    { label: 'The correct document is not in the candidate set - reranking reorders, it cannot retrieve', correct: true },
     { label: 'The reranker needs fine-tuning on your domain before it works at all' },
     { label: 'The candidate count is too low for the reranker to have signal' },
     { label: 'Cross-encoders only improve precision, so MRR is the wrong metric' },
@@ -511,7 +511,7 @@ cuts generation input tokens, which claws back both cost and some latency.
     </p>
     <p>
       This matters because reranking is easy to add and easy to believe in, and
-      it is frequently reached for when the real problem is upstream — chunking
+      it is frequently reached for when the real problem is upstream - chunking
       that split the answer, or an embedding model that never surfaced the right
       chunk.
     </p>
@@ -519,7 +519,7 @@ cuts generation input tokens, which claws back both cost and some latency.
       MRR is exactly the right metric here: it measures whether the correct
       document is near the top, which is precisely what reranking is supposed to
       change. Recall@k, by contrast, would be unaffected by reranking a fixed
-      candidate set — the same documents are present either way.
+      candidate set - the same documents are present either way.
     </p>
   </Fragment>
 </Quiz>
@@ -530,13 +530,13 @@ cuts generation input tokens, which claws back both cost and some latency.
 
 > Because embeddings are structurally bad at exact tokens. An error code or a
 > SKU means "that literal string", and semantic similarity generalises it to "a
-> thing like that" — which is the wrong answer. BM25 handles it perfectly,
+> thing like that" - which is the wrong answer. BM25 handles it perfectly,
 > because a rare token has enormous IDF and a document containing it scores far
 > above everything else.
 >
 > The two methods fail on uncorrelated cases, which is what makes fusing them
 > worth the infrastructure. And I would run both on every query rather than
-> routing — a classifier deciding "this looks like an identifier" fails
+> routing - a classifier deciding "this looks like an identifier" fails
 > completely and silently when it guesses wrong, where fusion degrades
 > gracefully.
 
@@ -546,7 +546,7 @@ cuts generation input tokens, which claws back both cost and some latency.
 > around 60. It uses ranks rather than scores, so the fact that BM25 is unbounded
 > and cosine sits in a narrow band stops mattering.
 >
-> The alternative — normalise both and blend with a weight — needs an alpha that
+> The alternative - normalise both and blend with a weight - needs an alpha that
 > you retune forever, because the score distributions shift as the corpus
 > changes. And min-max normalisation is actively misleading: it forces the top
 > hit of every list to 1.0 whether or not it was good.
@@ -558,9 +558,9 @@ cuts generation input tokens, which claws back both cost and some latency.
 **"When is a cross-encoder worth the latency?"**
 
 > Almost always in RAG, and the reason is the ratio. Reranking 30 candidates is
-> around 100ms against a generation step of one to four seconds — under 10% of
-> the budget — and it improves what actually reaches the context, which is the
-> highest-leverage thing available.
+> around 100ms against a generation step of one to four seconds - under 10% of
+> the budget - and it improves what actually reaches the context, which is the
+> highest-impact thing available.
 >
 > The precondition I would check first is recall@50. A reranker can only reorder
 > what it was given, so if the correct document is not in the candidate set the
@@ -573,7 +573,7 @@ cuts generation input tokens, which claws back both cost and some latency.
 
 - A cross-encoder cannot be the retriever: nothing can be precomputed, because
   the score does not exist until query and document are both present.
-- Run BM25 in parallel with vector search — sequentially is free latency thrown
+- Run BM25 in parallel with vector search - sequentially is free latency thrown
   away.
 - Plot MRR against candidate count; it flattens, and past that you are buying
   latency only.

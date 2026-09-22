@@ -2,7 +2,7 @@
 title: API Design
 description: >-
   REST's actual guarantees, why cursor pagination beats offset, and the two
-  GraphQL bugs — N+1 and the shared DataLoader — that leak other users' data.
+  GraphQL bugs - N+1 and the shared DataLoader - that leak other users' data.
 sidebar:
   order: 6
 difficulty: core
@@ -21,7 +21,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 REST is not "JSON over HTTP". It is a specific bet: **the URL identifies a thing,
 and the method says what you are doing to it.** Split those two apart and HTTP's
-built-in machinery starts working for you — caches know what is cacheable, proxies
+built-in machinery starts working for you - caches know what is cacheable, proxies
 know what is safe to retry, browsers know what to prefetch.
 
 Collapse them and it stops. `POST /getAppointmentById` is a remote procedure call
@@ -31,11 +31,11 @@ new endpoint every time somebody wants a different filter.
 The two properties that make the whole thing work are worth naming precisely,
 because everything else on this page follows from them:
 
-- **Safe** — does not change server state. `GET` is safe, and that is a promise
+- **Safe** - does not change server state. `GET` is safe, and that is a promise
   you make to infrastructure you do not control. Crawlers, browser prefetch, and
   proxies all call safe methods speculatively, which is why a `GET` that deletes
   something is a genuine bug rather than a style issue.
-- **Idempotent** — calling it $N$ times has the same effect as calling it once.
+- **Idempotent** - calling it $N$ times has the same effect as calling it once.
   This is what makes retry safe, and retry is the only defence against a network
   that will, eventually, drop your response after the server processed it.
 
@@ -47,7 +47,7 @@ because everything else on this page follows from them:
 | `PATCH` | ✗ | not necessarily | Apply a partial change |
 | `DELETE` | ✗ | ✓ | Remove |
 
-`DELETE` twice is idempotent because the *effect* is identical — the resource is
+`DELETE` twice is idempotent because the *effect* is identical - the resource is
 gone either way, even though the second call returns 404 rather than 204. `POST`
 twice creates two resources, which is exactly why idempotency keys exist.
 
@@ -62,7 +62,7 @@ Nest **one level at most**. `/doctors/:id/appointments` expresses "the appointme
 of this doctor" as a collection filter, which is genuine information.
 `/clinics/:a/doctors/:b/appointments/:c/notes/:d` is not: it is unreadable, it
 hard-codes a hierarchy that will change, and every id in the path is one more thing
-to authorise. Once you have an appointment id, `/appointments/:id` is enough —
+to authorise. Once you have an appointment id, `/appointments/:id` is enough -
 ids are globally unique.
 
 ### Status codes, and the two everyone gets wrong
@@ -70,21 +70,21 @@ ids are globally unique.
 | Code | When |
 |---|---|
 | `200 OK` | Successful read or action returning a body |
-| `201 Created` | Created — include a `Location` header pointing at it |
+| `201 Created` | Created - include a `Location` header pointing at it |
 | `202 Accepted` | Accepted for async processing; not done yet |
 | `204 No Content` | Success, deliberately no body |
-| `400 Bad Request` | Malformed — unparseable, missing field, wrong type |
+| `400 Bad Request` | Malformed - unparseable, missing field, wrong type |
 | `401 Unauthorized` | Not authenticated (the name is wrong; it means unauthenticated) |
 | `403 Forbidden` | Authenticated, but not allowed |
 | `404 Not Found` | No such resource |
 | `409 Conflict` | Well-formed, but conflicts with current state |
 | `422 Unprocessable Entity` | Syntactically fine, semantically invalid |
-| `429 Too Many Requests` | Rate limited — include `Retry-After` |
+| `429 Too Many Requests` | Rate limited - include `Retry-After` |
 | `500 Internal Server Error` | You broke. Never leak the reason |
 | `503 Service Unavailable` | Overloaded or down; `Retry-After` if you can estimate |
 
 **401 versus 403** is the one that gets reversed. 401 means "I do not know who you
-are" — a missing or expired token. 403 means "I know exactly who you are, and you
+are" - a missing or expired token. 403 means "I know exactly who you are, and you
 still cannot."
 
 **403 versus 404 is a security decision, not a taste one.** Returning 403 for
@@ -107,12 +107,12 @@ One envelope, everywhere, so a client can write one error handler:
 }
 ```
 
-The `code` is machine-readable and **stable** — clients branch on it. The `message`
+The `code` is machine-readable and **stable** - clients branch on it. The `message`
 is human-readable and may be reworded or localised at any time, so **clients must
 never parse it**. `details` carries the structured specifics.
 
 Include a correlation id in every error response so a user can quote it and you can
-find the log line. Never leak stack traces, SQL, or library versions — that is
+find the log line. Never leak stack traces, SQL, or library versions - that is
 reconnaissance handed over for free. (If you want a standard rather than your own
 shape, RFC 7807 `application/problem+json` defines one.)
 
@@ -146,7 +146,7 @@ is the slowest one.
 // ?limit=20&cursor=eyJzdGFydHNBdCI6…
 const { startsAt, id } = decodeCursor(cursor);
 
-// A row comparison, not two conditions — this is one indexed range scan.
+// A row comparison, not two conditions - this is one indexed range scan.
 const rows = await db.query(
   `SELECT * FROM appointments
    WHERE (starts_at, id) > ($1, $2)
@@ -160,7 +160,7 @@ Constant cost regardless of depth, and it cannot skip or duplicate, because the
 cursor encodes *where the last page ended* rather than how many rows to throw away.
 
 **The tiebreaker matters.** Paginate on `starts_at` alone and rows sharing a
-timestamp fall through the crack between pages — include a unique id as the second
+timestamp fall through the crack between pages - include a unique id as the second
 sort key.
 
 **Make the cursor opaque** (base64 it), or clients will build logic on its
@@ -205,14 +205,14 @@ app.post('/payments', async (req, res) => {
 ```
 
 The detail people miss: **storing and replaying the original response**. Returning
-a 409 on retry is technically safe and practically useless — the client still does
+a 409 on retry is technically safe and practically useless - the client still does
 not know whether the payment happened.
 
 ### GraphQL, and where it goes wrong
 
-GraphQL's execution model is a resolver per field. That is the whole value — a
+GraphQL's execution model is a resolver per field. That is the whole value - a
 field resolver only runs if the client asked for that field, so clients fetch
-exactly what they need — and it is also the source of both major bugs.
+exactly what they need - and it is also the source of both major bugs.
 
 **The N+1 is structural.** This query fires 1 query for the list plus 50 for
 patients:
@@ -222,7 +222,7 @@ query { appointments(doctorId: "d1") { id patient { name } } }
 ```
 
 Nothing in the resolver looks wrong. The shape of the execution model creates it.
-**DataLoader** is the fix — it batches every `.load()` made within one tick of the
+**DataLoader** is the fix - it batches every `.load()` made within one tick of the
 event loop into a single call, and caches for the duration of the request:
 
 ```ts
@@ -237,7 +237,7 @@ Three details, each of which separates having used it from having read about it:
 
 **1. Order and length are load-bearing.** DataLoader matches results to keys by
 *position*, not by id. A `WHERE id IN (...)` returns rows in arbitrary order and
-omits misses entirely — so returning `rows` directly gives every appointment *the
+omits misses entirely - so returning `rows` directly gives every appointment *the
 wrong patient*, silently, with no error anywhere. Hence the `ids.map` re-ordering
 and an explicit `null` for misses.
 
@@ -245,7 +245,7 @@ and an explicit `null` for misses.
 it is covered in Failure modes below.
 
 **3. Batching rides the microtask queue.** It collects `.load()` calls until the
-current tick drains, then dispatches — which means an `await` between two `.load()`
+current tick drains, then dispatches - which means an `await` between two `.load()`
 calls splits them into two batches. Usually irrelevant; occasionally the
 explanation for "why is it still doing two queries".
 
@@ -269,7 +269,7 @@ sequential leaf scan. Concretely, at 20 rows per page on a 10-million-row table:
 | 10,000 | 200,020 | 20 |
 
 And the total cost of paging through the *whole* table with offset is
-$\sum_{k=1}^{n/L} kL \approx n^2 / 2L$ — quadratic in the table size. This is why
+$\sum_{k=1}^{n/L} kL \approx n^2 / 2L$ - quadratic in the table size. This is why
 "export everything" scripts built on offset pagination get slower every month and
 eventually stop finishing.
 
@@ -282,7 +282,7 @@ T_{\text{naive}} = (n + 1) \cdot r \qquad T_{\text{batched}} = 2r + q(n)
 $$
 
 At $n = 50$ and $r = 1$ ms that is 51 ms against roughly 4 ms. The saving is
-$O(n)$ round trips traded for one larger query — which is why DataLoader helps most
+$O(n)$ round trips traded for one larger query - which is why DataLoader helps most
 where the round trip is expensive. In a **BFF fronting HTTP services**, where $r$
 is 30 ms rather than 1 ms, the same N+1 costs 1.5 seconds, and batching is not an
 optimisation but the difference between working and not.
@@ -301,11 +301,11 @@ persisted queries exist. There is no equivalent exposure in REST.
 
 ## When NOT to use it
 
-**Do not use REST verbs in URLs**, ever — covered above.
+**Do not use REST verbs in URLs**, ever - covered above.
 
 **Do not use `PUT` for a partial update.** `PUT` replaces the entire resource:
 fields you omit are *cleared*. Sending a partial object to `PUT` is one of the most
-common accidental data-loss bugs, and it is silent — the request succeeds.
+common accidental data-loss bugs, and it is silent - the request succeeds.
 
 **Do not assume `PATCH` is idempotent.** It is not necessarily:
 `PATCH { "op": "increment", "field": "views" }` gives a different result every
@@ -331,7 +331,7 @@ choice when you must. But the better answer reframes the question:
 > believe nobody reads it.
 
 A new version is an admission that you broke something, and the cost is not the
-routing — it is that you now maintain two behaviours until every client migrates,
+routing - it is that you now maintain two behaviours until every client migrates,
 which for third-party clients is never.
 
 **Do not put a federated gateway in front of two services.** Federation is an
@@ -363,21 +363,21 @@ versioning, and pagination at this level of detail.
 
 **Security, in layers rather than as a list:**
 
-- **Transport** — HTTPS everywhere, HSTS.
-- **Authentication** — short-lived access tokens (~15 min) plus a refresh token
+- **Transport** - HTTPS everywhere, HSTS.
+- **Authentication** - short-lived access tokens (~15 min) plus a refresh token
   stored server-side with rotation. Refresh tokens in `httpOnly; Secure; SameSite`
   cookies; `localStorage` is readable by any XSS.
 - **Authorisation per resource, not per route.** This is the big one.
   `GET /appointments/:id` must verify the caller is the doctor or patient *on that
   appointment*, not merely that they hold a valid token. Failing this is **IDOR**,
   and it is the most common real-world API vulnerability by a wide margin.
-- **Validation at the boundary** — a runtime schema (Zod, class-validator) on every
+- **Validation at the boundary** - a runtime schema (Zod, class-validator) on every
   request, with unknown fields stripped. TypeScript types are erased at runtime; a
   type annotation on `req.body` is a lie you are telling yourself.
-- **Injection** — parameterised queries always. And in document databases, never
+- **Injection** - parameterised queries always. And in document databases, never
   interpolate user input into a query object: `{ password: { $ne: null } }` is the
   operator-injection equivalent of `' OR 1=1`.
-- **CORS as an explicit allowlist**, not `*` with credentials — browsers reject
+- **CORS as an explicit allowlist**, not `*` with credentials - browsers reject
   that combination anyway, and reaching for it means CORS has been misunderstood.
 - **No secrets in URLs.** They land in access logs, browser history, and `Referer`
   headers.
@@ -385,13 +385,13 @@ versioning, and pagination at this level of detail.
 **Statelessness is why horizontal scaling works.** The server keeps no per-client
 state between requests, so any instance can serve any request: you scale by adding
 instances, deploy without draining sessions, and a crash loses nobody's context.
-State goes in the database or Redis, never in process memory — the same lesson as
+State goes in the database or Redis, never in process memory - the same lesson as
 the in-process lock that stops working when you run two replicas.
 
 **[GraphQL](/cs-fundamentals/12-backend-apis/graphql-apis/) error semantics
 surprise people.** It returns `200 OK` with an `errors`
 array, because HTTP status describes the transport and a GraphQL response can be
-*partially* successful — one field failed, the rest resolved.
+*partially* successful - one field failed, the rest resolved.
 
 ```json
 {
@@ -437,13 +437,13 @@ production.
 
 **Symptom: every appointment shows the wrong patient's name.** The DataLoader batch
 function returned rows in database order instead of input-key order. Silent, because
-every id got *a* patient — just not theirs.
+every id got *a* patient - just not theirs.
 
 **Symptom: page 2 is missing an item that was on page 1.** Offset pagination over
 shifting data. Move to cursors.
 
 **Symptom: an export job that used to finish now times out.** Deep offset
-pagination — quadratic, as derived above. The fix is a cursor, not a bigger
+pagination - quadratic, as derived above. The fix is a cursor, not a bigger
 timeout.
 
 **Symptom: a `PUT` wiped fields nobody touched.** A client sent a partial object to
@@ -458,7 +458,7 @@ first request and the response was lost.
 Depth limiting and complexity scoring are not optional on a public graph.
 
 **Symptom: a user reads a record they should not be able to see, and the audit log
-shows a valid token.** IDOR — the route checked authentication and not ownership.
+shows a valid token.** IDOR - the route checked authentication and not ownership.
 In GraphQL this is worse, because a single query traverses arbitrarily deep: a
 caller authorised to read their own appointment can reach
 `appointment.doctor.appointments.patient` and pull data they should never see.
@@ -496,12 +496,12 @@ orders by changing a number. It must come from the authenticated session, and th
 route must verify ownership.
 
 **Injection through `orderBy`.** `req.body.sortBy` goes straight into a query
-identifier. You cannot parameterise an identifier, so this needs an allowlist —
+identifier. You cannot parameterise an identifier, so this needs an allowlist -
 this is an injection path even though the rest of the query is parameterised.
 
 **Offset pagination**, with the shifting-rows and deep-page problems above.
 
-**No validation.** `page` could be negative, a string, or absent — `undefined * 20`
+**No validation.** `page` could be negative, a string, or absent - `undefined * 20`
 is `NaN`.
 
 **A bare array response**, leaving no room to add pagination metadata later without
@@ -512,7 +512,7 @@ const SORTABLE = new Set(['createdAt', 'total', 'status']); // allowlist
 
 app.get('/users/:id/orders', requireAuth, async (req, res) => {
   if (req.params.id !== req.user.id && !req.user.isAdmin) {
-    return res.sendStatus(404);   // 404, not 403 — do not confirm existence
+    return res.sendStatus(404);   // 404, not 403 - do not confirm existence
   }
 
   const { limit = 20, cursor, sort = 'createdAt' } = parseQuery(req.query);
@@ -523,7 +523,7 @@ app.get('/users/:id/orders', requireAuth, async (req, res) => {
   const orders = await db.orders.findPage({
     userId: req.params.id,
     after: cursor ? decodeCursor(cursor) : undefined,
-    limit: Math.min(limit, 100),   // cap it — the client does not decide your load
+    limit: Math.min(limit, 100),   // cap it - the client does not decide your load
   });
 
   res.json({ data: orders, nextCursor: encodeCursor(orders.at(-1)) });
@@ -544,19 +544,19 @@ app.get('/users/:id/orders', requireAuth, async (req, res) => {
 <details>
 <summary>Solution</summary>
 
-1. **400** — malformed. The server could not even read the request.
-2. **422** — syntactically fine, semantically invalid. The distinction is useful to
+1. **400** - malformed. The server could not even read the request.
+2. **422** - syntactically fine, semantically invalid. The distinction is useful to
    clients: 400 means "your serialiser is broken", 422 means "your data is wrong".
-3. **409** — well-formed and valid, but conflicts with current state. Include what
+3. **409** - well-formed and valid, but conflicts with current state. Include what
    is still available in `details` so the client can recover without a second round
    trip.
-4. **401** — unauthenticated. Add `WWW-Authenticate` so the client knows to
+4. **401** - unauthenticated. Add `WWW-Authenticate` so the client knows to
    refresh rather than logging the user out.
 5. **404**, not 403. A 403 confirms the record exists, which is itself a leak for
    medical data; an attacker can walk ids and learn who is a patient. This is the
    case where the security answer overrides the semantically obvious one.
 6. **503**, not 500. 503 says "try again"; 500 says "this request is broken". Add
-   `Retry-After` if you can estimate. And log the real reason — never return it.
+   `Retry-After` if you can estimate. And log the real reason - never return it.
 
 </details>
 
@@ -575,7 +575,7 @@ It returns rows in whatever order the database chose, and DataLoader matches
 results to keys **by position**.
 
 So `load('c')` may receive user `a`. Every consumer gets *a* valid-looking user
-object — just the wrong one. Nothing throws, nothing logs, and the response is
+object - just the wrong one. Nothing throws, nothing logs, and the response is
 well-formed, which means this reaches production and is discovered by a user
 noticing someone else's name on their screen.
 
@@ -593,7 +593,7 @@ const loader = new DataLoader(async (ids: readonly string[]) => {
 ```
 
 The `Map` matters at scale too: `rows.find` inside a `map` is $O(n^2)$, which for
-a batch of 1,000 is a million comparisons on the event loop — an N+1 fix that
+a batch of 1,000 is a million comparisons on the event loop - an N+1 fix that
 reintroduces a different quadratic.
 
 </details>
@@ -607,7 +607,7 @@ reintroduces a different quadratic.
     { label: "Users intermittently receive other users' data", correct: true },
     { label: 'Memory grows until the process is restarted' },
     { label: 'Batching stops working and every load is a separate query' },
-    { label: 'Nothing — the loader is stateless between requests' },
+    { label: 'Nothing - the loader is stateless between requests' },
   ]}
 >
   <Fragment slot="explanation">
@@ -639,18 +639,18 @@ reintroduces a different quadratic.
   options={[
     { label: 'Three items from page 1 repeated on page 2', correct: true },
     { label: 'Three items skipped entirely' },
-    { label: 'The correct next 20 items — offset is computed server-side' },
+    { label: 'The correct next 20 items - offset is computed server-side' },
     { label: 'An error, because the cursor is stale' },
   ]}
 >
   <Fragment slot="explanation">
     <p>
       Repeats. With newest-first ordering, three new items push everything down
-      by three positions. The items that were at offsets 17–19 on page 1 are now
-      at offsets 20–22, so page 2 shows them again.
+      by three positions. The items that were at offsets 17-19 on page 1 are now
+      at offsets 20-22, so page 2 shows them again.
     </p>
     <p>
-      Insert at the <em>end</em> instead and you get the opposite failure — items
+      Insert at the <em>end</em> instead and you get the opposite failure - items
       skipped, which is worse because nobody notices. Either way the cause is the
       same: offset is a position in a list that is being recomputed on every
       request.
@@ -670,7 +670,7 @@ reintroduces a different quadratic.
 subsequent decision:
 
 > Resources are nouns and plural; the method carries the verb. That split is what
-> lets HTTP's machinery work — caches know what is cacheable, proxies know what is
+> lets HTTP's machinery work - caches know what is cacheable, proxies know what is
 > safe to retry. Once you write `/getAppointments` you have an RPC API with
 > HTTP-shaped syntax and none of the benefits.
 >
@@ -678,11 +678,11 @@ subsequent decision:
 > collection filter. Beyond that, ids are globally unique so a flat path is enough.
 >
 > A consistent error envelope with a stable machine-readable code, a human message
-> clients must never parse, and a correlation id. And cursor pagination by default —
+> clients must never parse, and a correlation id. And cursor pagination by default -
 > offset both skips and duplicates rows when the data is changing, and deep pages
 > get linearly slower.
 
-**"PUT versus PATCH?"** `PUT` replaces the whole resource — omitted fields are
+**"PUT versus PATCH?"** `PUT` replaces the whole resource - omitted fields are
 cleared, which is a common silent data-loss bug. `PATCH` applies a partial change.
 `PUT` is idempotent by definition; `PATCH` is not necessarily, and raising that
 unprompted is a good beat.
@@ -695,7 +695,7 @@ automatically.
 **"When would you use GraphQL?"**
 
 > When several different frontends consume the same backend and each wants a
-> different slice — over-fetching being the actual pain, rather than a theoretical
+> different slice - over-fetching being the actual pain, rather than a theoretical
 > one. The costs are real and I would name them: caching is harder because
 > everything is one POST to one URL, so you need a normalised client cache instead
 > of HTTP caching; N+1 has to be solved explicitly with DataLoader because the

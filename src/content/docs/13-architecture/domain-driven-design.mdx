@@ -19,12 +19,12 @@ sources:
 ## Intuition
 
 Every non-trivial system eventually needs a way to decide where one part
-ends and another begins — which module a change belongs in, which team
+ends and another begins - which module a change belongs in, which team
 owns a table, which service a new feature gets added to. Most teams answer
 this by technical layer: a `controllers/` folder, a `services/` folder, a
 `repositories/` folder. That boundary is comfortable to draw and wrong for
-almost every purpose that matters, because a single business change —
-"orders can now be partially refunded" — touches a controller, a service,
+almost every purpose that matters, because a single business change -
+"orders can now be partially refunded" - touches a controller, a service,
 and a repository simultaneously. The boundary that was supposed to
 localize change instead guarantees that every real change crosses it.
 
@@ -33,9 +33,9 @@ that grew up around it: **draw boundaries around areas of the business
 that have their own internally consistent model and vocabulary, not
 around technical concerns.** The test for where a boundary belongs isn't
 architectural taste, it's language. When the word "customer" means a
-different thing to the support team than it does to billing — one wants a
+different thing to the support team than it does to billing - one wants a
 person with a ticket history, the other wants a person with a payment
-method and a balance — you have found a boundary, whether or not anyone
+method and a balance - you have found a boundary, whether or not anyone
 draws it in code. Pretending it's one "Customer" model is what produces
 the god object that a dozen unrelated features all reach into.
 
@@ -45,7 +45,7 @@ the god object that a dozen unrelated features all reach into.
 term has exactly one meaning and one model. "Order" inside the fulfillment
 context is a set of line items with a shipping address and a pack status.
 "Order" inside the billing context is a set of charges with a currency and
-a dunning state. They are not the same object with different fields —
+a dunning state. They are not the same object with different fields -
 they are two different models that happen to share an ID, synchronized by
 an explicit translation at the boundary rather than by sharing a class.
 
@@ -62,7 +62,7 @@ flowchart LR
 
 **Ubiquitous language.** The vocabulary used in code, tickets, and
 conversation with the domain expert inside a bounded context should be
-identical — the same word in a `class` name that a product manager uses
+identical - the same word in a `class` name that a product manager uses
 in a sentence. When code says `Account` and the business says
 "subscription," every new engineer pays a translation tax on every
 conversation, and the mismatch is usually a sign the boundary itself is
@@ -70,7 +70,7 @@ wrong: the code drew the line somewhere the business doesn't actually
 think in.
 
 **Aggregate.** Inside a bounded context, the aggregate is the unit that
-must stay consistent within a single transaction — typically a root
+must stay consistent within a single transaction - typically a root
 entity plus the objects that can't exist without it. An `Order` aggregate
 enforces that `total` always equals the sum of its line items; nothing
 outside the aggregate is allowed to write a line item directly, because
@@ -83,11 +83,11 @@ compensating writes instead of a database constraint.
 
 **Finding the boundary in a real codebase**, in order:
 1. Interview the people who do the job, not the people who wrote the
-   ticket — the language a support agent actually uses when a refund goes
+   ticket - the language a support agent actually uses when a refund goes
    wrong is more reliable than the field names in the refund service.
 2. Write down every place the same noun means two different things across
    teams. Each one is a candidate boundary.
-3. Check whether the two meanings change on different schedules — billing
+3. Check whether the two meanings change on different schedules - billing
    rules changing at a different cadence than fulfillment rules is
    corroborating evidence, not the definition itself.
 4. Draw the context map: which contexts call which, and whether the
@@ -100,7 +100,7 @@ compensating writes instead of a database constraint.
 
 This is deliberately not a checklist of the fifteen-plus patterns the
 original DDD book coined (specification, factory, repository interfaces,
-and so on) — most of those are implementation details that fall out
+and so on) - most of those are implementation details that fall out
 naturally once the boundary and the language are right, and memorizing
 the vocabulary without doing the interviews above produces the "we did
 DDD" codebase that has `Aggregate` suffixes on every class and the same
@@ -111,7 +111,7 @@ tangled boundaries it started with.
 **What the boundary buys, in coordination terms.** A bounded context with
 its own model means a schema change inside it doesn't require a
 cross-team review, because nothing outside consumes that internal model
-directly — only the translated events or API it publishes. That
+directly - only the translated events or API it publishes. That
 coordination saving is the actual return on the modeling effort; it's not
 measured in a runtime metric, it's measured in how many teams a Tuesday
 schema migration has to loop in. A boundary drawn correctly turns an
@@ -120,7 +120,7 @@ still shares a table with another team) it changes nothing about the
 coordination cost, it just adds the modeling overhead on top.
 
 **What it costs upfront.** Finding real boundaries requires the interviews
-above, which is calendar time with domain experts, not engineering time —
+above, which is calendar time with domain experts, not engineering time -
 and it front-loads work that a technical-layer split doesn't require at
 all. A team of three shipping an MVP does not have the domain maturity or
 the headcount to justify running this exercise; the model will be wrong
@@ -132,7 +132,7 @@ itself is still being discovered.
 - **The domain is not yet understood.** DDD models a domain that has
   stabilized enough to have a real vocabulary. On a pre-product-market-fit
   team, the domain changes weekly, and a carefully bounded context from
-  last month is now actively wrong — cheaper to keep one flexible model
+  last month is now actively wrong - cheaper to keep one flexible model
   and pay the refactor cost later than to formalize boundaries around a
   business that hasn't decided what it is yet.
 - **The system is small enough that one person holds the whole model in
@@ -142,7 +142,7 @@ itself is still being discovered.
   buyer.
 - **The domain is genuinely simple and technical.** A CRUD admin panel or
   an internal reporting tool over one table doesn't have competing
-  meanings of the same noun across teams — there's no boundary to find,
+  meanings of the same noun across teams - there's no boundary to find,
   because there's only one context.
 
 ## Real-world usage
@@ -150,7 +150,7 @@ itself is still being discovered.
 E-commerce platforms are the canonical case: catalog, inventory, pricing,
 fulfillment, and billing are each a distinct bounded context with
 "product" or "order" meaning something different in each, integrated
-through published domain events rather than a shared schema — Amazon's
+through published domain events rather than a shared schema - Amazon's
 and Shopify's service architectures are both organized this way at the
 top level, with each context owned by a separate team and its own
 datastore. In banking, "account" inside the ledger context (an append-only
@@ -162,20 +162,20 @@ stricter than onboarding's.
 
 ## Failure modes
 
-**The anemic domain model.** Objects that are just field bags — getters
-and setters with no behavior — while every rule that should live on the
+**The anemic domain model.** Objects that are just field bags - getters
+and setters with no behavior - while every rule that should live on the
 aggregate is scattered across a dozen service classes that all reach in
 and mutate the same fields. Symptom: `order.setStatus("shipped")` is
 callable from six different files, none of which check whether the order
 has actually been packed, and eventually one of them ships an order with
-no items on it. The fix is invariants enforced on the aggregate itself —
-`order.ship()` that checks preconditions internally — not another service
+no items on it. The fix is invariants enforced on the aggregate itself -
+`order.ship()` that checks preconditions internally - not another service
 class.
 
 **Context boundaries that don't match team boundaries.** If the fulfillment
 bounded context is modeled correctly in the codebase but two different
 teams both deploy changes to it, the boundary hasn't actually reduced
-coordination cost — it just moved the coordination problem from the code
+coordination cost - it just moved the coordination problem from the code
 into cross-team Slack threads before every deploy. Conway's Law is not
 optional: draw the bounded context to match who can ship without asking
 someone else, or the modeling exercise doesn't pay for itself.
@@ -183,7 +183,7 @@ someone else, or the modeling exercise doesn't pay for itself.
 **The distributed monolith via shared kernel.** Two contexts that are
 supposed to be independent both import a shared library of "common"
 domain types, and now a change to that library requires coordinating
-every context that depends on it — the exact coupling DDD was meant to
+every context that depends on it - the exact coupling DDD was meant to
 remove, reintroduced through a dependency instead of a database table.
 
 ## Practice problems
@@ -209,14 +209,14 @@ remove, reintroduced through a dependency instead of a database table.
 boundaries around business capabilities instead of technical layers,
 because the boundary that survives contact with real change is the one
 where a single business rule change stays inside one boundary instead of
-crossing several. The tool for finding that boundary is language — when
+crossing several. The tool for finding that boundary is language - when
 the same noun means two different things to two teams, that's the
 boundary, and you formalize it as a bounded context with its own model,
 connected to others by translation or events rather than a shared
 schema."
 
 **The caveat that signals real usage:** the hard part was never the
-patterns — it was that our first attempt at a bounded context matched
+patterns - it was that our first attempt at a bounded context matched
 what the code looked like, not who actually owned the deploy pipeline for
 it. Two teams kept shipping to the same "cleanly bounded" service and
 fighting over the same files, and the fix wasn't more modeling, it was

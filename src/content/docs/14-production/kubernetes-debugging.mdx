@@ -1,7 +1,7 @@
 ---
-title: Kubernetes production debugging — pod states, real and broken
+title: Kubernetes production debugging - pod states, real and broken
 description: >-
-  ImagePullBackOff, CrashLoopBackOff, Pending, OOMKilled — captured from four
+  ImagePullBackOff, CrashLoopBackOff, Pending, OOMKilled - captured from four
   genuinely broken pods on a real kind cluster, with the exact kubectl
   describe events that explain each one.
 sidebar:
@@ -23,7 +23,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 ## Intuition
 
 A pod's `STATUS` column is a summary of a state machine, and each of the
-four broken states below has one specific, findable cause — never a
+four broken states below has one specific, findable cause - never a
 mystery, provided you look in the right place. The pattern that generalises:
 `kubectl get pods` tells you *that* something is wrong; `kubectl describe
 pod` almost always tells you *why*, in its `Events` section, which is a
@@ -35,7 +35,7 @@ genuinely broken pods, not staged output.
 
 ## Mechanics
 
-### `ImagePullBackOff` — the image cannot be pulled, and Kubernetes is backing off retrying
+### `ImagePullBackOff` - the image cannot be pulled, and Kubernetes is backing off retrying
 
 ```text
 $ kubectl get pods
@@ -55,14 +55,14 @@ Events:
 The escalation is visible in the event log itself: `Pulling` → `Failed` (as
 `ErrImagePull`) → repeated failures collapse into `ImagePullBackOff`, and
 the kubelet backs off, waiting progressively longer between retries rather
-than hammering a registry that's already failing. The real cause here — a
-registry hostname that doesn't resolve — is spelled out verbatim in the
+than hammering a registry that's already failing. The real cause here - a
+registry hostname that doesn't resolve - is spelled out verbatim in the
 first `Failed` event: `dial tcp: lookup ... server misbehaving`. This is
 almost always a typo in the image name or tag, a private registry the
 cluster lacks credentials for, or (as here) a hostname that simply doesn't
 exist.
 
-### `Pending` — the pod was never scheduled, because no node could fit it
+### `Pending` - the pod was never scheduled, because no node could fit it
 
 ```text
 $ kubectl describe pod pending-demo
@@ -73,14 +73,14 @@ Events:
 ```
 
 `Pending` means the pod exists in the API but the scheduler has never placed
-it on a node — its containers haven't even started, so `kubectl logs` on a
+it on a node - its containers haven't even started, so `kubectl logs` on a
 `Pending` pod returns nothing useful. The event here is precise: this pod
 requested `cpu: "999"` and `memory: "999Gi"`, and the single node in the
 cluster genuinely doesn't have that much of either. `FailedScheduling` is
 always a resource, affinity, taint/toleration, or volume-availability
-mismatch — the message names which one.
+mismatch - the message names which one.
 
-### `CrashLoopBackOff` — the container starts, exits, and Kubernetes is backing off restarting it
+### `CrashLoopBackOff` - the container starts, exits, and Kubernetes is backing off restarting it
 
 ```text
 $ kubectl get pods
@@ -94,7 +94,7 @@ fatal error, exiting
 ```
 
 `--previous` is the detail almost everyone misses on their first
-`CrashLoopBackOff` — by the time you notice the crash loop, the *current*
+`CrashLoopBackOff` - by the time you notice the crash loop, the *current*
 container attempt may be mid-crash or already restarted again, so its logs
 are empty or unrelated. `--previous` fetches the logs from the last
 completed (crashed) attempt specifically, which is where the actual failure
@@ -102,7 +102,7 @@ reason lives. Here it's exactly what the container printed before its
 deliberate `exit 1`; in a real incident it's a stack trace, a config error,
 or a failed startup dependency check.
 
-### `OOMKilled` — the container exceeded its memory limit, and the kernel ended it
+### `OOMKilled` - the container exceeded its memory limit, and the kernel ended it
 
 ```text
 $ kubectl describe pod oomkill-demo
@@ -118,19 +118,19 @@ $ kubectl describe pod oomkill-demo
       memory:     50Mi
 ```
 
-Exit code `137` is `128 + 9` — `SIGKILL`, the same signal a genuine
+Exit code `137` is `128 + 9` - `SIGKILL`, the same signal a genuine
 container-level OOM kill sends at the Docker layer (see
 [Linux debugging](/cs-fundamentals/14-production/linux-debugging/)). This
-pod requested and was limited to exactly `50Mi` — with `requests` equal to
+pod requested and was limited to exactly `50Mi` - with `requests` equal to
 `limits`, this is `Guaranteed` QoS, meaning eviction under node pressure was
 never the risk; the container was killed because *it itself* exceeded its
 own limit, running a real allocator that pushed past 50MB in well under six
 minutes. `Restart Count: 0` at the moment of capture because this is the
-very first kill — a pod with `restartPolicy: Always` (the default) restarts
+very first kill - a pod with `restartPolicy: Always` (the default) restarts
 automatically after this and, if the leak is real and unconditional, the
 restart count climbs and the cycle repeats.
 
-### Readiness vs liveness — captured from a real probe configuration
+### Readiness vs liveness - captured from a real probe configuration
 
 ```text
 $ kubectl describe pod readiness-demo
@@ -138,11 +138,11 @@ $ kubectl describe pod readiness-demo
     Readiness:  http-get http://:80/ delay=3s timeout=1s period=5s #success=1 #failure=3
 ```
 
-**Readiness** answers "should traffic be routed here right now" — a pod that
+**Readiness** answers "should traffic be routed here right now" - a pod that
 fails its readiness probe is removed from service endpoints (no traffic
 sent) without being restarted, which is exactly right for "still starting
 up" or "temporarily overloaded, back off for a moment." **Liveness** answers
-"is this process alive at all" — failing it gets the container restarted.
+"is this process alive at all" - failing it gets the container restarted.
 Conflating them is a real and common misconfiguration: using a liveness
 probe to gate traffic during a slow startup restarts a container that was
 never actually broken, just still loading.
@@ -150,7 +150,7 @@ never actually broken, just still loading.
 ## Cost & limits
 
 **`kubectl describe` output truncates its `Events` list and drops entries
-after roughly an hour by default** — for an incident investigated well after
+after roughly an hour by default** - for an incident investigated well after
 it started, `kubectl logs --previous` and any external log aggregation
 matter more than the live event stream, which may have already rolled past
 the relevant entries.
@@ -158,21 +158,21 @@ the relevant entries.
 **Probes have a real latency and resource cost, multiplied by every replica,
 every period.** A readiness probe hitting an expensive endpoint every 5
 seconds across 50 replicas is 10 requests/second of load that exists purely
-for health checking — cheap in isolation, worth remembering as the replica
+for health checking - cheap in isolation, worth remembering as the replica
 count grows.
 
 ## When NOT to use it
 
 **Do not immediately restart a `CrashLoopBackOff` pod without checking
 `--previous` logs first.** A manual restart (deleting the pod, forcing a
-new attempt) throws away the one piece of evidence — the crash logs from the
-actual failed attempt — that explains what's wrong, and Kubernetes will
+new attempt) throws away the one piece of evidence - the crash logs from the
+actual failed attempt - that explains what's wrong, and Kubernetes will
 recreate the pod anyway per its restart policy, so a manual restart rarely
 buys anything the system wasn't already going to do.
 
 **Do not set a liveness probe against a dependency the container doesn't
 own.** A liveness probe that checks "can I reach the database" restarts the
-*application* container when the *database* is down — which does nothing to
+*application* container when the *database* is down - which does nothing to
 fix the database and adds a restart storm on top of an already-degraded
 dependency. Liveness should check "is this process itself functioning," not
 "is everything this process depends on healthy."
@@ -193,20 +193,20 @@ notice it on a dashboard.
 event.** A deployment that requests resources the cluster can't currently
 provide (a scaling event, a node pool that hasn't grown yet, a typo in a
 resource request) sits invisible unless something checks
-`FailedScheduling` events specifically — `kubectl get pods` alone shows
+`FailedScheduling` events specifically - `kubectl get pods` alone shows
 `Pending` with no explanation.
 
 **The restart storm from a liveness probe checking the wrong thing.** A
 liveness probe that transitively depends on a downstream service being up
 restarts the application repeatedly while the downstream outage is
-ongoing — turning one outage into two, and making the application's own
+ongoing - turning one outage into two, and making the application's own
 logs noisy with repeated startup sequences that obscure the actual
 dependency failure.
 
 **The OOMKilled pod that kept getting killed at a slightly different point
 each time, mistaken for flakiness.** A genuine memory leak, restarted
 automatically each time it hits the limit, looks like intermittent
-instability rather than a deterministic, escalating problem — until someone
+instability rather than a deterministic, escalating problem - until someone
 plots RSS over time within a single container's lifetime and sees the ramp
 (exactly the shape captured in [reading the
 symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)).
@@ -217,11 +217,11 @@ symptoms](/cs-fundamentals/14-production/reading-the-symptoms/)).
 12. What's the first command to run, and why not just delete and recreate
 the pod?**
 
-`kubectl logs <pod> --previous` — it captures the logs from the last
+`kubectl logs <pod> --previous` - it captures the logs from the last
 completed (crashed) attempt, which is where the actual failure reason
 lives; the current attempt's logs may be empty or mid-crash. Deleting and
 recreating throws away that evidence for no benefit, since Kubernetes is
-already restarting the container automatically per its restart policy — a
+already restarting the container automatically per its restart policy - a
 manual restart doesn't fix anything a real crash-loop needs fixed.
 
 **2. A pod stays `Pending` indefinitely. `kubectl describe pod` shows
@@ -241,7 +241,7 @@ application pods, and is this the right design?**
 
 Every pod's liveness probe starts failing (since `/health` transitively
 depends on the database), and Kubernetes restarts all of them repeatedly for
-the duration of the database outage — none of which fixes the database, and
+the duration of the database outage - none of which fixes the database, and
 the restart churn adds noise and potential cold-start latency on top of an
 already-degraded system. This is not the right design: liveness should
 check whether the process itself is functioning, and readiness (which
@@ -268,12 +268,12 @@ for "a dependency is down and I can't serve requests right now."
 ## Interview answers
 
 **"A pod is stuck in `ImagePullBackOff`. Walk me through diagnosing it."**
-`kubectl describe pod` and read the `Events` section — the exact failure
+`kubectl describe pod` and read the `Events` section - the exact failure
 (DNS resolution failure, authentication error, image or tag not found) is
 printed verbatim in the `Failed` events before Kubernetes collapses into the
 backoff state. The caveat that shows real experience: the backoff itself
 means the specific error message is only in the *earlier* events, not
-necessarily the most recent one — `describe` shows a rolling window, so
+necessarily the most recent one - `describe` shows a rolling window, so
 check the full event history rather than just the latest line.
 
 **"What's the difference between a readiness probe and a liveness probe,
@@ -284,5 +284,5 @@ failing it kills and recreates the process. The caveat that shows this was
 actually operated: a liveness probe that checks a downstream dependency
 (not the process's own health) turns a dependency outage into a restart
 storm across every replica, which helps nobody and adds churn on top of an
-already-degraded system — liveness should only ever check whether the
+already-degraded system - liveness should only ever check whether the
 process itself is functioning.

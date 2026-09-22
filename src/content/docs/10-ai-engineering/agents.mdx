@@ -26,7 +26,7 @@ An agent is a `while` loop around a model call, where the model decides what to
 do next instead of you deciding in advance.
 
 That is genuinely all it is, and the deflation is useful. The interesting part
-is not the loop — you could write it in twenty lines — but the fact that **you
+is not the loop - you could write it in twenty lines - but the fact that **you
 have given up the ability to know what happens next**. Everything difficult
 follows from that: how many steps it takes, what it costs, whether it
 terminates, whether it does something you did not want.
@@ -47,7 +47,7 @@ model to rediscover something you already know.
 Most "agent" projects are workflows in disguise. The genuine cases have a
 distinctive shape: **the next step depends on what the last one returned**, and
 the branching is too wide to enumerate. Debugging an incident is a real agent
-task — what you check second depends entirely on what the first check said.
+task - what you check second depends entirely on what the first check said.
 
 ## Mechanics
 
@@ -58,7 +58,7 @@ task — what you check second depends entirely on what the first check said.
 Four scenarios: one that works and three that fail. Worth doing in order:
 
 1. **The happy path.** Notice the `context` counter growing at every step. An
-   agent is not n independent calls — it is one conversation that gets longer.
+   agent is not n independent calls - it is one conversation that gets longer.
 2. **"Loops".** Step through it and the repetition is obvious to you within two
    steps. Nothing inside the loop notices. Now untick **detect repeated calls**
    and watch it burn through the step limit instead.
@@ -66,7 +66,7 @@ Four scenarios: one that works and three that fail. Worth doing in order:
    The fix is in the tool, not the model.
 4. **"Wanders".** Every step is individually reasonable. The sequence goes
    nowhere. This is why a step limit is a *correctness* control, not just a cost
-   one — nothing in the loop can distinguish "making progress" from "still
+   one - nothing in the loop can distinguish "making progress" from "still
    going".
 
 Also watch **billed so far** against **context**. Billing grows faster than step
@@ -151,7 +151,7 @@ async function run(goal: string, limits: Limits): Promise<Result> {
 </Tabs>
 
 Note the detection key. Detecting on the **tool name alone** would flag every
-legitimate agent that queries one tool repeatedly with different arguments —
+legitimate agent that queries one tool repeatedly with different arguments -
 which is most of them. The `(tool, args)` pair is what distinguishes a loop from
 a sequence.
 
@@ -183,7 +183,7 @@ are the product.**
 ### Make the trace a first-class artefact
 
 An agent that fails and leaves no trace cannot be debugged, because the run is
-not reproducible — the model may decide differently next time.
+not reproducible - the model may decide differently next time.
 
 Log, per step: the thought, the tool and arguments, the result *size*, the
 running token count, and the stop reason. That trace is your only forensic
@@ -210,7 +210,7 @@ important cost fact about agents, and it is why a step limit is a budget control
 
 The two levers that actually work:
 
-- **Fewer, smaller tool results.** They compound — a 5,000-token result at step 2
+- **Fewer, smaller tool results.** They compound - a 5,000-token result at step 2
   is paid again at every subsequent step.
 - **A lower step limit.** Six is a reasonable default for most tasks; the tail of
   runs that would have succeeded at step 9 is smaller than people expect, and
@@ -219,7 +219,7 @@ The two levers that actually work:
 ### Latency is additive and sequential
 
 Each step is a full model call. Six steps at 2 seconds is 12 seconds, plus tool
-time, and none of it parallelises — step 3 depends on step 2.
+time, and none of it parallelises - step 3 depends on step 2.
 
 That number governs the product design. **Agents are not for synchronous
 request/response paths.** They belong behind a job queue with progress streamed
@@ -252,8 +252,8 @@ or pay needs either confirmation or restriction to reversible operations. "It
 will probably be fine" is not a control, and the failure is unbounded.
 
 **When you cannot afford the variance.** The same input can produce a different
-sequence. If the process must be identical every time — compliance, financial
-reporting, anything audited — that variance is disqualifying regardless of
+sequence. If the process must be identical every time - compliance, financial
+reporting, anything audited - that variance is disqualifying regardless of
 quality.
 
 **Before you have tool-level observability.** Debugging an agent without a trace
@@ -261,18 +261,18 @@ is guessing. Build the trace before the agent, not after the first incident.
 
 ## Real-world usage
 
-- **Incident diagnosis** — the genuine case: what you check second depends on what
+- **Incident diagnosis** - the genuine case: what you check second depends on what
   the first check returned. Metrics, logs, deploys and config as tools.
-- **Coding agents** — read, edit, run tests, read the failure, edit again. The
+- **Coding agents** - read, edit, run tests, read the failure, edit again. The
   test suite is an unusually good verifier, which is why this domain works better
   than most.
-- **Deep research** — search, read, follow a lead, synthesise. Long-running,
+- **Deep research** - search, read, follow a lead, synthesise. Long-running,
   queued, with the trace shown to the user as it goes.
-- **Customer support with actions** — look up, diagnose, and act, with writes
+- **Customer support with actions** - look up, diagnose, and act, with writes
   behind confirmation.
-- **Data exploration** — query, look, refine. Works because a wrong query is
+- **Data exploration** - query, look, refine. Works because a wrong query is
   cheap and visible.
-- **Migration and refactoring** — bounded, verifiable, reversible via version
+- **Migration and refactoring** - bounded, verifiable, reversible via version
   control, which is what makes autonomy tolerable.
 
 ## Failure modes
@@ -286,7 +286,7 @@ full run.
 the loop compares this call to the last one.
 
 **Fix:** detect repeated `(tool, args)` pairs. On detection, stop with a message
-saying what repeated — not a generic failure, because the repeated call is the
+saying what repeated - not a generic failure, because the repeated call is the
 diagnosis.
 
 ### Context exhaustion from one tool
@@ -336,7 +336,7 @@ operations. Make autonomy an explicit decision per tool rather than a default.
 **Cause:** a fetched web page or document contained instructions, and tool
 results enter the context on equal footing with your system prompt.
 
-**Fix:** delimit tool results structurally, and — more importantly — never rely on
+**Fix:** delimit tool results structurally, and - more importantly - never rely on
 that alone. Constrain what the tools can do, since that is the actual boundary.
 See [guardrails](/cs-fundamentals/10-ai-engineering/guardrails/).
 
@@ -364,7 +364,7 @@ step 8: send 2,000 + 7,000                =   9,000
                                     total ≈  44,000
 ```
 
-Still short of 100,000 — so the remaining gap is the **base prompt**, and that is
+Still short of 100,000 - so the remaining gap is the **base prompt**, and that is
 the actionable finding. If tool definitions are 6,000 rather than 2,000 tokens,
 the base is paid eight times: 48,000 tokens of pure overhead before any results.
 
@@ -375,7 +375,7 @@ the base is paid eight times: 48,000 tokens of pure overhead before any results.
 2. **Lower the step limit** from 8 to 6. Costs are super-linear, so the last two
    steps are the most expensive ones.
 3. **Shrink tool results.** A result at step 2 is paid seven more times.
-4. **Prompt caching** on the stable prefix — system plus tools — which is exactly
+4. **Prompt caching** on the stable prefix - system plus tools - which is exactly
    the part being re-sent unchanged.
 
 **The generalisable rule:** agent cost is the sum of prefix sizes, not
@@ -393,17 +393,17 @@ An agent triages support tickets with tools: `search_kb`, `get_customer`,
 
 The tools split into two classes and must be treated differently.
 
-**Read tools** (`search_kb`, `get_customer`, `get_order`) — autonomous, with
+**Read tools** (`search_kb`, `get_customer`, `get_order`) - autonomous, with
 per-user authorisation. `get_customer` and `get_order` must be scoped to the
 requesting customer in dispatch, or this is a data-leak surface.
 
-**Write tools** — three different risk levels, three different treatments:
+**Write tools** - three different risk levels, three different treatments:
 
-- `create_ticket` — autonomous. Reversible, low blast radius, and a wrong ticket
+- `create_ticket` - autonomous. Reversible, low blast radius, and a wrong ticket
   is noise rather than damage.
-- `send_email` — **draft only.** The agent produces the text; a human sends it.
+- `send_email` - **draft only.** The agent produces the text; a human sends it.
   Sending is irreversible and externally visible, which is the worst combination.
-- `issue_refund` — **never autonomous.** Moves money. Propose an action with an
+- `issue_refund` - **never autonomous.** Moves money. Propose an action with an
   amount and a reason; a human approves it. If volume demands automation, cap it
   hard: under £20, one per customer per day, and only against an order the
   customer owns.
@@ -414,20 +414,20 @@ requesting customer in dispatch, or this is a data-leak surface.
 Limits(max_steps=6, max_tokens=15_000, repeat_limit=2)
 ```
 
-`repeat_limit=2` rather than 3, because the read tools here are lookups by id —
+`repeat_limit=2` rather than 3, because the read tools here are lookups by id -
 a legitimate second identical lookup is already suspicious.
 
 **Plus, and this is the part usually missed:**
 
 - **Full trace per run**, including proposed-but-unapproved actions. When a
   refund is disputed you need what the agent proposed and why.
-- **A kill switch** — a flag that disables write tools without a deploy.
+- **A kill switch** - a flag that disables write tools without a deploy.
 - **Alert on step-limit rate.** Rising rate means the tools stopped answering
   something, and it is the earliest signal you get.
 
 **The principle: autonomy is a per-tool decision, not a per-agent one.** The
 common mistake is one autonomy setting for the whole agent, which forces the
-safest tool to be as restricted as the most dangerous — or, more often, the
+safest tool to be as restricted as the most dangerous - or, more often, the
 reverse.
 
 </details>
@@ -437,7 +437,7 @@ reverse.
 Classify each and justify.
 
 - (a) Every night, summarise yesterday's tickets by category and email the team.
-- (b) A user asks "why was my order late?" — the answer may involve shipping,
+- (b) A user asks "why was my order late?" - the answer may involve shipping,
   inventory, payments or weather.
 - (c) Convert 200 markdown files to a new frontmatter format.
 
@@ -446,7 +446,7 @@ Classify each and justify.
 
 **(a) Workflow.** The steps are known: query tickets, group, summarise each
 group, render, send. Write it as a function with one model call per category.
-Deterministic, testable, cheap, and it can run unattended — which an agent
+Deterministic, testable, cheap, and it can run unattended - which an agent
 sending email cannot.
 
 **(b) Agent, genuinely.** This is the real shape: the second step depends
@@ -457,7 +457,7 @@ the branches is impractical because the combinations are the point.
 Constraints: read-only tools, step limit 6, queued rather than synchronous, and
 the trace shown to the support agent so they can verify the reasoning.
 
-**(c) Neither — a script with a model call inside.** The iteration is a `for`
+**(c) Neither - a script with a model call inside.** The iteration is a `for`
 loop. The per-file transformation may need a model if the format is irregular,
 but nothing is being *decided*. Deterministic loop, one call per file, schema
 validation on each result, and a diff to review.
@@ -475,10 +475,10 @@ more often than teams expect.
   kind="complexity"
   question="An agent runs 10 steps with a 2,000-token base prompt and 800-token tool results. Roughly how many tokens are billed?"
   options={[
-    { label: '~56,000 — the whole context is re-sent each step, so cost is the sum of prefix sizes', correct: true },
-    { label: '~10,000 — the final context size, sent once at the end' },
-    { label: '~28,000 — ten steps at the average context size' },
-    { label: '~8,000 — only the new tokens each step are billed, since the rest is cached' },
+    { label: '~56,000 - the whole context is re-sent each step, so cost is the sum of prefix sizes', correct: true },
+    { label: '~10,000 - the final context size, sent once at the end' },
+    { label: '~28,000 - ten steps at the average context size' },
+    { label: '~8,000 - only the new tokens each step are billed, since the rest is cached' },
   ]}
 >
   <Fragment slot="explanation">
@@ -492,12 +492,12 @@ more often than teams expect.
       <strong>square</strong> of the step count, not linearly. Ten steps is
       roughly 24× a single call, not 10×. That is why a step limit is a budget
       control rather than just a safety net, and why a large tool result early in
-      a run is so expensive — it is paid again at every subsequent step.
+      a run is so expensive - it is paid again at every subsequent step.
     </p>
     <p>
       Prompt caching genuinely helps here, which makes the last option the most
       interesting distractor: it applies only to the stable{' '}
-      <em>prefix</em> — system prompt and tool definitions — not to the growing
+      <em>prefix</em> - system prompt and tool definitions - not to the growing
       tail of tool results, and only if nothing varies near the front.
     </p>
   </Fragment>
@@ -509,7 +509,7 @@ more often than teams expect.
   kind="concept"
   question="You add loop detection to an agent. What should the detection key be?"
   options={[
-    { label: 'The (tool name, arguments) pair — the same tool with different arguments is normal progress', correct: true },
+    { label: 'The (tool name, arguments) pair - the same tool with different arguments is normal progress', correct: true },
     { label: 'The tool name, so any repeated use of one tool is caught early' },
     { label: 'The model\'s stated reasoning text, since a looping agent repeats its thoughts' },
     { label: 'The number of steps taken, since loops are what step limits exist to catch' },
@@ -518,7 +518,7 @@ more often than teams expect.
   <Fragment slot="explanation">
     <p>
       Calling one tool repeatedly with different arguments is what a working
-      agent does — three lookups by different ids, or a query refined across
+      agent does - three lookups by different ids, or a query refined across
       steps. Detecting on the tool name alone would flag all of them, so the
       detector would either be disabled or made useless by a high threshold.
     </p>
@@ -529,8 +529,8 @@ more often than teams expect.
     </p>
     <p>
       Reasoning text is unreliable because a looping model usually rephrases its
-      thought each time — "let me check the schedule", "I will retrieve the
-      schedule" — while making the identical call. And a step limit does catch
+      thought each time - "let me check the schedule", "I will retrieve the
+      schedule" - while making the identical call. And a step limit does catch
       loops eventually, at full cost and with a stop reason that tells you
       nothing; the point of detection is stopping early and naming the repeated
       call, which <em>is</em> the diagnosis.
@@ -546,7 +546,7 @@ more often than teams expect.
 > you. Think, act, observe, repeat until it can answer.
 >
 > The deflation is useful, because the loop itself is twenty lines. What is
-> actually hard is that you have given up knowing what happens next — so all the
+> actually hard is that you have given up knowing what happens next - so all the
 > engineering is in the controls around it: step limit, token budget, loop
 > detection, per-call authorisation, and a trace you can read afterwards. The
 > controls are the product.
@@ -554,7 +554,7 @@ more often than teams expect.
 **"When would you not build one?"**
 
 > When the sequence is known, which covers most candidate projects. If it is
-> always look up the customer, then their orders, then format — that is a
+> always look up the customer, then their orders, then format - that is a
 > workflow, and writing it as a function gives you determinism, tests, a tenth of
 > the latency and a tenth of the cost.
 >
@@ -568,13 +568,13 @@ more often than teams expect.
 **"How do agents fail, and what do you do about it?"**
 
 > Four ways, and they map to four controls. Retry loops, where a tool errors and
-> the model reissues the identical call — caught by detecting repeated
+> the model reissues the identical call - caught by detecting repeated
 > tool-plus-arguments pairs, not tool names, because calling one tool repeatedly
 > with different arguments is normal.
 >
 > Context exhaustion from one oversized tool result, which is a tool bug: cap
 > and summarise what tools return. Wandering, where every step is reasonable and
-> nothing converges — that is what the step limit is for, and hitting it
+> nothing converges - that is what the step limit is for, and hitting it
 > routinely means the tools are missing something rather than the limit being
 > too low.
 >
@@ -584,7 +584,7 @@ more often than teams expect.
 
 **The caveats worth voicing:**
 
-- Agent cost is the sum of prefix sizes — ten steps is roughly 24× one call.
+- Agent cost is the sum of prefix sizes - ten steps is roughly 24× one call.
 - Autonomy is a per-tool decision, not a per-agent one.
 - Build the trace before the agent; a failed run is not reproducible.
 - Tool results enter the context on equal footing with your system prompt, so

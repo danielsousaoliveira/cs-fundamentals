@@ -1,7 +1,7 @@
 ---
 title: Linked Lists
 description: >-
-  O(1) insertion that loses to an O(n) array up to a few thousand elements —
+  O(1) insertion that loses to an O(n) array up to a few thousand elements -
   the clearest case in this section of asymptotics losing to cache locality.
 sidebar:
   order: 2
@@ -41,7 +41,7 @@ list is. Nothing shifts, nothing gets copied, and the list can grow until memory
 runs out.
 
 The price is paid on every single read. There is no arithmetic that finds element
-`i`, because the elements are not laid out in any predictable pattern — you have
+`i`, because the elements are not laid out in any predictable pattern - you have
 to start at `head` and follow `next` `i` times. Indexing goes from $O(1)$ to
 $O(n)$, and that is not the worst of it. The worst of it is that following a
 pointer to an unpredictable address is one of the slowest things a modern CPU
@@ -74,7 +74,7 @@ result.
 
 ```python
 class Node:
-    __slots__ = ('data', 'next')     # see the failure modes — this matters
+    __slots__ = ('data', 'next')     # see the failure modes - this matters
     def __init__(self, data):
         self.data = data
         self.next = None
@@ -88,7 +88,7 @@ class SinglyLinkedList:
         node.next = self.head        # 1. link the new node in
         self.head = node             # 2. only then move head
 
-    def append(self, value):         # O(n) — no tail pointer
+    def append(self, value):         # O(n) - no tail pointer
         node = Node(value)
         if not self.head:
             self.head = node
@@ -129,7 +129,7 @@ class SinglyLinkedList<T> {
     this.head = node;                // 2. only then move head
   }
 
-  append(value: T): void {           // O(n) — no tail pointer
+  append(value: T): void {           // O(n) - no tail pointer
     const node = new Node(value);
     if (!this.head) {
       this.head = node;
@@ -159,23 +159,23 @@ class SinglyLinkedList<T> {
 </Tabs>
 
 **The `delete` loop looks off by one and is not.** A singly linked list has no way
-back, so to remove a node you must be standing on its *predecessor* — you cannot
+back, so to remove a node you must be standing on its *predecessor* - you cannot
 unlink a node you are currently holding. That single constraint explains most of
 the awkwardness in linked-list code, and it is why doubly linked lists exist.
 
 ### Variants
 
-**Doubly linked** — each node also stores `prev`. Deletion given a node reference
+**Doubly linked** - each node also stores `prev`. Deletion given a node reference
 becomes genuinely $O(1)$, and traversal works in both directions. Costs an extra
 pointer per node (8 more bytes) and doubles the number of updates per operation,
 so there are twice as many chances to leave the structure inconsistent.
 
-**Circular** — the tail points back at the head. Natural fit for round-robin
+**Circular** - the tail points back at the head. Natural fit for round-robin
 schedulers and ring buffers. The trap is that every traversal needs an explicit
-termination condition, because there is no `null` to stop at — an infinite loop is
+termination condition, because there is no `null` to stop at - an infinite loop is
 one forgotten check away.
 
-**With a tail pointer** — one extra field makes `append` $O(1)$. Nearly every real
+**With a tail pointer** - one extra field makes `append` $O(1)$. Nearly every real
 implementation has one, which makes the $O(n)$ append in the widget above a
 property of the textbook version rather than of linked lists generally.
 
@@ -200,7 +200,7 @@ $$
 \underbrace{O(n)}_{\text{find the position}} + \underbrace{O(1)}_{\text{splice}}
 $$
 
-An array's insert is $O(n)$ too — but it is $O(n)$ *memmove*, a single bulk memory
+An array's insert is $O(n)$ too - but it is $O(n)$ *memmove*, a single bulk memory
 operation that a CPU does at gigabytes per second, against $O(n)$ *pointer chases*,
 each potentially a cache miss. Same complexity class, wildly different constants,
 and the constants win far longer than anyone expects.
@@ -214,7 +214,7 @@ running the original notebook's own benchmark past the point where it stopped.
 
 The notebook that seeded this site benchmarked prepending to a linked list against
 `list.insert(0, …)` on a Python list, and concluded that **the array won at every
-size it tested** — including at 10,000 elements, the case linked lists are
+size it tested** - including at 10,000 elements, the case linked lists are
 supposed to dominate. The linked list is $O(n)$ total there and the array is
 $O(n^2)$, so that result looks impossible.
 
@@ -228,7 +228,7 @@ It is not impossible; the benchmark simply stopped at the crossover. Extending i
 | 40,000 | 0.00762 s | 0.18537 s | linked list, 24× |
 | 160,000 | 0.03450 s | 2.94881 s | linked list, 85× |
 
-The asymptotics do win — eventually, and then overwhelmingly. But the crossover
+The asymptotics do win - eventually, and then overwhelmingly. But the crossover
 sits somewhere around **one to two thousand elements**, and below that the array
 wins the very operation it is theoretically bad at. `list.insert(0, …)` is a
 `memmove` in C; the linked list is an object allocation and a pointer write in the
@@ -253,8 +253,8 @@ growth rate and nothing else.**
 
 ### When you need random access
 
-Indexing is $O(n)$. Any algorithm that indexes inside a loop — binary search, most
-sorting, two-pointer techniques with jumps — becomes an order worse. `list[i]` in a
+Indexing is $O(n)$. Any algorithm that indexes inside a loop - binary search, most
+sorting, two-pointer techniques with jumps - becomes an order worse. `list[i]` in a
 loop over a linked list is a quiet $O(n^2)$.
 
 ### When memory overhead matters
@@ -267,7 +267,7 @@ and worse locality for it.
 ### The honest summary
 
 Reach for a linked list when you have a node reference in hand and are splicing
-often — an LRU's recency list, a scheduler's run queue, a free list inside an
+often - an LRU's recency list, a scheduler's run queue, a free list inside an
 allocator. In application code, the answer is usually a dynamic array, and when it
 is not, it is usually a deque.
 
@@ -278,7 +278,7 @@ is not, it is usually a deque.
   question="You need a FIFO queue for a few thousand jobs, with pushes and pops at both ends. What do you reach for?"
   options={[
     { label: 'A deque (ring buffer over an array)', correct: true },
-    { label: 'A singly linked list — O(1) insertion' },
+    { label: 'A singly linked list - O(1) insertion' },
     { label: 'A Python list with pop(0)' },
     { label: 'A doubly linked list, for O(1) at both ends' },
   ]}
@@ -286,7 +286,7 @@ is not, it is usually a deque.
   <Fragment slot="explanation">
     <p>
       <strong>A deque.</strong> Python's <code>collections.deque</code> is a
-      doubly linked list of <em>fixed-size blocks</em> — typically 64 elements
+      doubly linked list of <em>fixed-size blocks</em> - typically 64 elements
       each. That gets O(1) at both ends like a linked list, while keeping runs of
       elements contiguous so traversal stays cache-friendly and the pointer
       overhead is amortised over 64 values instead of paid per value.
@@ -295,7 +295,7 @@ is not, it is usually a deque.
       A plain linked list is right in principle and loses on constants. A Python
       list with <code>pop(0)</code> is O(n) per pop, so O(n²) overall. The
       general lesson: <strong>the winning structures are usually hybrids</strong>{' '}
-      — blocks of contiguous memory linked together, which is also how ropes,
+      - blocks of contiguous memory linked together, which is also how ropes,
       B-trees, and chunked deques all work.
     </p>
   </Fragment>
@@ -309,7 +309,7 @@ The Linux kernel's `list_head` is embedded directly in the structs it links.
 
 **LRU caches.** The canonical pairing: a hash table for $O(1)$ lookup, plus a
 doubly linked list for $O(1)$ recency reordering. Every access splices a node to
-the front — node already in hand, no search, exactly the case linked lists win.
+the front - node already in hand, no search, exactly the case linked lists win.
 
 **Blockchains and Git.** Each block or commit points at its parent. A linked list
 where the "pointer" is a cryptographic hash.
@@ -321,19 +321,19 @@ where the "pointer" is a cryptographic hash.
 contiguous text, which is the hybrid the quiz above describes.
 
 **Adjacency lists.** Graph representations, though these are usually arrays of
-arrays in practice — for the cache reasons above.
+arrays in practice - for the cache reasons above.
 
 ## Failure modes
 
 **Losing the list by assigning `head` first.** The order error from the Visual
 section. In a garbage-collected language the orphaned nodes are silently
-collected, so the symptom is not a crash but *missing data* — the list is
+collected, so the symptom is not a crash but *missing data* - the list is
 suddenly length 1.
 
 **Infinite loops from a cycle.** One bad `next` assignment makes a traversal never
 terminate. It hangs a thread rather than raising, so it presents as a stuck
-request or pegged CPU with no exception anywhere. Floyd's cycle detection — a slow
-pointer moving one step, a fast one moving two — finds it in $O(n)$ time and
+request or pegged CPU with no exception anywhere. Floyd's cycle detection - a slow
+pointer moving one step, a fast one moving two - finds it in $O(n)$ time and
 $O(1)$ space, and is worth having in your head:
 
 <Tabs syncKey="lang">
@@ -376,17 +376,17 @@ testing with 20 nodes.
 **Deep recursion in `__del__` / destructor chains.** In CPython, dropping the head
 of a long list frees each node, which drops the reference to the next, and the
 deallocation itself recurses. Freeing a 100,000-node list can segfault the
-interpreter — a genuinely surprising crash with no Python traceback at all.
+interpreter - a genuinely surprising crash with no Python traceback at all.
 Iteratively unlinking before releasing avoids it.
 
 **The `__dict__` tax.** Without `__slots__`, every Python node carries a full
-instance dictionary. Measured above: about 1.5–1.6× slower to allocate, and
+instance dictionary. Measured above: about 1.5-1.6× slower to allocate, and
 substantially more memory. On a structure whose only justification is cheap
 allocation, that overhead attacks the one advantage it has.
 
 **Holding a reference to a spliced-out node.** Removing a node from the list does
 not remove it from your variable. In a GC language that keeps it and everything it
-points to alive — so a "removed" node still pinning the rest of the list is a
+points to alive - so a "removed" node still pinning the rest of the list is a
 straightforward leak.
 
 ## Practice problems
@@ -429,19 +429,19 @@ function reverse<T>(head: Node<T> | null): Node<T> | null {
 </Tabs>
 
 Saving `current.next` before overwriting it is the whole problem. Drop that line
-and you lose the rest of the list on the first iteration — the same class of error
+and you lose the rest of the list on the first iteration - the same class of error
 as the prepend ordering above.
 
 ### 2. Find the middle in one pass
 
 Slow pointer one step, fast pointer two. When `fast` hits the end, `slow` is at the
-middle. $O(n)$ time, $O(1)$ space, one traversal — the alternative is counting the
+middle. $O(n)$ time, $O(1)$ space, one traversal - the alternative is counting the
 length and walking again, which is two.
 
 ### 3. Merge two sorted lists
 
-Splice nodes from whichever list has the smaller head. $O(n + m)$ time and — unlike
-the array version — $O(1)$ extra space, because the nodes are relinked rather than
+Splice nodes from whichever list has the smaller head. $O(n + m)$ time and - unlike
+the array version - $O(1)$ extra space, because the nodes are relinked rather than
 copied. **This is a case where the linked list genuinely wins**, and it is the
 merge step of an external merge sort.
 
@@ -451,13 +451,13 @@ merge step of an external merge sort.
 
 > Array, almost always, and I'd want a specific reason to pick otherwise. The
 > reason is usually that I already hold a node reference and I'm splicing rather
-> than searching — an LRU's recency list is the clean example. If I'm indexing or
+> than searching - an LRU's recency list is the clean example. If I'm indexing or
 > traversing, the array wins even though both are the same complexity class.
 
 **"Why, if insertion is O(1)?"**
 
 > Because that O(1) assumes you're already at the position. Getting there is O(n),
-> and it's O(n) pointer chases rather than an O(n) memmove — so the constants are
+> and it's O(n) pointer chases rather than an O(n) memmove - so the constants are
 > maybe an order of magnitude apart. I measured a traversal at around ten times
 > slower than the equivalent array walk at a million elements, purely from cache
 > behaviour.
@@ -466,11 +466,11 @@ merge step of an external merge sort.
 
 > "The thing worth saying is that the crossover is much further out than people
 > expect. I benchmarked prepending, which is the linked list's best case against
-> an array's worst — O(n) total versus O(n²) — and the array still won below about
+> an array's worst - O(n) total versus O(n²) - and the array still won below about
 > a thousand elements, because `list.insert(0, …)` is a memmove in C and the
 > linked list is an object allocation per node in the interpreter. So for
 > collections of a few hundred items, which is most application code, the
 > asymptotically worse structure is the faster one. Where I'd actually reach for a
-> linked list is where the node reference is already in hand — and even then I'd
+> linked list is where the node reference is already in hand - and even then I'd
 > look at a deque first, since a linked list of contiguous blocks gets O(1) at both
 > ends without paying the cache cost per element."

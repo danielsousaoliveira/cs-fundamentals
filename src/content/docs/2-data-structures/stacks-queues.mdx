@@ -1,7 +1,7 @@
 ---
 title: Stacks and Queues
 description: >-
-  Two structures defined entirely by what they refuse to let you do — and the
+  Two structures defined entirely by what they refuse to let you do - and the
   one-line queue implementation that is quietly O(n) per dequeue.
 sidebar:
   order: 3
@@ -28,17 +28,17 @@ Stacks and queues are unusual among data structures: **they are defined by what
 they forbid.**
 
 An array lets you touch any element. A stack and a queue deliberately do not. They
-both hold a sequence and both let you add and remove — they differ only in *which
+both hold a sequence and both let you add and remove - they differ only in *which
 end* removal happens at.
 
-- **Stack** — last in, first out. A pile of plates: the last one you put down is
+- **Stack** - last in, first out. A pile of plates: the last one you put down is
   the first one you pick up.
-- **Queue** — first in, first out. A line at a counter: first to arrive, first to
+- **Queue** - first in, first out. A line at a counter: first to arrive, first to
   be served.
 
 That is the entire specification, and the restriction is the feature. Because you
-can only touch one end, every operation is $O(1)$ with no bookkeeping, and — more
-importantly — the restriction *matches the shape of certain problems exactly*.
+can only touch one end, every operation is $O(1)$ with no bookkeeping, and - more
+importantly - the restriction *matches the shape of certain problems exactly*.
 
 **Anything with nesting is a stack.** Brackets, HTML tags, function calls,
 undo history: the most recently opened thing must be the first one closed. LIFO is
@@ -47,7 +47,7 @@ not a convenient choice there, it is the structure of the problem.
 **Anything with fairness or ordering is a queue.** Job scheduling, request
 handling, print spooling, message delivery: first come, first served. And, as the
 [graphs page](/cs-fundamentals/2-data-structures/graphs/) shows, swapping a queue
-for a stack turns breadth-first search into depth-first search — the container *is*
+for a stack turns breadth-first search into depth-first search - the container *is*
 the algorithm.
 
 ## Visual
@@ -60,22 +60,22 @@ counters.
 
 One stays at zero forever. The other climbs quadratically, because
 `list.pop(0)` shifts every remaining element down a slot. **Nothing at the API
-level tells you which one you have** — this is the single most consequential
+level tells you which one you have** - this is the single most consequential
 implementation detail on this page.
 
 ## Mechanics
 
-### Stacks are easy — an array already is one
+### Stacks are easy - an array already is one
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```python
 stack = []
-stack.append(1)      # push — O(1) amortised
+stack.append(1)      # push - O(1) amortised
 stack.append(2)
-stack.pop()          # pop  — O(1), returns 2
-stack[-1]            # peek — O(1), no mutation
+stack.pop()          # pop  - O(1), returns 2
+stack[-1]            # peek - O(1), no mutation
 len(stack) == 0      # empty check
 ```
 
@@ -84,10 +84,10 @@ len(stack) == 0      # empty check
 
 ```ts
 const stack: number[] = [];
-stack.push(1);              // push — O(1) amortised
+stack.push(1);              // push - O(1) amortised
 stack.push(2);
-stack.pop();                // pop  — O(1), returns 2
-stack[stack.length - 1];    // peek — O(1), no mutation
+stack.pop();                // pop  - O(1), returns 2
+stack[stack.length - 1];    // peek - O(1), no mutation
 stack.length === 0;         // empty check
 ```
 
@@ -107,10 +107,10 @@ The obvious translation is also the trap:
 <TabItem label="Python">
 
 ```python
-# WRONG — works, and is quadratic
+# WRONG - works, and is quadratic
 queue = []
 queue.append(1)      # O(1)
-queue.pop(0)         # O(n) — shifts everything down
+queue.pop(0)         # O(n) - shifts everything down
 
 # RIGHT
 from collections import deque
@@ -123,16 +123,16 @@ queue.popleft()      # O(1)
 <TabItem label="TypeScript">
 
 ```ts
-// WRONG — works, and is quadratic
+// WRONG - works, and is quadratic
 const queue: number[] = [];
 queue.push(1);       // O(1)
-queue.shift();       // O(n) — moves everything down
+queue.shift();       // O(n) - moves everything down
 
 // RIGHT (no built-in deque): keep a head index and never shift
 const items: number[] = [];
 let head = 0;
-items.push(1);                       // enqueue — O(1)
-const value = items[head++];         // dequeue — O(1)
+items.push(1);                       // enqueue - O(1)
+const value = items[head++];         // dequeue - O(1)
 if (head > 1000 && head * 2 >= items.length) {
   items.splice(0, head);             // compact occasionally
   head = 0;
@@ -142,7 +142,7 @@ if (head > 1000 && head * 2 >= items.length) {
 </TabItem>
 </Tabs>
 
-**Python's `deque` is a doubly linked list of fixed-size blocks** — typically 64
+**Python's `deque` is a doubly linked list of fixed-size blocks** - typically 64
 elements per block. That hybrid is why it gets $O(1)$ at both ends without paying
 the per-element pointer-chasing cost of a plain linked list: the pointer overhead
 is amortised across 64 values, and each block is contiguous. It is the structure
@@ -223,8 +223,8 @@ class RingBuffer<T> {
 </Tabs>
 
 **Track `size` explicitly.** With only `head` and `tail`, "full" and "empty" both
-look like `head === tail` and are indistinguishable. The alternatives — keeping one
-slot permanently free, or using unbounded counters and taking the modulo late — are
+look like `head === tail` and are indistinguishable. The alternatives - keeping one
+slot permanently free, or using unbounded counters and taking the modulo late - are
 both used in real code, and all three are answers to the same ambiguity.
 
 ### Deques and priority queues
@@ -236,7 +236,7 @@ A **priority queue** is not really a queue at all: it removes the *highest
 priority* item rather than the oldest. That is a heap, covered on the
 [heaps page](/cs-fundamentals/2-data-structures/heaps/), and calling it a queue has
 misled a lot of people into expecting FIFO behaviour among equal priorities. It
-does not provide that — you need an explicit tiebreaker, which is the same
+does not provide that - you need an explicit tiebreaker, which is the same
 insertion-counter trick the heaps page describes.
 
 ## Complexity
@@ -263,7 +263,7 @@ counter, because it is the difference between a job that finishes and one that d
 not. At $n = 100{,}000$ that is about **5 billion element moves** for what should be
 100,000 constant-time operations.
 
-The ring buffer's total is $0$, at any `n`. Not "amortised zero" — zero. Nothing is
+The ring buffer's total is $0$, at any `n`. Not "amortised zero" - zero. Nothing is
 ever relocated, because the data stays still and the indices move.
 
 <Quiz
@@ -277,7 +277,7 @@ while jobs:
     process(job)`}
   lang="python"
   options={[
-    { label: 'O(n) — one pop per job' },
+    { label: 'O(n) - one pop per job' },
     { label: 'O(n log n)' },
     { label: 'O(n²)', correct: true },
     { label: 'O(1) amortised per job, so O(n) overall' },
@@ -286,7 +286,7 @@ while jobs:
   <Fragment slot="explanation">
     <p>
       <strong>O(n²).</strong> <code>pop(0)</code> removes from the front, which
-      means every remaining element shifts down one slot — O(n) per call, n
+      means every remaining element shifts down one slot - O(n) per call, n
       times. For 100,000 jobs that is roughly 5 billion element moves.
     </p>
     <p>
@@ -303,7 +303,7 @@ while jobs:
 
 **When you need to look at the middle.** The restriction is the point, so if you
 find yourself reaching past the top of a stack, you wanted an array or a deque and
-should say so — code that pops five items to inspect one and pushes them back is a
+should say so - code that pops five items to inspect one and pushes them back is a
 sign the abstraction is wrong.
 
 **When you need priority rather than order.** "Process the most urgent job" is a
@@ -313,7 +313,7 @@ insert where a heap is $O(\log n)$.
 **When the queue crosses a process boundary.** An in-memory queue vanishes on
 restart, silently losing whatever was in it. If the work *must* happen, you need a
 durable broker with acknowledgements and retries, not a data structure. This is the
-same distinction as an in-process event emitter versus a message queue — same
+same distinction as an in-process event emitter versus a message queue - same
 interface, opposite reliability properties.
 
 **When it grows without bound.** A queue fed faster than it drains is a memory leak
@@ -328,12 +328,12 @@ recursion is the better code.
 ## Real-world usage
 
 **The call stack itself.** Every function call pushes a frame; every return pops
-one. "Stack overflow" and "stack trace" are literal — the trace is the stack's
+one. "Stack overflow" and "stack trace" are literal - the trace is the stack's
 contents at the moment of the error.
 
 **Undo/redo.** Two stacks: undo pops from one and pushes to the other. Performing a
 new action clears the redo stack, which is why redo disappears after you type
-something — a direct consequence of the structure.
+something - a direct consequence of the structure.
 
 **Expression evaluation and parsing.** Postfix evaluation is a stack; matching
 brackets is a stack; the shunting-yard algorithm converting infix to postfix uses
@@ -348,7 +348,7 @@ allocation in the hot path, which is what makes them usable under real-time
 constraints.
 
 **Browser history.** Back is a stack. So is the JavaScript engine's own call stack,
-and the microtask queue next to it is — as the name says — a queue.
+and the microtask queue next to it is - as the name says - a queue.
 
 ## Failure modes
 
@@ -358,17 +358,17 @@ symptom is a job that runs in 2 seconds on 10,000 records and does not finish on
 
 **Unbounded growth under backpressure.** A producer faster than the consumer. The
 queue absorbs the difference until memory runs out. Every real queue needs a maximum
-size and a decision about what happens at that limit — block the producer, drop the
+size and a decision about what happens at that limit - block the producer, drop the
 oldest, or reject the newest. Choosing "none of the above" is choosing to crash.
 
 **Ring buffer full/empty ambiguity.** `head === tail` means both, unless you track
 size or waste a slot. Getting this wrong makes a full buffer report as empty, so it
-silently drops every message — no error, no exception, just missing data.
+silently drops every message - no error, no exception, just missing data.
 
 **Not clearing the slot on dequeue.** In a garbage-collected language, leaving the
 reference in the buffer keeps the object alive after it has logically left the
 queue. A ring buffer of 10,000 slots pins up to 10,000 dead objects. This is why
-both implementations above explicitly write `None`/`undefined` back — a line that
+both implementations above explicitly write `None`/`undefined` back - a line that
 looks redundant and is not.
 
 **Popping an empty stack.** Python raises `IndexError`; JavaScript returns
@@ -431,7 +431,7 @@ the first, `"(("` fails the second. Solutions that omit one pass the obvious tes
 ### 2. Implement a queue using two stacks
 
 Push onto an inbox stack. To dequeue, if the outbox is empty, pour the whole inbox
-into it — which reverses the order — then pop. Each element moves between stacks at
+into it - which reverses the order - then pop. Each element moves between stacks at
 most twice, so it is **amortised $O(1)$** even though one individual dequeue is
 $O(n)$. A neat illustration of the amortised-versus-worst-case distinction from the
 [complexity page](/cs-fundamentals/1-complexity/big-o/).
@@ -440,14 +440,14 @@ $O(n)$. A neat illustration of the amortised-versus-worst-case distinction from 
 
 Keep a second stack of minimums. On push, push `min(value, current_min)`; on pop,
 pop both. The trick is realising that you can store the *answer* alongside the data
-rather than recomputing it — the same idea that makes an order-statistic tree work.
+rather than recomputing it - the same idea that makes an order-statistic tree work.
 
 ## Interview answers
 
 **"Stack or queue?"**
 
-> Whichever matches the problem's shape. Nesting means a stack — brackets, function
-> calls, undo — because the most recent thing must be handled first. Fairness or
+> Whichever matches the problem's shape. Nesting means a stack - brackets, function
+> calls, undo - because the most recent thing must be handled first. Fairness or
 > arrival order means a queue. And it's worth saying that in a graph traversal the
 > choice *is* the algorithm: a queue gives you BFS, a stack gives you DFS, and the
 > rest of the code is identical.
@@ -455,14 +455,14 @@ rather than recomputing it — the same idea that makes an order-statistic tree 
 **"How would you implement a queue?"**
 
 > A deque, or a ring buffer if the capacity is fixed. What I'd avoid is a list with
-> `pop(0)` — it's O(n) per dequeue because everything shifts down, so a loop over n
+> `pop(0)` - it's O(n) per dequeue because everything shifts down, so a loop over n
 > jobs is O(n²).
 
 **The caveat that signals production experience:**
 
 > "The `pop(0)` one is worth flagging because of how it fails rather than that it
 > fails. The code is correct, it reads fine in review, and it passes every test
-> with a small fixture — it only falls over at the scale where you needed it. I've
+> with a small fixture - it only falls over at the scale where you needed it. I've
 > seen it as a job that ran in seconds on staging and never finished in production.
 > The other thing I'd raise is that an in-memory queue is not a durable one: if the
 > work must actually happen, a crash between enqueue and processing loses it

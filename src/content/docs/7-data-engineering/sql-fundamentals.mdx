@@ -31,7 +31,7 @@ the order it's written.
 **Execution order:** `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` →
 `ORDER BY` → `LIMIT`.
 
-`SELECT` — the clause you type first — is second to last to run. That single
+`SELECT` - the clause you type first - is second to last to run. That single
 fact explains why you can't reference a column alias defined in `SELECT`
 inside the same query's `WHERE` clause (the alias doesn't exist yet when
 `WHERE` runs), why `WHERE` can't filter on an aggregate (the aggregate hasn't
@@ -52,9 +52,9 @@ ORDER BY order_count DESC
 LIMIT 10;
 ```
 
-`WHERE` runs against individual rows before any grouping happens — it has
+`WHERE` runs against individual rows before any grouping happens - it has
 never seen an aggregate and can't filter on one. `HAVING` runs after
-`GROUP BY` has collapsed rows into groups — it filters groups, and it's the
+`GROUP BY` has collapsed rows into groups - it filters groups, and it's the
 only clause that can reference an aggregate result directly by expression
 (`HAVING COUNT(*) > 5`, not `HAVING order_count > 5`, because the alias
 `order_count` is defined in `SELECT`, which hasn't run yet).
@@ -83,7 +83,7 @@ the pipeline.
 
 SQL has three truth values, not two: `TRUE`, `FALSE`, and `UNKNOWN`. Any
 comparison involving `NULL` evaluates to `UNKNOWN`, and `WHERE` keeps only
-rows where the condition is `TRUE` — `UNKNOWN` rows are silently dropped,
+rows where the condition is `TRUE` - `UNKNOWN` rows are silently dropped,
 same as `FALSE` ones:
 
 ```sql
@@ -105,7 +105,7 @@ SELECT COUNT(amount_cents) FROM orders;       -- counts non-NULL values only
 SELECT COUNT(*) FROM orders;                  -- counts every row, NULL or not
 ```
 
-`COUNT(*)` and `COUNT(column)` are not interchangeable — the first counts
+`COUNT(*)` and `COUNT(column)` are not interchangeable - the first counts
 rows, the second counts non-NULL values in that column, and a table with
 NULLs in the counted column will return different numbers from each. This is
 a frequent source of an off-by-some-unknown-amount bug in a report, because
@@ -115,14 +115,14 @@ question.
 ## Cost & limits
 
 **`WHERE` reduces the row count entering every subsequent stage of the
-pipeline** — pushing a filter as early as possible (into `WHERE` rather than
+pipeline** - pushing a filter as early as possible (into `WHERE` rather than
 `HAVING`, or into a subquery before a join) reduces the amount of data every
 later stage has to process. This compounds: a filter that eliminates 90% of
 rows before a join means the join processes a tenth of the data it otherwise
 would.
 
 **`DISTINCT` and `GROUP BY` both force a full materialization and comparison
-of the result set** before returning anything — on a large intermediate
+of the result set** before returning anything - on a large intermediate
 result, either can be the most expensive part of the query, more than any
 single filter or join, because they can't stream results the way row-by-row
 filtering can.
@@ -135,7 +135,7 @@ for correctness clarity and because it runs earlier and cheaper.
 
 **Do not rely on column position (`ORDER BY 2`) in production code.** It
 works, and it silently breaks the moment someone reorders the `SELECT` list
-without also updating the `ORDER BY` — reference the column name or a stable
+without also updating the `ORDER BY` - reference the column name or a stable
 alias instead.
 
 **Do not assume `SELECT *` and an explicit column list behave identically
@@ -146,7 +146,7 @@ output shape and performance profile with no change to the query itself.
 ## Real-world usage
 
 Every dashboard, report, and API endpoint backed by SQL relies on this
-execution order being predictable — a filter placed in the wrong clause is
+execution order being predictable - a filter placed in the wrong clause is
 one of the most common causes of a report returning a plausible-but-wrong
 number, because the query still runs successfully and returns *a* result,
 just not the intended one.
@@ -155,19 +155,19 @@ just not the intended one.
 
 **The report that's wrong by a consistent, explainable amount.** A `NULL`
 handling mistake in a `WHERE` clause (using `!=` instead of accounting for
-`NULL`) drops exactly the rows with `NULL` in that column, every time —
+`NULL`) drops exactly the rows with `NULL` in that column, every time -
 symptom: a total that's consistently a bit low, tracking the count of `NULL`
 values in the excluded column, not random noise.
 
 **The slow query that "should" be fast.** A filter written in `HAVING` that
 belongs in `WHERE` forces the database to aggregate rows it will immediately
-discard — symptom: a query with a selective condition that still scans and
+discard - symptom: a query with a selective condition that still scans and
 aggregates the full table, visible in `EXPLAIN` as a large row count entering
 the aggregate step despite an apparently selective query.
 
 **The `COUNT` that disagrees with itself.** `COUNT(*)` and `COUNT(some_column)`
-returning different numbers in the same query is not a bug — it's NULL
-handling working as documented — but it reads as a bug to anyone who assumed
+returning different numbers in the same query is not a bug - it's NULL
+handling working as documented - but it reads as a bug to anyone who assumed
 they were interchangeable, and the disagreement is easy to miss until two
 reports built on the two forms stop reconciling.
 
@@ -177,7 +177,7 @@ reports built on the two forms stop reconciling.
 GROUP BY customer_id` fail with a "column n does not exist" error?**
 
 `WHERE` runs before `SELECT`, so the alias `n` doesn't exist yet when `WHERE`
-is evaluated — and even setting aside the alias, `WHERE` runs before
+is evaluated - and even setting aside the alias, `WHERE` runs before
 `GROUP BY`, so it can't reference an aggregate at all. The fix is `HAVING
 COUNT(*) > 5`, which runs after grouping.
 
@@ -192,7 +192,7 @@ Three-valued logic: `NULL != 'EU'` evaluates to `UNKNOWN`, not `TRUE`, and
 numbers for the same table. What does the difference tell you, and is it a
 bug?**
 
-Not a bug — the difference is exactly the number of rows with `NULL` in
+Not a bug - the difference is exactly the number of rows with `NULL` in
 `email`. `COUNT(*)` counts rows; `COUNT(email)` counts non-NULL values of
 that column. Whichever number the report needs depends on the actual
 question being asked ("how many rows" vs. "how many rows have an email").
@@ -229,5 +229,5 @@ order diverge: you type `SELECT` first, but it runs second-to-last, after
 `FROM`, `WHERE`, `GROUP BY`, and `HAVING`. The caveat that signals real
 experience: this is why a column alias defined in `SELECT` can be used in
 `ORDER BY` (which runs after `SELECT`) but not in `WHERE` or `GROUP BY`
-(which run before it) — a rule that looks arbitrary until you know the
+(which run before it) - a rule that looks arbitrary until you know the
 execution order behind it.

@@ -1,7 +1,7 @@
 ---
 title: RAG
 description: >-
-  Retrieval-augmented generation as a pipeline of separately-measurable stages —
+  Retrieval-augmented generation as a pipeline of separately-measurable stages -
   and why debugging it end-to-end is the most expensive mistake in the field.
 sidebar:
   order: 9
@@ -26,8 +26,8 @@ know.**
 
 The model stops being a knowledge store and becomes a language interface over
 documents you control. That single move fixes most of what makes raw LLM output
-unusable in production — the training cutoff, the inability to see private data,
-the unverifiable answer — and it introduces a retrieval system, with all the
+unusable in production - the training cutoff, the inability to see private data,
+the unverifiable answer - and it introduces a retrieval system, with all the
 failure modes a retrieval system has.
 
 The framing that matters most for building one:
@@ -37,18 +37,18 @@ The framing that matters most for building one:
 
 Everything follows from that. If the right chunk does not arrive, no prompt, no
 larger model, and no amount of temperature tuning recovers it. And since a
-missing chunk and a bad prompt produce the *same* symptom — a vague, hedging, or
-wrong answer — the single most valuable thing you can build is the ability to
+missing chunk and a bad prompt produce the *same* symptom - a vague, hedging, or
+wrong answer - the single most valuable thing you can build is the ability to
 tell them apart.
 
 ### RAG is a pipeline, not a feature
 
 ```mermaid
 flowchart LR
-  subgraph Index["Index — offline, per document"]
+  subgraph Index["Index - offline, per document"]
     D[document] --> X[extract] --> C[chunk] --> E1[embed] --> S[(vector store)]
   end
-  subgraph Query["Query — online, per request"]
+  subgraph Query["Query - online, per request"]
     Q[question] --> E2[embed] --> R[retrieve k]
     S --> R
     R --> RR[rerank] --> A[assemble context] --> G[generate] --> V[verify citations]
@@ -68,7 +68,7 @@ organised around.
 
 ```python
 def answer(question: str, k: int = 5) -> Answer:
-    # 1. Retrieve. Over-fetch, then rerank down — the embedding model is good
+    # 1. Retrieve. Over-fetch, then rerank down - the embedding model is good
     #    at "roughly related" and bad at ordering, which is what reranking fixes.
     candidates = store.search(embed(question), k=k * 6)
     chunks = rerank(question, candidates)[:k]
@@ -83,7 +83,7 @@ def answer(question: str, k: int = 5) -> Answer:
     # 3. Generate, constrained to the context, with an exact refusal string.
     response = model.complete(PROMPT.format(context=context, question=question))
 
-    # 4. Verify. Grounding without verification is theatre — the model can cite
+    # 4. Verify. Grounding without verification is theatre - the model can cite
     #    a document that was never provided, and that is trivially detectable.
     provided = {c.id for c in chunks}
     cited = set(CITATION_RE.findall(response))
@@ -151,7 +151,7 @@ Do not use knowledge from outside the documents.
 ```
 
 The exact refusal string is deliberate. "Say you do not know" yields a dozen
-phrasings — "I'm not certain", "The provided context doesn't specify" — none of
+phrasings - "I'm not certain", "The provided context doesn't specify" - none of
 which downstream code matches, so a refusal gets counted and displayed as an
 answer.
 
@@ -168,7 +168,7 @@ This is the section that saves weeks.
 | End to end | answer correctness | yes |
 
 **Work top to bottom.** The top three are objective, cheap, and require no
-judgement — and they locate the failure. An end-to-end score tells you the system
+judgement - and they locate the failure. An end-to-end score tells you the system
 is bad; recall@k tells you *why*.
 
 <Tabs syncKey="lang">
@@ -232,7 +232,7 @@ A worked reading of the output:
 
 ### Per-request cost
 
-For a typical configuration — k=5 chunks of 400 tokens, 300-token question and
+For a typical configuration - k=5 chunks of 400 tokens, 300-token question and
 instructions, 300-token answer:
 
 | Stage | Tokens | Notes |
@@ -242,7 +242,7 @@ instructions, 300-token answer:
 | Output | ~300 | priced higher per token |
 | Reranker | ~30 × 400 | separate, cheaper model |
 
-**Input dominates**, which makes prompt caching the primary cost lever — provided
+**Input dominates**, which makes prompt caching the primary cost lever - provided
 the prompt is ordered so a stable prefix exists. See
 [context engineering](/cs-fundamentals/10-ai-engineering/context-engineering/).
 
@@ -254,8 +254,8 @@ unranked ones, and cost 4× less.
 
 One-off embedding plus ongoing storage. For 100,000 chunks at 1536 dimensions:
 614 MB raw, roughly 1 GB with an HNSW index. The recurring cost is re-embedding
-when documents change, which is why an **incremental** pipeline — hash each
-chunk, re-embed only what changed — is worth building before the corpus is
+when documents change, which is why an **incremental** pipeline - hash each
+chunk, re-embed only what changed - is worth building before the corpus is
 large.
 
 ### Latency budget
@@ -283,8 +283,8 @@ on your own stack.
 ## When NOT to use it
 
 **When the corpus fits in the context window.** A few dozen pages fits in a
-modern window. RAG adds extraction, chunking, embedding, an index and retrieval —
-five stages that can fail — to buy nothing. Send the documents.
+modern window. RAG adds extraction, chunking, embedding, an index and retrieval -
+five stages that can fail - to buy nothing. Send the documents.
 
 **When the answer is structured data.** "How many orders did this customer place
 last month" is a SQL query. Embedding your database rows and retrieving them
@@ -305,18 +305,18 @@ left the main benefit behind.
 
 ## Real-world usage
 
-- **Internal knowledge search** — the canonical case. Wikis, runbooks, policies:
+- **Internal knowledge search** - the canonical case. Wikis, runbooks, policies:
   the corpus is private, changes often, and the value is finding rather than
   reasoning.
-- **Customer support deflection** — grounded in help-centre articles, with the
+- **Customer support deflection** - grounded in help-centre articles, with the
   cited article shown so the user can confirm.
-- **Documentation assistants** — versioned by product release, which makes the
+- **Documentation assistants** - versioned by product release, which makes the
   metadata filter as important as the vector search.
-- **Contract and policy review** — clause-level chunks, mandatory quoted spans,
+- **Contract and policy review** - clause-level chunks, mandatory quoted spans,
   positioned as retrieval assistance for a professional rather than as an answer.
-- **Codebase question answering** — function-level chunks, usually hybrid with
+- **Codebase question answering** - function-level chunks, usually hybrid with
   exact symbol search, because identifiers are what embeddings are worst at.
-- **Semantic caching in front of expensive calls** — the same retrieval
+- **Semantic caching in front of expensive calls** - the same retrieval
   machinery, answering "have we answered this already?"
 
 ## Failure modes
@@ -413,9 +413,9 @@ produces when it was not given the answer.
 
 1. Build 30 questions with the answer sentence located by hand in the source
    documents.
-2. **Chunk integrity** — does the answer text appear intact in any chunk? Needs no
+2. **Chunk integrity** - does the answer text appear intact in any chunk? Needs no
    model, takes minutes.
-3. **recall@5** — is a correct chunk in the top five?
+3. **recall@5** - is a correct chunk in the top five?
 4. Only if both are good, hand-feed the correct chunks and check the answer. That
    is the prompt's actual performance.
 
@@ -444,7 +444,7 @@ Users complain answers are sometimes out of date. Design re-indexing.
 
 1. **Trigger on publish**, not on a schedule. A nightly full rebuild means up to
    24 hours of staleness and re-embeds 12,000 articles to reflect 30 changes.
-2. **Hash each chunk** after chunking. Re-embed only chunks whose hash changed —
+2. **Hash each chunk** after chunking. Re-embed only chunks whose hash changed -
    an edited paragraph usually touches one or two chunks, not the whole article.
 3. **Delete before insert.** The most common bug here is orphaned chunks: an
    article shortened from 10 chunks to 7 leaves 3 stale ones that still retrieve.
@@ -457,7 +457,7 @@ Users complain answers are sometimes out of date. Design re-indexing.
 - **Index age**: max time since a published article was indexed. Alert past 15
   minutes.
 - **Documents processed per run.** A pipeline silently processing zero is the
-  classic failure — it looks healthy, has no errors, and quietly stops updating.
+  classic failure - it looks healthy, has no errors, and quietly stops updating.
 - **Chunk count per article**, to catch the orphan bug.
 
 **The trap to avoid:** a nightly full rebuild "for consistency". It is expensive,
@@ -469,7 +469,7 @@ periodically papering over it.
 **3. The contradictory policy.**
 
 A RAG assistant answers "refunds within 30 days". The current policy is 14 days.
-Both documents are in the index — the 2023 version was never removed. Retrieval
+Both documents are in the index - the 2023 version was never removed. Retrieval
 returns both. Fix it at every layer.
 
 <details>
@@ -487,7 +487,7 @@ belongs here.
 systematic rather than a one-off deletion.
 
 **3. Ranking.** Boost recency, so a newer document outranks an older one at
-similar relevance. A tiebreak, not a solution — it degrades silently when the
+similar relevance. A tiebreak, not a solution - it degrades silently when the
 older document happens to be a better lexical match.
 
 **4. Generation.** Instruct the model to surface conflicts rather than resolve
@@ -499,11 +499,11 @@ Do not silently choose one.
 ```
 
 This is the safety net for when the first three fail, and it converts a
-confident wrong answer into a visible flag — which is the difference between a
+confident wrong answer into a visible flag - which is the difference between a
 bug and an incident.
 
 **And add the regression test:** this exact question, asserting the answer says
-14 days. It goes in the evaluation set permanently, with a note recording why —
+14 days. It goes in the evaluation set permanently, with a note recording why -
 otherwise someone deletes it in a year.
 
 </details>
@@ -514,7 +514,7 @@ otherwise someone deletes it in a year.
   kind="concept"
   question="A RAG system gives vague answers. Retrieval returns chunks that look topically relevant. What do you measure first?"
   options={[
-    { label: 'Whether the answer text survives chunking intact, then recall@k — both objective and neither needs a model', correct: true },
+    { label: 'Whether the answer text survives chunking intact, then recall@k - both objective and neither needs a model', correct: true },
     { label: 'End-to-end answer quality with an LLM judge, since that is what users experience' },
     { label: 'Whether the generation temperature is causing inconsistent phrasing' },
     { label: 'Whether the context window is large enough to hold more chunks' },
@@ -523,7 +523,7 @@ otherwise someone deletes it in a year.
   <Fragment slot="explanation">
     <p>
       "Topically relevant" is not the same as "contains the answer". The cheapest
-      check is whether the answer sentence exists intact in <em>any</em> chunk —
+      check is whether the answer sentence exists intact in <em>any</em> chunk -
       a substring search, no model involved. If a boundary split it, retrieval
       cannot return it at any k and every downstream fix is wasted effort.
     </p>
@@ -536,7 +536,7 @@ otherwise someone deletes it in a year.
       An LLM judge measures the last stage of a nine-stage pipeline: it will
       confirm the answers are bad and tell you nothing about which stage caused
       it. That is how teams end up spending weeks on prompts while retrieval is
-      broken — the most expensive mistake in this field, and the cheapest to
+      broken - the most expensive mistake in this field, and the cheapest to
       avoid.
     </p>
   </Fragment>
@@ -548,7 +548,7 @@ otherwise someone deletes it in a year.
   kind="concept"
   question="Retrieval recall@20 is high but answers still miss facts that are in the retrieved chunks. What is the most likely fix?"
   options={[
-    { label: 'Rerank and reduce k — the right chunk is landing in the middle of the context where attention is weakest', correct: true },
+    { label: 'Rerank and reduce k - the right chunk is landing in the middle of the context where attention is weakest', correct: true },
     { label: 'Increase k further, so the correct chunk is more certain to be included' },
     { label: 'Increase temperature so the model considers more of the context' },
     { label: 'Switch to a model with a larger context window' },
@@ -558,7 +558,7 @@ otherwise someone deletes it in a year.
     <p>
       High recall@20 means the chunk <em>is</em> in the context, so this is not a
       retrieval problem any more. Attention across a long context is roughly
-      U-shaped — strongest at the beginning and end — so a chunk at position 12
+      U-shaped - strongest at the beginning and end - so a chunk at position 12
       of 20 sits exactly where it is least likely to be used.
     </p>
     <p>
@@ -568,7 +568,7 @@ otherwise someone deletes it in a year.
     </p>
     <p>
       Raising k or the window size makes it worse by pushing the good chunk
-      further into the middle. And temperature controls sampling randomness — it
+      further into the middle. And temperature controls sampling randomness - it
       has no bearing on which parts of the context get attended to.
     </p>
   </Fragment>
@@ -583,7 +583,7 @@ otherwise someone deletes it in a year.
 > with an instruction to answer only from them. The model stops being a knowledge
 > store and becomes a language interface over documents you control.
 >
-> What I would emphasise is that it is a pipeline, not a feature — extraction,
+> What I would emphasise is that it is a pipeline, not a feature - extraction,
 > chunking, embedding, retrieval, reranking, assembly, generation, verification.
 > Each stage fails independently. The single most useful property to internalise
 > is that retrieval quality is a hard ceiling on answer quality: the model cannot
@@ -592,8 +592,8 @@ otherwise someone deletes it in a year.
 **"How do you debug a RAG system giving bad answers?"**
 
 > By locating the stage, not by scoring the whole thing. A bad answer has two
-> very different causes — the chunk never arrived, or it arrived and the model
-> mishandled it — and they look identical from outside.
+> very different causes - the chunk never arrived, or it arrived and the model
+> mishandled it - and they look identical from outside.
 >
 > So I measure upstream first, and the top checks need no model at all. Does the
 > answer text survive chunking intact? That is a substring search. Then recall@k
@@ -605,7 +605,7 @@ otherwise someone deletes it in a year.
 
 **"How do you stop it making things up?"**
 
-> Grounding gets you most of the way — the answer is in the context rather than
+> Grounding gets you most of the way - the answer is in the context rather than
 > in the weights. But grounding without verification is theatre, so I put ids on
 > the documents in the prompt and require the model to cite them. Then a cited id
 > that was never provided is a set difference, three lines of code, no judgement.
@@ -615,7 +615,7 @@ otherwise someone deletes it in a year.
 > real and does not say what was claimed, which is what grounding alone leaves
 > behind.
 >
-> And an exact refusal string rather than "say you do not know" — otherwise a
+> And an exact refusal string rather than "say you do not know" - otherwise a
 > refusal comes back in a dozen phrasings and gets displayed as an answer.
 
 **The caveats worth voicing:**
@@ -623,7 +623,7 @@ otherwise someone deletes it in a year.
 - Over-fetch and rerank; embeddings are good at "roughly related" and mediocre at
   ordering.
 - Lowering k often improves quality and always cuts cost.
-- Generation is 90% of the latency — optimising retrieval latency is usually
+- Generation is 90% of the latency - optimising retrieval latency is usually
   effort in the wrong place.
 - Delete before insert when re-indexing, or shortened documents leave orphaned
   chunks that still retrieve.

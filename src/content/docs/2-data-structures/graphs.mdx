@@ -1,7 +1,7 @@
 ---
 title: Graphs
 description: >-
-  BFS and DFS differ by one line — queue or stack — and that one line decides
+  BFS and DFS differ by one line - queue or stack - and that one line decides
   whether you get shortest paths or a stack overflow.
 sidebar:
   order: 7
@@ -25,7 +25,7 @@ import { Quiz } from '../../../components/mdx/Quiz.tsx';
 
 A graph is the structure you get when you stop imposing rules on how things
 connect. A linked list says each node has one successor. A tree says each node has
-one parent and no cycles. **A graph says nothing at all** — any node may connect to
+one parent and no cycles. **A graph says nothing at all** - any node may connect to
 any other, in any number, in either direction, including back to itself.
 
 That is why graphs model so much: roads, social networks, package dependencies,
@@ -36,10 +36,10 @@ become available.
 The vocabulary is small and worth being exact about:
 
 - **Vertex** (node) and **edge** (connection). Sizes written $V$ and $E$.
-- **Directed** — edges have a direction (Twitter follows). **Undirected** — they do
+- **Directed** - edges have a direction (Twitter follows). **Undirected** - they do
   not (Facebook friends).
-- **Weighted** — edges carry a cost (distance, latency, price).
-- **Cyclic** — you can return to where you started. **Acyclic** — you cannot. A
+- **Weighted** - edges carry a cost (distance, latency, price).
+- **Cyclic** - you can return to where you started. **Acyclic** - you cannot. A
   **DAG** (directed acyclic graph) is the shape of any dependency system.
 - **Dense** ($E \approx V^2$) versus **sparse** ($E \approx V$). This one decides
   your representation.
@@ -50,7 +50,7 @@ explore in?**
 ## Visual
 
 Two panes, one graph, one shared timeline. The code is identical except for one
-line — whether the frontier is a queue or a stack — and the frontier strips
+line - whether the frontier is a queue or a stack - and the frontier strips
 underneath each pane show what that line does.
 
 <BfsDfsCompare client:visible />
@@ -70,7 +70,7 @@ everything costs afterwards.
 <TabItem label="Python">
 
 ```python
-# Adjacency list — a dict of neighbour lists. O(V + E) space.
+# Adjacency list - a dict of neighbour lists. O(V + E) space.
 graph = {
     'A': ['B', 'D'],
     'B': ['A', 'C', 'E'],
@@ -78,7 +78,7 @@ graph = {
     'D': ['A', 'E'],
 }
 
-# Adjacency matrix — a V×V grid. O(V²) space, O(1) edge lookup.
+# Adjacency matrix - a V×V grid. O(V²) space, O(1) edge lookup.
 matrix = [
     [0, 1, 0, 1],
     [1, 0, 1, 0],
@@ -91,7 +91,7 @@ matrix = [
 <TabItem label="TypeScript">
 
 ```ts
-// Adjacency list — a Map of neighbour arrays. O(V + E) space.
+// Adjacency list - a Map of neighbour arrays. O(V + E) space.
 const graph = new Map<string, string[]>([
   ['A', ['B', 'D']],
   ['B', ['A', 'C', 'E']],
@@ -99,7 +99,7 @@ const graph = new Map<string, string[]>([
   ['D', ['A', 'E']],
 ]);
 
-// Adjacency matrix — a V×V grid. O(V²) space, O(1) edge lookup.
+// Adjacency matrix - a V×V grid. O(V²) space, O(1) edge lookup.
 const matrix = [
   [0, 1, 0, 1],
   [1, 0, 1, 0],
@@ -118,10 +118,10 @@ const matrix = [
 | Iterate u's neighbours | $O(\deg u)$ | $O(V)$ |
 | Add an edge | $O(1)$ | $O(1)$ |
 
-**Use a list unless the graph is dense.** Real graphs almost always are sparse — a
+**Use a list unless the graph is dense.** Real graphs almost always are sparse - a
 social network with a billion users has average degree in the hundreds, not the
-billions — and a matrix for a million vertices needs $10^{12}$ cells. Matrices win
-for small dense graphs and for algorithms like Floyd–Warshall that are naturally
+billions - and a matrix for a million vertices needs $10^{12}$ cells. Matrices win
+for small dense graphs and for algorithms like Floyd-Warshall that are naturally
 matrix-shaped.
 
 ### BFS and DFS are the same algorithm
@@ -206,23 +206,23 @@ because otherwise a node reachable from two nodes in the same level gets queued
 twice and the queue grows quadratically. DFS marks on pop, because a node can
 legitimately be pushed several times before it is first popped, and rejecting it at
 push time would need a separate "in frontier" check. Getting this backwards is the
-most common bug in hand-written traversals — it does not produce a wrong answer,
+most common bug in hand-written traversals - it does not produce a wrong answer,
 it produces a memory blow-up on large graphs.
 
 ## Complexity
 
 | Algorithm | Time | Space | Needs |
 |---|---|---|---|
-| BFS / DFS | $O(V + E)$ | $O(V)$ | — |
+| BFS / DFS | $O(V + E)$ | $O(V)$ | - |
 | Shortest path, unweighted | $O(V + E)$ | $O(V)$ | BFS |
 | Dijkstra | $O((V + E)\log V)$ | $O(V)$ | Non-negative weights |
-| Bellman–Ford | $O(VE)$ | $O(V)$ | Handles negative weights |
+| Bellman-Ford | $O(VE)$ | $O(V)$ | Handles negative weights |
 | Topological sort | $O(V + E)$ | $O(V)$ | DAG only |
-| Floyd–Warshall (all pairs) | $O(V^3)$ | $O(V^2)$ | — |
+| Floyd-Warshall (all pairs) | $O(V^3)$ | $O(V^2)$ | - |
 
 ### Why traversal is $O(V + E)$ and not $O(V \cdot E)$
 
-Each vertex is dequeued exactly once — the `visited` set guarantees it — so the
+Each vertex is dequeued exactly once - the `visited` set guarantees it - so the
 outer loop runs $V$ times. Inside, each vertex's neighbour list is walked once, and
 the sum of all neighbour-list lengths is exactly $2E$ for an undirected graph
 (every edge appears in two lists). So:
@@ -233,19 +233,19 @@ $$
 
 The two terms add rather than multiply because they count different things. On a
 sparse graph this is effectively linear; on a dense one, $E$ dominates and it is
-$O(V^2)$ — which is the matrix's cost anyway.
+$O(V^2)$ - which is the matrix's cost anyway.
 
 ### Why Dijkstra has a log in it
 
 Dijkstra is BFS with a **priority queue** instead of a plain queue: always expand
 the cheapest-so-far vertex rather than the nearest-in-hops. Each of the $E$ edge
-relaxations may push to the heap, and each heap operation is $O(\log V)$ — so
+relaxations may push to the heap, and each heap operation is $O(\log V)$ - so
 $O(E \log V)$, plus $O(V \log V)$ for the extractions.
 
 That heap is the one from the [heaps page](/cs-fundamentals/2-data-structures/heaps/),
 and this is exactly the decrease-key problem described there. The standard
-workaround is lazy deletion — push a duplicate entry with the better distance and
-skip stale ones on pop — which is why the heap can hold $O(E)$ entries rather than
+workaround is lazy deletion - push a duplicate entry with the better distance and
+skip stale ones on pop - which is why the heap can hold $O(E)$ entries rather than
 $O(V)$.
 
 <Quiz
@@ -254,17 +254,17 @@ $O(V)$.
   kind="concept"
   question="You need the fewest-hops route between two people in a social graph. Which algorithm?"
   options={[
-    { label: 'DFS — it explores deeply and finds a path fast' },
+    { label: 'DFS - it explores deeply and finds a path fast' },
     { label: 'BFS', correct: true },
     { label: "Dijkstra's algorithm" },
-    { label: 'Either BFS or DFS — both find a path' },
+    { label: 'Either BFS or DFS - both find a path' },
   ]}
 >
   <Fragment slot="explanation">
     <p>
       <strong>BFS.</strong> It visits nodes in non-decreasing hop distance, so the
       first time it reaches the target, it has arrived by a shortest route. DFS
-      finds <em>a</em> path — often an absurd one — because it commits to a branch
+      finds <em>a</em> path - often an absurd one - because it commits to a branch
       before considering alternatives.
     </p>
     <p>
@@ -279,13 +279,13 @@ $O(V)$.
 ## When NOT to use it
 
 **When BFS's memory does not fit.** BFS holds an entire level in the queue. On a
-wide graph — a social network, where one hop reaches thousands and two hops reach
-millions — that queue is the dominant memory cost, and it is the reason friend-of-a-friend
+wide graph - a social network, where one hop reaches thousands and two hops reach
+millions - that queue is the dominant memory cost, and it is the reason friend-of-a-friend
 queries are run with hop limits. DFS holds only a path, so its frontier is
 $O(\text{depth})$.
 
 **When DFS's depth does not fit.** The mirror problem. Recursive DFS on a graph
-with a long path overflows the stack — Python at ~1000 frames, Node at a few
+with a long path overflows the stack - Python at ~1000 frames, Node at a few
 thousand. On a million-node linked-list-shaped graph, recursive DFS simply cannot
 run. Use the explicit-stack version above.
 
@@ -295,17 +295,17 @@ performance one, and it survives testing on small graphs where any path is short
 
 **When the graph is dense and you chose a list.** At $E \approx V^2$, the adjacency
 list's pointer overhead and scattered memory lose to a flat matrix that a CPU can
-scan linearly. Same complexity class, an order of magnitude apart — the cache
+scan linearly. Same complexity class, an order of magnitude apart - the cache
 argument from the [linked lists](/cs-fundamentals/2-data-structures/linked-lists/)
 page, again.
 
 **When negative edge weights exist.** Dijkstra is *wrong*, not slow, on negative
 edges: it finalises a vertex the moment it is popped, and a later negative edge can
-invalidate that. It returns a plausible wrong answer with no error. Bellman–Ford
+invalidate that. It returns a plausible wrong answer with no error. Bellman-Ford
 handles it at $O(VE)$.
 
 **When the graph does not fit in memory at all.** Web-scale graphs need external or
-distributed algorithms — Pregel-style vertex-centric computation — where the whole
+distributed algorithms - Pregel-style vertex-centric computation - where the whole
 model of "the graph is a dict in RAM" no longer applies.
 
 ## Real-world usage
@@ -322,7 +322,7 @@ literally cycle detection failing the DAG precondition.
 BFS distance; PageRank is an eigenvector computation over the link graph.
 
 **Compilers.** Control-flow graphs, call graphs, and register allocation as graph
-colouring. Dead-code elimination is reachability — a traversal.
+colouring. Dead-code elimination is reachability - a traversal.
 
 **Schedulers and spreadsheets.** Task ordering, and recalculating a spreadsheet in
 dependency order, are both topological sorts.
@@ -330,7 +330,7 @@ dependency order, are both topological sorts.
 **Garbage collection.** Mark-and-sweep is a graph traversal from the roots; anything
 unreached is garbage.
 
-**Knowledge graphs.** Entities as nodes, relationships as typed edges — the same
+**Knowledge graphs.** Entities as nodes, relationships as typed edges - the same
 traversal and reachability questions above, now answered by a query language
 (Cypher, SPARQL) instead of hand-written BFS/DFS. See [Knowledge
 Graphs](/cs-fundamentals/10-ai-engineering/knowledge-graphs/) for how retrieval
@@ -340,13 +340,13 @@ over one differs from a vector search.
 
 **No visited set on a cyclic graph.** An infinite loop, not an exception. The
 process hangs with a pegged CPU and no stack trace. Tree code ported to graphs is
-the usual origin, since trees need no visited set — which is exactly what makes the
+the usual origin, since trees need no visited set - which is exactly what makes the
 omission easy to miss.
 
 **Marking visited at the wrong moment in BFS.** Marking on dequeue rather than
 enqueue lets the same node be queued once per incoming edge. On a graph where a
 node has 10,000 in-edges, the queue holds 10,000 copies. The result is still
-correct, so tests pass — it just uses $O(E)$ memory instead of $O(V)$, and falls
+correct, so tests pass - it just uses $O(E)$ memory instead of $O(V)$, and falls
 over on the graph size where it matters.
 
 **Recursive DFS overflowing the stack.** As above. The tell is that it works
@@ -354,7 +354,7 @@ locally on a 100-node sample and dies on the real graph.
 
 **Dijkstra with negative weights.** Silently wrong. This is worth stating plainly
 because "it ran and gave me a number" is exactly how it gets shipped. If weights
-can be negative — refunds, elevation changes, arbitrage — you need Bellman–Ford,
+can be negative - refunds, elevation changes, arbitrage - you need Bellman-Ford,
 which additionally *detects* negative cycles rather than looping forever in them.
 
 **Confusing directed with undirected.** Adding only `graph[u].append(v)` for an
@@ -378,7 +378,7 @@ neighbours, or assert on a set.
 ### 1. Count connected components
 
 Loop over vertices; each time you find an unvisited one, run a traversal from it
-and increment the count. $O(V + E)$ — the loop does not multiply the cost, because
+and increment the count. $O(V + E)$ - the loop does not multiply the cost, because
 the visited set means each vertex is traversed exactly once overall.
 
 ### 2. Detect a cycle in a directed graph
@@ -434,31 +434,31 @@ function hasCycle(graph: Map<string, string[]>): boolean {
 </TabItem>
 </Tabs>
 
-A two-state visited set reports a cycle for any diamond shape — A→B, A→C, B→D,
-C→D — which has no cycle at all. That false positive is the bug this problem exists
+A two-state visited set reports a cycle for any diamond shape - A→B, A→C, B→D,
+C→D - which has no cycle at all. That false positive is the bug this problem exists
 to teach.
 
 ### 3. Topological sort
 
 Kahn's algorithm: repeatedly take a vertex with in-degree 0, remove it, decrement
 its neighbours. If vertices remain when none has in-degree 0, the graph has a cycle
-— so the algorithm detects the failure it depends on, which is why package managers
+- so the algorithm detects the failure it depends on, which is why package managers
 can tell you *which* dependencies are circular.
 
 ## Interview answers
 
 **"BFS or DFS?"**
 
-> They're the same algorithm with a different container — a queue versus a stack.
+> They're the same algorithm with a different container - a queue versus a stack.
 > BFS for anything about shortest paths or levels, since it visits in
 > non-decreasing hop distance. DFS for anything about structure: cycle detection,
 > topological sort, connected components. Both are O(V + E).
 
 **"How would you find the shortest route?"**
 
-> Unweighted, BFS. Weighted with non-negative weights, Dijkstra — BFS with a
+> Unweighted, BFS. Weighted with non-negative weights, Dijkstra - BFS with a
 > priority queue, O(E log V). If weights can be negative, Dijkstra is *wrong*, not
-> just slow, so Bellman–Ford at O(VE).
+> just slow, so Bellman-Ford at O(VE).
 
 **The caveat that signals production experience:**
 
@@ -467,7 +467,7 @@ can tell you *which* dependencies are circular.
 > social network the queue is your bottleneck, while DFS holds a path and blows the
 > call stack instead if you wrote it recursively. Which one bites you depends on
 > the graph's shape, not on the algorithm. Second, the classic bug in a hand-written
-> BFS is marking visited on dequeue rather than enqueue — it still gives the right
+> BFS is marking visited on dequeue rather than enqueue - it still gives the right
 > answer, so it passes tests, and it quietly queues a node once per in-edge, so
 > memory goes from O(V) to O(E) and it falls over at exactly the scale where you
 > needed it to work."
